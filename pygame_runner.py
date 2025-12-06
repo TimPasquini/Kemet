@@ -73,6 +73,16 @@ def render(screen, font, state: GameState, tile_size: int, sidebar: int, player_
         pygame.draw.rect(screen, (30, 30, 30), rect.inflate(-8, -8))
         label = {"cistern": "C", "condenser": "N", "planter": "F"}.get(structure.kind, "?")
         draw_text(screen, font, label, (rect.x + 6, rect.y + 4))
+    # Wells and depot markers
+    for y in range(state.height):
+        for x in range(state.width):
+            tile = state.tiles[x][y]
+            rect = pygame.Rect(x * tile_size, y * tile_size, tile_size - 1, tile_size - 1)
+            if tile.well_output > 0:
+                pygame.draw.circle(screen, (70, 140, 220), rect.center, 6)
+            if tile.depot:
+                pygame.draw.rect(screen, (200, 200, 60), rect.inflate(-10, -10), border_radius=3)
+                draw_text(screen, font, "D", (rect.x + 6, rect.y + 4), color=(40, 40, 20))
     # Player (use sub-tile pixel position for smooth movement)
     px, py = player_px
     pygame.draw.circle(screen, (240, 240, 90), (int(px), int(py)), tile_size // 3)
@@ -80,7 +90,11 @@ def render(screen, font, state: GameState, tile_size: int, sidebar: int, player_
     hud_x = state.width * tile_size + 12
     draw_text(screen, font, f"Day {state.day}", (hud_x, 12))
     draw_text(screen, font, f"Heat {state.heat:.2f}", (hud_x, 32))
-    draw_text(screen, font, f"Dust in {state.dust_timer}", (hud_x, 52))
+    phase = "Night" if state.heat < 1.0 else "Day"
+    draw_text(screen, font, f"Cycle: {phase}", (hud_x, 52))
+    draw_text(screen, font, f"Dust in {state.dust_timer}", (hud_x, 72))
+    rain_txt = "Raining" if state.raining else f"Rain in {state.rain_timer}"
+    draw_text(screen, font, rain_txt, (hud_x, 92))
     inv = state.inventory
     draw_text(screen, font, f"Water: {inv['water']:.1f}", (hud_x, 80))
     draw_text(screen, font, f"Scrap: {int(inv['scrap'])}", (hud_x, 100))
@@ -95,6 +109,13 @@ def render(screen, font, state: GameState, tile_size: int, sidebar: int, player_
     draw_text(screen, font, "Log:", (hud_x, msg_y))
     for i, msg in enumerate(state.messages[-12:]):
         draw_text(screen, font, f"- {msg}", (hud_x, msg_y + 18 * (i + 1)), color=(160, 200, 160))
+
+    # Night overlay
+    night_alpha = max(0, min(200, int((1.4 - state.heat) * 180)))
+    if night_alpha > 0:
+        overlay = pygame.Surface((state.width * tile_size, state.height * tile_size), pygame.SRCALPHA)
+        overlay.fill((10, 20, 40, night_alpha))
+        screen.blit(overlay, (0, 0))
 
 
 def issue(state: GameState, cmd: str, args: List[str]) -> None:

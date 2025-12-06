@@ -35,8 +35,9 @@ class Tile:
     kind: str
     hydration: float = 0.0
     trench: bool = False
-    hidden_water: float = 0.0
     elevation: float = 0.0
+    well_output: float = 0.0
+    depot: bool = False
 
 
 @dataclass
@@ -68,6 +69,8 @@ class GameState:
     turn_in_day: int = 0
     heat: float = 1.0
     dust_timer: int = 8
+    rain_timer: int = 12
+    raining: bool = False
     messages: List[str] = field(default_factory=list)
 
 
@@ -116,31 +119,43 @@ def wfc_like_map(width: int, height: int) -> List[List[Tile]]:
         }[choice]
         tiles[x][y] = Tile(choice, elevation=elevation)
 
-    # Seed hidden water pockets and wet wadis.
-    pockets = random.randint(2, 3)
-    for _ in range(pockets):
+    # Seed wells (fixed sources) and wet wadis.
+    wells = random.randint(3, 4)
+    for _ in range(wells):
         rx, ry = random.randrange(width), random.randrange(height)
-        tiles[rx][ry].hidden_water += random.uniform(2.0, 3.5)
         tiles[rx][ry].kind = "wadi"
+        # Varying rates: seep vs spring
+        tiles[rx][ry].well_output = random.choice(
+            [random.uniform(0.12, 0.25), random.uniform(0.35, 0.6)]
+        )
+        tiles[rx][ry].hydration += 0.4
     for x in range(width):
         for y in range(height):
             if tiles[x][y].kind == "wadi":
-                tiles[x][y].hydration += random.uniform(0.4, 0.8)
+                tiles[x][y].hydration += random.uniform(0.05, 0.3)
     return tiles
 
 
 def build_initial_state(width: int = 10, height: int = 10) -> GameState:
     tiles = wfc_like_map(width, height)
     player = (width // 2, height // 2)
+    depot_pos = player
+    depot_tile = tiles[depot_pos[0]][depot_pos[1]]
+    depot_tile.kind = "flat"
+    depot_tile.trench = False
+    depot_tile.elevation = 1.0
+    depot_tile.well_output = 0.0
+    depot_tile.depot = True
     return GameState(width=width, height=height, tiles=tiles, player=player)
 
 
 def render(state: GameState) -> None:
     print("\n" * 2)
-    print(f"Day {state.day}  Heat {state.heat:.2f}  Dust in {state.dust_timer} turns")
+    phase = "Night" if state.heat < 1.0 else "Day"
+    print(f"Day {state.day} [{phase}] Heat {state.heat:.2f}  Dust in {state.dust_timer}  Rain in {state.rain_timer} ({'on' if state.raining else 'off'})")
     inv = state.inventory
     print(f"Water {inv['water']:.1f} | Scrap {inv['scrap']} | Seeds {inv['seeds']} | Biomass {inv['biomass']}")
-    print("Legend: @ you, C cistern, N condenser, F planter, = trench, ~ wet, : damp")
+    print("Legend: @ you, D depot, C cistern, N condenser, F planter, = trench, ~ wet, : damp")
     print("Map:")
     for y in range(state.height):
         row = []
@@ -156,6 +171,8 @@ def render(state: GameState) -> None:
                 symbol = ":"
             if tile.trench:
                 symbol = "="
+            if tile.depot:
+                symbol = "D"
             if structure:
                 symbol = {"cistern": "C", "condenser": "N", "planter": "F"}.get(structure.kind, "?")
             if state.player == pos:
@@ -246,15 +263,18 @@ def build_structure(state: GameState, kind: str) -> None:
 
 def collect_water(state: GameState) -> None:
     tile = state.tiles[state.player[0]][state.player[1]]
-    available = tile.hidden_water + tile.hydration
+    if tile.depot:
+        state.inventory["water"] += 3
+        state.inventory["scrap"] += 3
+        state.inventory["seeds"] += 1
+        state.messages.append("Depot resupply: +3 water, +3 scrap, +1 seeds.")
+        return
+    available = tile.hydration
     if available <= 0.05:
         state.messages.append("No water to collect here.")
         return
     gathered = min(1.0, available)
-    from_hidden = min(tile.hidden_water, gathered)
-    tile.hidden_water -= from_hidden
-    remaining = gathered - from_hidden
-    tile.hydration = max(tile.hydration - remaining, 0.0)
+    tile.hydration = max(tile.hydration - gathered, 0.0)
     state.inventory["water"] += gathered
     state.messages.append(f"Collected {gathered:.1f} water.")
 
@@ -308,8 +328,11 @@ def tick_structures(state: GameState, heat: float, dust: bool) -> None:
 def simulate_tick(state: GameState) -> None:
     # Heat rises slightly during the day, resets at night.
     state.turn_in_day += 1
-    daytime = state.turn_in_day % 10
-    state.heat = 1.0 + 0.15 * daytime
+    DAY_LENGTH = 12
+    daytime = state.turn_in_day % DAY_LENGTH
+    # Peak heat midday, cooler at night.
+    day_factor = (1 - abs((daytime / (DAY_LENGTH - 1)) * 2 - 1))  # 0 at edges, 1 at midpoint
+    state.heat = 0.8 + 0.6 * day_factor
 
     state.dust_timer -= 1
     dust_front = False
@@ -317,6 +340,19 @@ def simulate_tick(state: GameState) -> None:
         dust_front = True
         state.messages.append("Dust front hits! Evap spikes and structures take damage.")
         state.dust_timer = random.randint(8, 12)
+
+    # Rain scheduling
+    state.rain_timer -= 1
+    if state.raining:
+        if state.rain_timer <= 0:
+            state.raining = False
+            state.rain_timer = random.randint(12, 20)
+            state.messages.append("Rain fades.")
+    else:
+        if state.rain_timer <= 0:
+            state.raining = True
+            state.rain_timer = random.randint(3, 5)
+            state.messages.append("Rain arrives! Springs surge.")
 
     tick_structures(state, state.heat, dust_front)
 
@@ -326,6 +362,11 @@ def simulate_tick(state: GameState) -> None:
         for y in range(state.height):
             tile = state.tiles[x][y]
             ttype = TILE_TYPES[tile.kind]
+            # Wells feed water.
+            if tile.well_output > 0:
+                gain = tile.well_output * (1.5 if state.raining else 1.0)
+                tile.hydration += gain
+
             evap = ttype.evap * state.heat
             if tile.trench:
                 evap *= 0.85
@@ -391,8 +432,8 @@ def survey_tile(state: GameState) -> None:
         f"elev={tile.elevation:.2f}",
         f"hydr={tile.hydration:.2f}",
     ]
-    if tile.hidden_water > 0.05:
-        desc.append(f"hidden={tile.hidden_water:.2f}")
+    if tile.well_output > 0:
+        desc.append(f"well={tile.well_output:.2f}/t")
     if tile.trench:
         desc.append("trench")
     if structure:

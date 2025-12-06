@@ -36,6 +36,11 @@ python pygame_runner.py
 - `survey` — inspect tile type/elevation/hydration.
 - `status` — show inventory/resources.
 - `end` — end the day (advances several ticks and raises heat).
+
+### Notes on water and testing aids
+
+- Water only originates at wells/springs (wadi tiles) with varying flow rates; rain is occasional and boosts those sources.
+- A depot tile at spawn provides infinite test resources when using `collect`.
 - `help` — list commands.
 - `quit` — exit.
 
