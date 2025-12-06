@@ -1,0 +1,9 @@
+[project]
+name = "kemet"
+version = "0.0.1"
+description = "A desert terraforming game."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pygame-ce>=2.5.6",
+]
