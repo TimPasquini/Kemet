@@ -68,7 +68,6 @@ class GameState:
     day: int = 1
     turn_in_day: int = 0
     heat: float = 1.0
-    dust_timer: int = 8
     rain_timer: int = 12
     raining: bool = False
     messages: List[str] = field(default_factory=list)
@@ -152,10 +151,10 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
 def render(state: GameState) -> None:
     print("\n" * 2)
     phase = "Night" if state.heat < 1.0 else "Day"
-    print(f"Day {state.day} [{phase}] Heat {state.heat:.2f}  Dust in {state.dust_timer}  Rain in {state.rain_timer} ({'on' if state.raining else 'off'})")
+    print(f"Day {state.day} [{phase}] Heat {state.heat:.2f}  Rain in {state.rain_timer} ({'on' if state.raining else 'off'})")
     inv = state.inventory
     print(f"Water {inv['water']:.1f} | Scrap {inv['scrap']} | Seeds {inv['seeds']} | Biomass {inv['biomass']}")
-    print("Legend: @ you, D depot, C cistern, N condenser, F planter, = trench, ~ wet, : damp")
+    print("Legend: @ you, D depot, C cistern, N condenser, P planter, = trench, ~ wet, : damp")
     print("Map:")
     for y in range(state.height):
         row = []
@@ -174,7 +173,7 @@ def render(state: GameState) -> None:
             if tile.depot:
                 symbol = "D"
             if structure:
-                symbol = {"cistern": "C", "condenser": "N", "planter": "F"}.get(structure.kind, "?")
+                symbol = {"cistern": "C", "condenser": "N", "planter": "P"}.get(structure.kind, "?")
             if state.player == pos:
                 symbol = "@"
             row.append(symbol)
@@ -292,15 +291,9 @@ def pour_water(state: GameState, amount: float) -> None:
     state.messages.append(f"Poured {amount:.1f} water into soil.")
 
 
-def tick_structures(state: GameState, heat: float, dust: bool) -> None:
+def tick_structures(state: GameState, heat: float) -> None:
     for pos, structure in list(state.structures.items()):
         tile = state.tiles[pos[0]][pos[1]]
-        if dust:
-            structure.hp -= 1
-            if structure.hp <= 0:
-                state.messages.append(f"{structure.kind} at {pos} collapsed in the dust front!")
-                del state.structures[pos]
-                continue
         if structure.kind == "condenser":
             tile.hydration += 0.25
         elif structure.kind == "cistern":
@@ -334,13 +327,6 @@ def simulate_tick(state: GameState) -> None:
     day_factor = (1 - abs((daytime / (DAY_LENGTH - 1)) * 2 - 1))  # 0 at edges, 1 at midpoint
     state.heat = 0.8 + 0.6 * day_factor
 
-    state.dust_timer -= 1
-    dust_front = False
-    if state.dust_timer <= 0:
-        dust_front = True
-        state.messages.append("Dust front hits! Evap spikes and structures take damage.")
-        state.dust_timer = random.randint(8, 12)
-
     # Rain scheduling
     state.rain_timer -= 1
     if state.raining:
@@ -354,7 +340,7 @@ def simulate_tick(state: GameState) -> None:
             state.rain_timer = random.randint(3, 5)
             state.messages.append("Rain arrives! Springs surge.")
 
-    tick_structures(state, state.heat, dust_front)
+    tick_structures(state, state.heat)
 
     flows: Dict[Point, float] = {}
     surfaces: Dict[Point, float] = {}
@@ -418,8 +404,13 @@ def show_status(state: GameState) -> None:
     inv = state.inventory
     cisterns = [s for s in state.structures.values() if s.kind == "cistern"]
     stored = sum(s.stored for s in cisterns)
-    print(f"Inventory: water {inv['water']:.1f}, scrap {inv['scrap']}, seeds {inv['seeds']}, biomass {inv['biomass']}")
-    print(f"Cistern storage: {stored:.1f} across {len(cisterns)} cistern(s).")
+    # Send to BOTH console and message log
+    msg1 = f"Inv: water {inv['water']:.1f}, scrap {inv['scrap']}, seeds {inv['seeds']}, biomass {inv['biomass']}"
+    msg2 = f"Cisterns: {stored:.1f} stored across {len(cisterns)} cistern(s)"
+    print(msg1)
+    print(msg2)
+    state.messages.append(msg1)
+    state.messages.append(msg2)
 
 
 def survey_tile(state: GameState) -> None:
@@ -438,8 +429,14 @@ def survey_tile(state: GameState) -> None:
         desc.append("trench")
     if structure:
         desc.append(f"struct={structure.kind}")
-    state.messages.append("Survey: " + " | ".join(desc))
-    print(state.messages[-1])
+        if structure.kind == "cistern":
+            desc.append(f"stored={structure.stored:.2f}")
+        elif structure.kind == "planter":
+            desc.append(f"growth={structure.growth:.2f}")
+    # Send to BOTH console and message log
+    msg = "Survey: " + " | ".join(desc)
+    print(msg)
+    state.messages.append(msg)
 
 
 def handle_command(state: GameState, cmd: str, args: List[str]) -> bool:
@@ -474,7 +471,7 @@ def handle_command(state: GameState, cmd: str, args: List[str]) -> bool:
     elif cmd == "end":
         end_day(state)
     elif cmd == "help":
-        print("Commands: w/a/s/d, dig, lower, raise, build <type>, collect, pour <amt>, survey, status, end, quit")
+        state.messages.append("Commands: w/a/s/d, dig, lower, raise, build <type>, collect, pour <amt>, survey, status, end, quit")
     elif cmd == "quit":
         return True
     else:
