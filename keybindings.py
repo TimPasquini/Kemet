@@ -1,5 +1,5 @@
 """
-keybindings.py - Centralized key mappings for Kemet
+keybindings.py - Centralized key mappings for Kemet (Pygame version)
 
 Single source of truth for all keyboard controls.
 """
@@ -19,29 +19,7 @@ def _key(name: str) -> int:
     return getattr(pygame, f"K_{name}", 0)
 
 
-# Movement keys (continuous hold) - maps to (dx, dy)
-MOVE_KEYS = {
-    _key("w"): (0, -1),
-    _key("a"): (-1, 0),
-    _key("s"): (0, 1),
-    _key("d"): (1, 0),
-}
-
-# Action keys (single press) - maps to (command, args)
-ACTION_KEYS = {
-    _key("t"): ("dig", []),
-    _key("z"): ("lower", []),
-    _key("x"): ("raise", []),
-    _key("c"): ("build", ["cistern"]),
-    _key("n"): ("build", ["condenser"]),
-    _key("p"): ("build", ["planter"]),
-    _key("e"): ("collect", []),
-    _key("f"): ("pour", ["1"]),
-    _key("v"): ("survey", []),
-    _key("SPACE"): ("end", []),
-}
-
-# Number keys for toolbar selection (1-9)
+# Number keys for toolbar selection (1-9) - selects tool without using it
 TOOL_KEYS = {
     _key("1"): 1,
     _key("2"): 2,
@@ -54,6 +32,18 @@ TOOL_KEYS = {
     _key("9"): 9,
 }
 
+# Primary action keys
+USE_TOOL_KEY = _key("f")      # Use currently selected tool
+INTERACT_KEY = _key("e")      # Collect water / resupply at depot / interact with structure
+TOOL_MENU_KEY = _key("r")     # Open tool submenu (for tools with options)
+REST_KEY = _key("SPACE")      # Rest at night to end day
+
+# Menu navigation (when tool menu is open)
+MENU_UP_KEY = _key("w")
+MENU_DOWN_KEY = _key("s")
+MENU_SELECT_KEY = _key("f")   # Same as use tool
+MENU_CANCEL_KEY = _key("r")   # Toggle off
+
 # System keys
 QUIT_KEY = _key("ESCAPE")
 HELP_KEY = _key("h")
@@ -61,15 +51,10 @@ HELP_KEY = _key("h")
 # Control descriptions for help display
 CONTROL_DESCRIPTIONS = [
     "WASD: move",
-    "1: dig trench",
-    "2: lower ground",
-    "3: raise ground",
-    "4: cistern",
-    "5: condenser",
-    "6: planter",
-    "7: collect",
-    "8: pour 1L",
-    "9: survey",
+    "1-9: select tool",
+    "F: use tool",
+    "R: tool options",
+    "E: interact",
     "Space: rest",
     "H: help",
     "Esc: quit",

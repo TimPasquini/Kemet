@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import random
 import sys
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple
 
@@ -128,6 +129,11 @@ class GameState:
     raining: bool = False
     is_night: bool = False
     messages: List[str] = field(default_factory=list)
+    # Pygame frontend state (action timer system)
+    player_action_timer: float = 0.0
+    last_action: str = ""
+    # Track last rock tile that blocked movement (to avoid message spam)
+    last_rock_blocked: Point | None = None
 
 
 def update_moisture_history(tile: Tile) -> None:
@@ -157,12 +163,13 @@ def calculate_biome(tile: Tile, neighbor_tiles: List[Tile], elevation_percentile
         return "salt"
 
     if neighbor_tiles:
-        from collections import Counter
         neighbor_biomes = [n.kind for n in neighbor_tiles]
         biome_counts = Counter(neighbor_biomes)
-        most_common, count = biome_counts.most_common(1)[0]
-        if count >= 3 and most_common in ("dune", "flat", "wadi"):
-            return most_common
+        most_common_list = biome_counts.most_common(1)
+        if most_common_list:
+            most_common, count = most_common_list[0]
+            if count >= 3 and most_common in ("dune", "flat", "wadi"):
+                return most_common
     return "flat"
 
 
@@ -342,6 +349,18 @@ def dig_trench(state: GameState) -> None:
     state.messages.append("Dug a trench; flow improves, evap drops here.")
 
 
+def terrain_action(state: GameState, action: str) -> None:
+    """Dispatch terrain tool actions (shovel submenu)."""
+    if action == "trench":
+        dig_trench(state)
+    elif action == "lower":
+        lower_ground(state)
+    elif action == "raise":
+        raise_ground(state)
+    else:
+        state.messages.append(f"Unknown terrain action: {action}")
+
+
 def lower_ground(state: GameState) -> None:
     tile = state.tiles[state.player[0]][state.player[1]]
     for layer, name in [(SoilLayer.TOPSOIL, "topsoil"), (SoilLayer.ELUVIATION, "eluviation"),
@@ -508,6 +527,7 @@ def handle_command(state: GameState, cmd: str, args: List[str]) -> bool:
     command_map = {
         "w": move_player, "a": move_player, "s": move_player, "d": move_player,
         "dig": dig_trench, "lower": lower_ground, "raise": raise_ground,
+        "terrain": terrain_action,  # Shovel tool dispatcher
         "build": build_structure, "collect": collect_water, "pour": pour_water,
         "status": show_status, "survey": survey_tile, "end": end_day,
     }

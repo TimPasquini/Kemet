@@ -378,8 +378,9 @@ def calculate_overflows(
 
                 if not flow_targets:
                     # If no neighbors, water is pushed to the surface
-                    deltas[((x,y), layer)] -= overflow_amount
-                    water.surface_water += overflow_amount # Immediate change, as it's not a flow
+                    # Record as a delta to maintain snapshot consistency
+                    deltas[((x, y), layer)] -= overflow_amount
+                    deltas[((x, y), "surface")] = deltas.get(((x, y), "surface"), 0) + overflow_amount
                     continue
 
                 # Distribute overflow to neighbors
@@ -399,7 +400,7 @@ def calculate_overflows(
 def apply_flows(
         tiles: List[List[Tuple[TerrainColumn, WaterColumn]]],
         surface_deltas: Dict[Point, int],
-        subsurface_deltas: Dict[Tuple[Point, SoilLayer], int],
+        subsurface_deltas: Dict[Tuple[Point, SoilLayer | str], int],
 ) -> None:
     """Apply accumulated water flows to tiles."""
     # Apply surface flows (now deltas)
@@ -408,8 +409,12 @@ def apply_flows(
         # Ensure water doesn't go below zero from rounding
         water.surface_water = max(0, water.surface_water + amount)
 
-    # Apply subsurface flows
+    # Apply subsurface flows (may include "surface" key from overflow)
     for ((x, y), layer), amount in subsurface_deltas.items():
         _, water = tiles[x][y]
-        current_water = water.get_layer_water(layer)
-        water.set_layer_water(layer, max(0, current_water + amount))
+        if layer == "surface":
+            # Handle overflow water pushed to surface
+            water.surface_water = max(0, water.surface_water + amount)
+        else:
+            current_water = water.get_layer_water(layer)
+            water.set_layer_water(layer, max(0, current_water + amount))

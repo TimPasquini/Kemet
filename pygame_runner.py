@@ -3,8 +3,11 @@
 Pygame-CE frontend for the Kemet prototype.
 
 Controls:
-- W/A/S/D: move
-- 1-9: select and use tool
+- W/A/S/D: move (or menu navigation when menu open)
+- 1-9: select tool
+- F: use selected tool
+- R: open tool options menu
+- E: interact with structure/environment
 - Space: rest (at night)
 - H: show help
 - ESC: quit
@@ -29,8 +32,18 @@ from main import (
     end_day,
 )
 from ground import SoilLayer, MATERIAL_LIBRARY, units_to_meters
-from tools import TOOLS, get_tool_by_number, Tool
-from keybindings import CONTROL_DESCRIPTIONS, TOOL_KEYS
+from tools import get_toolbar, Toolbar
+from keybindings import (
+    CONTROL_DESCRIPTIONS,
+    TOOL_KEYS,
+    USE_TOOL_KEY,
+    INTERACT_KEY,
+    TOOL_MENU_KEY,
+    REST_KEY,
+    HELP_KEY,
+    MENU_UP_KEY,
+    MENU_DOWN_KEY,
+)
 # Import from our new utils file
 from utils import clamp
 
@@ -60,12 +73,14 @@ MAP_SIZE: MapSize = (40, 30)
 # --- Action Duration System ---
 # Defines how long (in seconds) the player is locked while performing an action.
 ACTION_DURATIONS = {
+    "terrain": 1.0,  # Shovel tool (trench/lower/raise)
     "dig": 1.0,
     "lower": 1.5,
     "raise": 0.8,
     "build": 2.0,
     "collect": 0.5,
     "pour": 0.5,
+    "survey": 0.3,
 }
 
 BIOME_COLORS: Dict[str, Color] = {"dune": (204, 174, 120), "flat": (188, 158, 112), "wadi": (150, 125, 96),
@@ -193,23 +208,37 @@ def draw_soil_profile(surface, font, tile, pos: Tuple[int, int], width: int, hei
         draw_layer(layer, layer.name.capitalize())
 
 
-def draw_toolbar(surface, font, tools: List[Tool], selected_idx: int, pos: Tuple[int, int], width: int,
-                 height: int) -> None:
+def draw_toolbar(surface, font, toolbar: Toolbar, pos: Tuple[int, int], width: int, height: int) -> None:
     x, y = pos
+    tools = toolbar.tools
     tool_count = len(tools)
     tool_width = width // tool_count
     pygame.draw.rect(surface, TOOLBAR_BG_COLOR, (x, y, width, height))
     pygame.draw.line(surface, (60, 60, 60), (x, y), (x + width, y), 1)
+
     for i, tool in enumerate(tools):
         tx = x + (i * tool_width)
-        if i == selected_idx:
+        is_selected = (i == toolbar.selected_index)
+
+        # Highlight selected tool
+        if is_selected:
             pygame.draw.rect(surface, TOOLBAR_SELECTED_COLOR, (tx + 1, y + 1, tool_width - 2, height - 2))
+
+        # Draw tool number and icon
         draw_text(surface, font, f"{i + 1}", (tx + 4, y + 2), color=(150, 150, 130))
         draw_text(surface, font, tool.icon, (tx + 18, y + 2), color=TOOLBAR_TEXT_COLOR)
-        draw_text(surface, font, tool.name[:6], (tx + 4, y + 16), color=(140, 140, 140))
+
+        # Show current option for tools with menus, or tool name
+        if tool.has_menu() and is_selected:
+            opt = tool.get_current_option()
+            label = opt.name[:6] if opt else tool.name[:6]
+            draw_text(surface, font, label, (tx + 4, y + 16), color=(180, 180, 140))
+        else:
+            draw_text(surface, font, tool.name[:6], (tx + 4, y + 16), color=(140, 140, 140))
+
+        # Separator
         if i < tool_count - 1:
-            pygame.draw.line(surface, (50, 50, 50), (tx + tool_width - 1, y + 4), (tx + tool_width - 1, y + height - 4),
-                             1)
+            pygame.draw.line(surface, (50, 50, 50), (tx + tool_width - 1, y + 4), (tx + tool_width - 1, y + height - 4), 1)
 
 
 def draw_help_overlay(surface, font, controls: List[str], pos: Tuple[int, int], available_width: int,
@@ -226,7 +255,7 @@ def draw_help_overlay(surface, font, controls: List[str], pos: Tuple[int, int], 
             draw_text(surface, font, control, (cx, cy), color=(180, 180, 160))
 
 
-def render(screen, font, state: GameState, tile_size: int, player_px: Tuple[float, float], selected_tool: int,
+def render(screen, font, state: GameState, tile_size: int, player_px: Tuple[float, float], toolbar: Toolbar,
            show_help: bool, elevation_range: Tuple[float, float]) -> None:
     screen.fill((20, 20, 25))
     map_width, map_height = state.width * tile_size, state.height * tile_size
@@ -337,7 +366,7 @@ def render(screen, font, state: GameState, tile_size: int, player_px: Tuple[floa
         overlay = pygame.Surface((map_width, map_height), pygame.SRCALPHA)
         overlay.fill((10, 20, 40, night_alpha))
         screen.blit(overlay, (0, 0))
-    draw_toolbar(screen, font, TOOLS, selected_tool, (0, map_height), map_width, TOOLBAR_HEIGHT)
+    draw_toolbar(screen, font, toolbar, (0, map_height), map_width, TOOLBAR_HEIGHT)
     log_panel_y = map_height + TOOLBAR_HEIGHT
     log_panel_height = screen.get_height() - log_panel_y
     pygame.draw.line(screen, (80, 80, 80), (0, log_panel_y), (screen.get_width(), log_panel_y), 2)
@@ -391,9 +420,9 @@ def update_player_position(state: GameState, player_px: List[float], vel: Tuple[
     if state.tiles[target_tile_x][target_tile_y].kind == "rock":
         current_tile_x, current_tile_y = int(player_px[0] // tile_size), int(player_px[1] // tile_size)
         if (target_tile_x, target_tile_y) != (current_tile_x, current_tile_y):
-            if (target_tile_x, target_tile_y) != getattr(state, '_last_rock_blocked', None):
+            if (target_tile_x, target_tile_y) != state.last_rock_blocked:
                 state.messages.append("Rock blocks the way.")
-                state._last_rock_blocked = (target_tile_x, target_tile_y)
+                state.last_rock_blocked = (target_tile_x, target_tile_y)
             return
     player_px[0], player_px[1] = new_x, new_y
     state.player = (target_tile_x, target_tile_y)
@@ -409,15 +438,11 @@ def run(window_size: MapSize = MAP_SIZE, tile_size: int = TILE_SIZE) -> None:
     font = pygame.font.Font(None, FONT_SIZE)
     clock = pygame.time.Clock()
     state = build_initial_state(width=map_w, height=map_h)
-
-    # Add attributes for the action timer system
-    state.player_action_timer = 0.0
-    state.last_action = ""
-
-    state.messages.append("Welcome to Kemet. Press H for help, 1-9 to select tools.")
+    state.messages.append("Welcome to Kemet. Press H for help. 1-9 select tools, F to use, R for options, E to interact.")
     player_px = [state.player[0] * tile_size + tile_size / 2, state.player[1] * tile_size + tile_size / 2]
     tick_timer = 0.0
-    selected_tool, show_help = 0, False
+    toolbar = get_toolbar()
+    show_help = False
     elevation_range = calculate_elevation_range(state)
     running = True
     while running:
@@ -432,29 +457,68 @@ def run(window_size: MapSize = MAP_SIZE, tile_size: int = TILE_SIZE) -> None:
             if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE):
                 running = False
             elif event.type == pygame.KEYDOWN:
-                if state.player_action_timer > 0: continue  # Player is busy
-
-                if event.key == pygame.K_h:
+                # Help toggle works even when busy
+                if event.key == HELP_KEY:
                     show_help = not show_help
-                elif event.key == pygame.K_SPACE:
-                    issue(state, "end", [])
-                elif event.key in TOOL_KEYS:
+                    toolbar.close_menu()
+                    continue
+
+                # Tool menu navigation when menu is open
+                if toolbar.menu_open:
+                    if event.key == MENU_UP_KEY:
+                        toolbar.cycle_menu_option(-1)
+                        continue
+                    elif event.key == MENU_DOWN_KEY:
+                        toolbar.cycle_menu_option(1)
+                        continue
+                    elif event.key == TOOL_MENU_KEY:
+                        toolbar.close_menu()
+                        continue
+                    elif event.key == USE_TOOL_KEY:
+                        # Select option and use tool
+                        toolbar.close_menu()
+                        # Fall through to use tool below
+
+                # Tool selection works even when busy (closes menu)
+                if event.key in TOOL_KEYS:
                     tool_num = TOOL_KEYS[event.key]
-                    tool = get_tool_by_number(tool_num)
+                    toolbar.select_by_number(tool_num)
+                    continue
+
+                # Block other actions while busy
+                if state.player_action_timer > 0:
+                    continue
+
+                if event.key == REST_KEY:
+                    issue(state, "end", [])
+                elif event.key == TOOL_MENU_KEY:
+                    # R key: toggle tool options menu
+                    tool = toolbar.get_selected_tool()
+                    if tool and tool.has_menu():
+                        toolbar.toggle_menu()
+                    else:
+                        state.messages.append("This tool has no options.")
+                elif event.key == INTERACT_KEY:
+                    # E key: interact (collect/resupply)
+                    issue(state, "collect", [])
+                elif event.key == USE_TOOL_KEY:
+                    # F key: use selected tool
+                    tool = toolbar.get_selected_tool()
                     if tool:
-                        selected_tool = tool_num - 1
-                        issue(state, tool.action, tool.args)
-                        if tool.action in ("raise", "lower"):
+                        action, args = tool.get_action()
+                        issue(state, action, args)
+                        if action in ("terrain", "raise", "lower"):
                             elevation_range = calculate_elevation_range(state)
 
-        # Handle continuous movement
-        keys = pygame.key.get_pressed()
-        vx = vy = 0.0
-        if keys[pygame.K_w]: vy -= MOVE_SPEED
-        if keys[pygame.K_s]: vy += MOVE_SPEED
-        if keys[pygame.K_a]: vx -= MOVE_SPEED
-        if keys[pygame.K_d]: vx += MOVE_SPEED
-        update_player_position(state, player_px, (vx, vy), dt, tile_size)
+        # Handle continuous movement (disabled when menu is open)
+        if not toolbar.menu_open:
+            keys = pygame.key.get_pressed()
+            vx = vy = 0.0
+            if keys[pygame.K_w]: vy -= MOVE_SPEED
+            if keys[pygame.K_s]: vy += MOVE_SPEED
+            if keys[pygame.K_a]: vx -= MOVE_SPEED
+            if keys[pygame.K_d]: vx += MOVE_SPEED
+            update_player_position(state, player_px, (vx, vy), dt, tile_size)
 
         # Continuous world simulation tick
         tick_timer += dt
@@ -462,7 +526,7 @@ def run(window_size: MapSize = MAP_SIZE, tile_size: int = TILE_SIZE) -> None:
             simulate_tick(state)
             tick_timer -= TICK_INTERVAL
 
-        render(screen, font, state, tile_size, tuple(player_px), selected_tool, show_help, elevation_range)
+        render(screen, font, state, tile_size, tuple(player_px), toolbar, show_help, elevation_range)
         pygame.display.flip()
     pygame.quit()
 
