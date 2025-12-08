@@ -9,7 +9,7 @@ Controls (while window focused):
 - N: build condenser
 - P: build planter
 - E: collect water on tile
-- F: pour 1 water on tile
+- F: pour 1L water on tile
 - V: survey tile
 - SPACE: end day
 - H: show help in log
@@ -36,12 +36,14 @@ from main import (
     handle_command,
     simulate_tick,
 )
+from ground import SoilLayer, MATERIAL_LIBRARY, units_to_meters
 
 # Display constants
-SIDEBAR_WIDTH = 260
+SIDEBAR_WIDTH = 300
 TILE_SIZE = 32
 LINE_HEIGHT = 20
-FONT_SIZE = 20
+FONT_SIZE = 18
+SECTION_SPACING = 8
 
 # Movement and collision constants
 MOVE_SPEED = 220  # pixels per second
@@ -54,20 +56,26 @@ STRUCTURE_INSET = 8
 TRENCH_INSET = 10
 WELL_RADIUS = 6
 
+# Profile meter constants
+PROFILE_WIDTH = 180
+PROFILE_HEIGHT = 300
+PROFILE_MARGIN = 10
+
 # Control scheme - single source of truth
 CONTROLS = [
-    "WASD move",
-    "T trench",
-    "Z lower",
-    "X raise",
-    "C cistern",
-    "N condenser",
-    "P planter",
-    "E collect",
-    "F pour 1",
-    "V survey",
-    "Space end day",
-    "Esc quit"
+    "WASD: move",
+    "T: dig trench",
+    "Z: lower ground",
+    "X: raise ground",
+    "C: build cistern",
+    "N: build condenser",
+    "P: build planter",
+    "E: collect water",
+    "F: pour 1L",
+    "V: survey",
+    "Space: end day",
+    "H: help",
+    "Esc: quit"
 ]
 
 MapSize = Tuple[int, int]
@@ -80,9 +88,9 @@ def color_for_tile(state_tile, tile_type) -> Tuple[int, int, int]:
     Prioritizes water visualization over base terrain color.
     """
     # Hydration overlays
-    if state_tile.hydration >= 1.0:
+    if state_tile.hydration >= 10.0:
         return (48, 133, 214)  # deep water
-    if state_tile.hydration >= 0.5:
+    if state_tile.hydration >= 5.0:
         return (92, 180, 238)  # damp
     # Base per tile kind
     return {
@@ -99,37 +107,109 @@ def draw_text(surface, font, text: str, pos: Tuple[int, int], color=(230, 230, 2
     surface.blit(font.render(text, True, color), pos)
 
 
-def wrap_text(font, text: str, max_width: int) -> List[str]:
+def draw_section_header(surface, font, text: str, pos: Tuple[int, int]) -> int:
+    """Draw a section header with underline. Returns new y position."""
+    x, y = pos
+    draw_text(surface, font, text, (x, y), color=(220, 200, 120))
+    y += LINE_HEIGHT
+    pygame.draw.line(surface, (100, 100, 80), (x, y), (x + 200, y), 1)
+    return y + 6
+
+
+def draw_soil_profile(surface, font, tile, pos: Tuple[int, int], width: int, height: int) -> None:
     """
-    Wrap text to fit within max_width pixels.
+    Draw a cross-section view of the soil layers for the current tile.
     
-    Uses font.size() instead of rendering for efficiency.
+    Shows layers from surface down to bedrock with proper scaling and colors.
     """
-    words = text.split(' ')
-    lines = []
-    current_line = ""
+    x, y = pos
+    terrain = tile.terrain
+    water = tile.water
     
-    for word in words:
-        test_line = current_line + (" " if current_line else "") + word
-        width = font.size(test_line)[0]
-        if width <= max_width:
-            current_line = test_line
-        else:
-            if current_line:
-                lines.append(current_line)
-            current_line = word
+    # Draw border
+    pygame.draw.rect(surface, (100, 100, 100), (x, y, width, height), 2)
     
-    if current_line:
-        lines.append(current_line)
+    # Draw title
+    draw_text(surface, font, "Soil Profile", (x + 5, y - 18), color=(200, 200, 200))
     
-    return lines if lines else [text]
+    # Calculate total height and scale
+    total_depth = terrain.get_total_soil_depth() + terrain.bedrock_depth
+    if total_depth == 0:
+        return
+    
+    scale = (height - 20) / total_depth  # pixels per unit
+    
+    current_y = y + 10
+    
+    # Helper to draw a layer
+    def draw_layer(layer: SoilLayer, label: str):
+        nonlocal current_y
+        depth = terrain.get_layer_depth(layer)
+        if depth == 0:
+            return
+        
+        layer_height = int(depth * scale)
+        if layer_height < 2:  # Too thin to show
+            return
+        
+        material = terrain.get_layer_material(layer)
+        props = MATERIAL_LIBRARY.get(material)
+        color = props.display_color if props else (150, 150, 150)
+        
+        # Draw material
+        layer_rect = pygame.Rect(x + 5, current_y, width - 10, layer_height)
+        pygame.draw.rect(surface, color, layer_rect)
+        pygame.draw.rect(surface, (80, 80, 80), layer_rect, 1)
+        
+        # Draw water overlay if present
+        water_in_layer = water.get_layer_water(layer)
+        max_storage = terrain.get_max_water_storage(layer)
+        if water_in_layer > 0 and max_storage > 0:
+            fill_pct = min(100, (water_in_layer * 100) // max_storage)
+            water_height = (layer_height * fill_pct) // 100
+            if water_height > 1:
+                water_rect = pygame.Rect(
+                    x + 5,
+                    current_y + layer_height - water_height,
+                    width - 10,
+                    water_height
+                )
+                water_surf = pygame.Surface((water_rect.width, water_rect.height), pygame.SRCALPHA)
+                water_surf.fill((100, 150, 255, 100))
+                surface.blit(water_surf, water_rect.topleft)
+        
+        # Draw label if layer is tall enough
+        if layer_height >= 16:
+            label_text = f"{label[:3]} {units_to_meters(depth):.1f}m"
+            draw_text(surface, font, label_text, (x + 8, current_y + 2), color=(255, 255, 255))
+        
+        current_y += layer_height
+    
+    # Draw layers from top to bottom
+    # Surface water
+    if water.surface_water > 0:
+        surf_height = min(30, int(water.surface_water * scale))
+        if surf_height > 2:
+            surf_rect = pygame.Rect(x + 5, current_y, width - 10, surf_height)
+            pygame.draw.rect(surface, (100, 150, 255), surf_rect)
+            if surf_height >= 16:
+                draw_text(surface, font, f"Water {water.surface_water/10:.1f}L", 
+                         (x + 8, current_y + 2), color=(255, 255, 255))
+            current_y += surf_height
+    
+    draw_layer(SoilLayer.ORGANICS, "Organics")
+    draw_layer(SoilLayer.TOPSOIL, "Topsoil")
+    draw_layer(SoilLayer.ELUVIATION, "Eluviation")
+    draw_layer(SoilLayer.SUBSOIL, "Subsoil")
+    draw_layer(SoilLayer.REGOLITH, "Regolith")
+    draw_layer(SoilLayer.BEDROCK, "Bedrock")
 
 
 def render(screen, font, state: GameState, tile_size: int, sidebar: int, player_px: Tuple[float, float]) -> None:
     """
     Render the complete game state to the pygame window.
     
-    Draws tiles, structures, player, and HUD sidebar with inventory.
+    Draws tiles, structures, player, HUD sidebar with inventory and soil profile.
     Log messages displayed in bottom panel across full width.
     """
     screen.fill((20, 20, 25))
@@ -161,8 +241,8 @@ def render(screen, font, state: GameState, tile_size: int, sidebar: int, player_
             tile = state.tiles[x][y]
             rect = pygame.Rect(x * tile_size, y * tile_size, tile_size - 1, tile_size - 1)
             if tile.well_output > 0:
-                # Different colors for seep vs spring
-                well_color = (100, 180, 240) if tile.well_output > 0.3 else (70, 140, 220)
+                # Different colors for seep vs spring (converting units to L for comparison)
+                well_color = (100, 180, 240) if tile.well_output/10 > 0.3 else (70, 140, 220)
                 pygame.draw.circle(screen, well_color, rect.center, WELL_RADIUS)
             if tile.depot:
                 pygame.draw.rect(screen, (200, 200, 60), rect.inflate(-TRENCH_INSET, -TRENCH_INSET), border_radius=3)
@@ -176,79 +256,98 @@ def render(screen, font, state: GameState, tile_size: int, sidebar: int, player_
     hud_x = map_width + 12
     y_offset = 12
     
-    draw_text(screen, font, f"Day {state.day}", (hud_x, y_offset))
-    y_offset += LINE_HEIGHT
+    # Environment section
+    y_offset = draw_section_header(screen, font, "ENVIRONMENT", (hud_x, y_offset))
+    y_offset += 4
     
-    draw_text(screen, font, f"Heat {state.heat:.2f}", (hud_x, y_offset))
+    draw_text(screen, font, f"Day: {state.day}", (hud_x, y_offset))
     y_offset += LINE_HEIGHT
     
     phase = "Night" if state.heat < HEAT_NIGHT_THRESHOLD else "Day"
-    draw_text(screen, font, f"Cycle: {phase}", (hud_x, y_offset))
+    draw_text(screen, font, f"Time: {phase}", (hud_x, y_offset))
     y_offset += LINE_HEIGHT
     
-    rain_txt = "Raining!" if state.raining else f"Rain in {state.rain_timer}"
-    draw_text(screen, font, rain_txt, (hud_x, y_offset))
-    y_offset += LINE_HEIGHT * 1.5  # Extra space before inventory
+    draw_text(screen, font, f"Heat: {state.heat}%", (hud_x, y_offset))
+    y_offset += LINE_HEIGHT
+    
+    rain_status = "Active" if state.raining else f"in {state.rain_timer}t"
+    draw_text(screen, font, f"Rain: {rain_status}", (hud_x, y_offset))
+    y_offset += LINE_HEIGHT + SECTION_SPACING
+    
+    # Inventory section
+    y_offset = draw_section_header(screen, font, "INVENTORY", (hud_x, y_offset))
+    y_offset += 4
     
     inv = state.inventory
-    draw_text(screen, font, f"Water: {inv['water']:.1f}", (hud_x, y_offset))
+    draw_text(screen, font, f"Water: {inv['water']/10:.1f}L", (hud_x, y_offset))
     y_offset += LINE_HEIGHT
     
-    draw_text(screen, font, f"Scrap: {int(inv['scrap'])}", (hud_x, y_offset))
+    draw_text(screen, font, f"Scrap: {int(inv['scrap'])} units", (hud_x, y_offset))
     y_offset += LINE_HEIGHT
     
-    draw_text(screen, font, f"Seeds: {int(inv['seeds'])}", (hud_x, y_offset))
+    draw_text(screen, font, f"Seeds: {int(inv['seeds'])} units", (hud_x, y_offset))
     y_offset += LINE_HEIGHT
     
-    draw_text(screen, font, f"Biomass: {int(inv['biomass'])}", (hud_x, y_offset))
-    y_offset += LINE_HEIGHT * 1.5  # Extra space before player tile info
+    draw_text(screen, font, f"Biomass: {int(inv['biomass'])} kg", (hud_x, y_offset))
+    y_offset += LINE_HEIGHT + SECTION_SPACING
     
-    # Current tile info
+    # Current tile section
     x, y = state.player
     tile = state.tiles[x][y]
     structure = state.structures.get((x, y))
     
-    draw_text(screen, font, f"Position: {x},{y}", (hud_x, y_offset))
+    y_offset = draw_section_header(screen, font, "CURRENT TILE", (hud_x, y_offset))
+    y_offset += 4
+    
+    draw_text(screen, font, f"Position: ({x}, {y})", (hud_x, y_offset))
     y_offset += LINE_HEIGHT
     
-    draw_text(screen, font, f"Terrain: {tile.kind}", (hud_x, y_offset))
+    draw_text(screen, font, f"Type: {tile.kind.capitalize()}", (hud_x, y_offset))
     y_offset += LINE_HEIGHT
     
-    draw_text(screen, font, f"Elevation: {tile.elevation:.2f}", (hud_x, y_offset))
+    draw_text(screen, font, f"Elevation: {tile.elevation:.2f}m", (hud_x, y_offset))
     y_offset += LINE_HEIGHT
     
-    draw_text(screen, font, f"Water: {tile.hydration:.2f}", (hud_x, y_offset))
+    total_water = tile.water.total_water()
+    draw_text(screen, font, f"Water: {total_water/10:.1f}L total", (hud_x, y_offset))
     y_offset += LINE_HEIGHT
+    
+    surface_water = tile.water.surface_water
+    draw_text(screen, font, f"  Surface: {surface_water/10:.1f}L", (hud_x + 10, y_offset), color=(180, 180, 180))
+    y_offset += LINE_HEIGHT
+    
+    subsurface = tile.water.total_subsurface_water()
+    if subsurface > 0:
+        draw_text(screen, font, f"  Ground: {subsurface/10:.1f}L", (hud_x + 10, y_offset), color=(180, 180, 180))
+        y_offset += LINE_HEIGHT
     
     if tile.well_output > 0:
-        draw_text(screen, font, f"Well: {tile.well_output:.2f}/t", (hud_x, y_offset))
+        draw_text(screen, font, f"Well: {tile.well_output/10:.2f}L/tick", (hud_x, y_offset), color=(100, 180, 255))
         y_offset += LINE_HEIGHT
     
     if tile.trench:
-        draw_text(screen, font, "Trench: Yes", (hud_x, y_offset))
+        draw_text(screen, font, "Trench: Yes", (hud_x, y_offset), color=(180, 180, 120))
         y_offset += LINE_HEIGHT
     
     if structure:
-        draw_text(screen, font, f"Structure: {structure.kind}", (hud_x, y_offset))
+        draw_text(screen, font, f"Structure: {structure.kind.capitalize()}", (hud_x, y_offset), color=(120, 200, 120))
         y_offset += LINE_HEIGHT
+        
         if structure.kind == "cistern":
-            draw_text(screen, font, f"Stored: {structure.stored:.2f}", (hud_x, y_offset))
+            draw_text(screen, font, f"  Stored: {structure.stored/10:.1f}L", (hud_x + 10, y_offset), color=(180, 180, 180))
             y_offset += LINE_HEIGHT
         elif structure.kind == "planter":
-            draw_text(screen, font, f"Growth: {structure.growth:.2f}", (hud_x, y_offset))
+            draw_text(screen, font, f"  Growth: {structure.growth}%", (hud_x + 10, y_offset), color=(180, 180, 180))
             y_offset += LINE_HEIGHT
     
-    y_offset += LINE_HEIGHT * 0.5  # Extra space before controls
+    y_offset += SECTION_SPACING
     
-    draw_text(screen, font, "Controls:", (hud_x, y_offset))
-    y_offset += LINE_HEIGHT
-    
-    for line in CONTROLS:
-        draw_text(screen, font, line, (hud_x, y_offset), color=(180, 180, 180))
-        y_offset += 18  # Slightly tighter spacing for controls
+    # Soil profile visualization
+    profile_y = y_offset
+    draw_soil_profile(screen, font, tile, (hud_x, profile_y), PROFILE_WIDTH, PROFILE_HEIGHT)
 
     # Night overlay on map area only
-    night_alpha = max(0, min(200, int((1.4 - state.heat) * 180)))
+    night_alpha = max(0, min(200, int((140 - state.heat) * 180 // 80)))
     if night_alpha > 0:
         overlay = pygame.Surface((map_width, map_height), pygame.SRCALPHA)
         overlay.fill((10, 20, 40, night_alpha))
@@ -264,12 +363,12 @@ def render(screen, font, state: GameState, tile_size: int, sidebar: int, player_
     # Log header
     log_x = 12
     log_y = log_panel_y + 8
-    draw_text(screen, font, "Event Log:", (log_x, log_y), color=(200, 200, 200))
+    draw_text(screen, font, "EVENT LOG", (log_x, log_y), color=(200, 180, 120))
     log_y += LINE_HEIGHT + 4
     
-    # Display recent messages (no wrapping needed with full width)
-    available_width = screen.get_width() - 24  # margin on both sides
-    max_messages = (log_panel_height - 40) // 18  # how many fit
+    # Display recent messages
+    available_width = screen.get_width() - 24
+    max_messages = (log_panel_height - 40) // 18
     
     for msg in state.messages[-max_messages:]:
         draw_text(screen, font, f"• {msg}", (log_x, log_y), color=(160, 200, 160))
@@ -346,16 +445,16 @@ def run(window_size: MapSize = (20, 15), tile_size: int = TILE_SIZE) -> None:
     """
     pygame.init()
     map_w, map_h = window_size
-    # Window sized to fit map + log area below
-    log_height = 150  # Height of bottom log panel
+    # Window sized to fit map + log area below + wider sidebar
+    log_height = 150
     window_width = map_w * tile_size + SIDEBAR_WIDTH
     window_height = map_h * tile_size + log_height
     screen = pygame.display.set_mode((window_width, window_height))
-    pygame.display.set_caption("Kemet Prototype (pygame-ce)")
+    pygame.display.set_caption("Kemet Prototype - Desert Terraforming")
     font = pygame.font.Font(None, FONT_SIZE)
     clock = pygame.time.Clock()
     state = build_initial_state(width=map_w, height=map_h)
-    state.messages.append("Pygame mode: press H for controls.")
+    state.messages.append("Welcome to Kemet. Press H for help.")
     player_px = [state.player[0] * tile_size + tile_size / 2, state.player[1] * tile_size + tile_size / 2]
     tick_timer = 0.0
 
@@ -389,7 +488,8 @@ def run(window_size: MapSize = (20, 15), tile_size: int = TILE_SIZE) -> None:
                 elif event.key == pygame.K_SPACE:
                     issue(state, "end", [])
                 elif event.key == pygame.K_h:
-                    state.messages.append("Controls: " + ", ".join(CONTROLS))
+                    for control in CONTROLS:
+                        state.messages.append(control)
         
         # Continuous movement with WASD
         keys = pygame.key.get_pressed()
