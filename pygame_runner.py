@@ -56,9 +56,9 @@ STRUCTURE_INSET = 8
 TRENCH_INSET = 10
 WELL_RADIUS = 6
 
-# Profile meter constants
-PROFILE_WIDTH = 180
-PROFILE_HEIGHT = 300
+# Profile meter constants (thinner per request)
+PROFILE_WIDTH = 140
+PROFILE_HEIGHT = 240
 PROFILE_MARGIN = 10
 
 # Control scheme - single source of truth
@@ -252,7 +252,7 @@ def render(screen, font, state: GameState, tile_size: int, sidebar: int, player_
     px, py = player_px
     pygame.draw.circle(screen, (240, 240, 90), (int(px), int(py)), tile_size // PLAYER_RADIUS_DIVISOR)
     
-    # Sidebar HUD
+    # Sidebar HUD (left of soil profile)
     hud_x = map_width + 12
     y_offset = 12
     
@@ -274,24 +274,9 @@ def render(screen, font, state: GameState, tile_size: int, sidebar: int, player_
     draw_text(screen, font, f"Rain: {rain_status}", (hud_x, y_offset))
     y_offset += LINE_HEIGHT + SECTION_SPACING
     
-    # Inventory section
-    y_offset = draw_section_header(screen, font, "INVENTORY", (hud_x, y_offset))
-    y_offset += 4
+    # -- note: inventory moved to bottom-right panel; omit inventory here --
     
-    inv = state.inventory
-    draw_text(screen, font, f"Water: {inv['water']/10:.1f}L", (hud_x, y_offset))
-    y_offset += LINE_HEIGHT
-    
-    draw_text(screen, font, f"Scrap: {int(inv['scrap'])} units", (hud_x, y_offset))
-    y_offset += LINE_HEIGHT
-    
-    draw_text(screen, font, f"Seeds: {int(inv['seeds'])} units", (hud_x, y_offset))
-    y_offset += LINE_HEIGHT
-    
-    draw_text(screen, font, f"Biomass: {int(inv['biomass'])} kg", (hud_x, y_offset))
-    y_offset += LINE_HEIGHT + SECTION_SPACING
-    
-    # Current tile section
+    # Current tile section (remains left of soil profile)
     x, y = state.player
     tile = state.tiles[x][y]
     structure = state.structures.get((x, y))
@@ -342,10 +327,30 @@ def render(screen, font, state: GameState, tile_size: int, sidebar: int, player_
     
     y_offset += SECTION_SPACING
     
-    # Soil profile visualization
-    profile_y = y_offset
-    draw_soil_profile(screen, font, tile, (hud_x, profile_y), PROFILE_WIDTH, PROFILE_HEIGHT)
-
+    # Position soil profile in the upper-right area (thinner, per request)
+    soil_x = screen.get_width() - PROFILE_WIDTH - PROFILE_MARGIN
+    soil_y = 12
+    draw_soil_profile(screen, font, tile, (soil_x, soil_y), PROFILE_WIDTH, PROFILE_HEIGHT)
+    
+    # Inventory panel anchored bottom-right (square)
+    inv_w = 180
+    inv_h = 140
+    inv_x = screen.get_width() - inv_w - 12
+    inv_y = map_height - inv_h - 12
+    # Ensure inventory doesn't go above the map area (clamp)
+    if inv_y < 12:
+        inv_y = 12
+    pygame.draw.rect(screen, (40, 40, 40), (inv_x, inv_y, inv_w, inv_h), 2)
+    ix = inv_x + 8
+    iy = inv_y + 8
+    draw_text(screen, font, "Inventory", (ix, iy))
+    iy += LINE_HEIGHT
+    inv = state.inventory
+    draw_text(screen, font, f"Water: {inv['water']/10:.1f}L", (ix, iy)); iy += LINE_HEIGHT
+    draw_text(screen, font, f"Scrap: {int(inv['scrap'])}", (ix, iy)); iy += LINE_HEIGHT
+    draw_text(screen, font, f"Seeds: {int(inv['seeds'])}", (ix, iy)); iy += LINE_HEIGHT
+    draw_text(screen, font, f"Biomass: {int(inv['biomass'])}kg", (ix, iy))
+    
     # Night overlay on map area only
     night_alpha = max(0, min(200, int((140 - state.heat) * 180 // 80)))
     if night_alpha > 0:
@@ -522,3 +527,4 @@ if __name__ == "__main__":
         run()
     except KeyboardInterrupt:
         sys.exit(0)
+
