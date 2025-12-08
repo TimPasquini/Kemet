@@ -1,68 +1,56 @@
-# Kemet – Desert Farm Prototype (MVP)
+# Kemet – Desert Terraforming Prototype
 
-A minimal turn-based, ASCII prototype to validate the core loop of finding water, securing it, and greening a patch in a hostile desert.
+A real-time simulation game about finding water, securing it, and greening a patch of hostile desert. This prototype validates the core gameplay loop and the underlying environmental simulation.
 
 ## Requirements
-
 - Python 3.10+
-- For the pygame frontend: `pip install pygame-ce`
+- `pygame-ce` library
 
-## How to run
+## How to Run
 
-```powershell
-cd C:\Games\Kemet
-python main.py
-```
+It is highly recommended to run the project within a Python virtual environment to manage dependencies cleanly.
 
-### Pygame-CE frontend (20x15 map, smooth movement)
+Clone the repository and navigate into the project directory:
 
-```powershell
-cd C:\Games\Kemet
-pip install pygame-ce
-python pygame_runner.py
-```
+    git clone <repository_url>
+    cd <repository_folder_name>
 
-## Controls (type commands, then press Enter)
+Create and activate a virtual environment:
 
-- `w a s d` — move.
-- `dig` — dig a trench on your tile (improves flow, lowers evap).
-- `lower` — lower ground elevation.
-- `raise` — raise ground elevation (costs 1 scrap).
-- `build cistern` — build a cistern on your tile (stores/retains water).
-- `build condenser` — build a condenser on your tile (drips water each turn).
-- `build planter` — build a planter on your tile (grows biomass if hydrated).
-- `collect` — collect up to 1 water from a wet tile into inventory.
-- `pour <amount>` — pour water from inventory onto your tile (e.g. `pour 1`).
-- `survey` — inspect tile type/elevation/hydration.
-- `status` — show inventory/resources.
-- `end` — end the day (advances several ticks and raises heat).
+- macOS/Linux:
 
-### Notes on water and testing aids
+    python3 -m venv venv
+    source venv/bin/activate
 
-- Water only originates at wells/springs (wadi tiles) with varying flow rates; rain is occasional and boosts those sources.
-- A depot tile at spawn provides infinite test resources when using `collect`.
-- `help` — list commands.
-- `quit` — exit.
+- Windows:
 
-## Goals in this prototype
+    python -m venv venv
+    venv\Scripts\activate
 
-- Create your first green tile (biomass from a planter).
-- Fill a cistern.
-- Survive a dust front (heat spike) without losing all stored water.
+Install the required package:
 
-## Simulation highlights
+    pip install pygame-ce
 
-- **Hydration**: tiles track hydration; evaporation scales with daytime heat and biome. Trenches improve flow; cisterns and wadis reduce losses.
-- **Flow**: wet tiles bleed some water to orthogonal neighbors each tick; trenches amplify flow.
-- **Buildings**: condensers drip water, cisterns store and slow loss, planters produce biomass when hydrated.
-- **Events**: day/night heat cycle; periodic dust fronts spike evaporation and damage buildings.
+Run the game:
 
-## Map generation (WFC-lite)
+    python pygame_runner.py
 
-- 10x10 grid built from tile sets (dune, flat, wadi, rock, salt pan) using adjacency preferences to form plausible bands and wadis, then seeds 2–3 hidden water pockets.
+## Controls (Pygame Frontend)
+- **Movement:** WASD  
+- **Select & Use Tool:** 1 through 9 keys  
+- **Rest at Night:** SPACE  
+- **Toggle Help:** H  
+- **Quit Game:** ESC  
 
-## Next steps after MVP
+## Gameplay Goals
+- Create your first green tile by growing and harvesting biomass from a planter.  
+- Secure a water supply by building and filling a cistern.  
+- Survive a dust front (heat spike) without losing all your stored water.  
 
-- Add nomad trader spawn on first green patch.
-- Expand tech tree (pumps, berms/swales, shade cloth).
-- Add save/load, better art, and a real-time rendering layer.
+## Simulation Highlights
+- **Continuous Time:** The world operates on a continuous real-time clock. The day/night cycle, weather, and environmental physics progress independently of the player's actions.  
+- **Detailed Water Physics:** Water is a finite resource that flows across the surface, seeps vertically between soil layers, and builds up pressure against impermeable bedrock, creating a dynamic water table.  
+- **Evolving Biomes:** The landscape is not static. Based on moisture history, soil composition, and elevation, tiles can transform from barren sand to fertile flats or salty pans over time.  
+- **Fixed-Layer Terrain:** Each tile has a detailed soil profile, from organics and topsoil down to bedrock. Player actions like digging or farming can directly alter this composition.  
+- **Dynamic Weather:** A day/night cycle affects evaporation rates, and periodic rain can provide a temporary but powerful boost to wellsprings and surface water levels.
+

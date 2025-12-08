@@ -215,7 +215,7 @@ class TerrainColumn:
                 bottom += self.get_layer_depth(SoilLayer(i))
         
         top = bottom + self.get_layer_depth(layer)
-        return (bottom, top)
+        return bottom, top
     
     def get_surface_elevation(self) -> int:
         """Calculate surface elevation from sum of all layer depths."""

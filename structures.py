@@ -1,3 +1,4 @@
+# structures.py
 """
 structures.py - Player-built structures for Kemet
 
@@ -9,19 +10,20 @@ Defines structure types, costs, and behavior:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Union, TYPE_CHECKING
+from typing import Dict, TYPE_CHECKING
 
 from ground import SoilLayer
 
 if TYPE_CHECKING:
-    from main import GameState, Tile
+    from main import GameState
 
 # Structure behavior constants
 CONDENSER_OUTPUT = 2  # Units of water per tick (0.2L)
-PLANTER_GROWTH_RATE = 25  # Growth points per tick (out of 100)
+PLANTER_GROWTH_RATE = 1  # Growth points per tick. 100 ticks to mature.
 PLANTER_GROWTH_THRESHOLD = 100
 PLANTER_WATER_COST = 3  # Units of water consumed on harvest
 PLANTER_WATER_REQUIREMENT = 80  # Units (8L) needed for growth
+MAX_ORGANICS_DEPTH = 10 # Cap organic layer growth at 1m
 
 # Cistern constants
 CISTERN_CAPACITY = 500  # Units (50L)
@@ -43,7 +45,7 @@ class Structure:
     growth: int = 0  # Growth progress 0-100 (planter)
 
 
-STRUCTURE_COSTS: Dict[str, Dict[str, Union[int, float]]] = {
+STRUCTURE_COSTS: Dict[str, Dict[str, int]] = {
     "cistern": {"scrap": 3},
     "condenser": {"scrap": 2},
     "planter": {"scrap": 1, "seeds": 1},
@@ -63,17 +65,15 @@ def build_structure(state: "GameState", kind: str) -> None:
         return
 
     cost = STRUCTURE_COSTS[kind]
-    for resource, needed in cost.items():
-        if state.inventory.get(resource, 0) < needed:
-            state.messages.append(f"Need more {resource} to build {kind}.")
-            return
+    if state.inventory.scrap < cost.get("scrap", 0):
+        state.messages.append(f"Need {cost.get('scrap', 0)} scrap to build {kind}.")
+        return
+    if state.inventory.seeds < cost.get("seeds", 0):
+        state.messages.append(f"Need {cost.get('seeds', 0)} seeds to build {kind}.")
+        return
 
-    for resource, needed in cost.items():
-        current = state.inventory[resource]
-        if isinstance(needed, int):
-            state.inventory[resource] = int(current) - needed
-        else:
-            state.inventory[resource] = float(current) - needed
+    state.inventory.scrap -= cost.get("scrap", 0)
+    state.inventory.seeds -= cost.get("seeds", 0)
 
     state.structures[pos] = Structure(kind=kind)
     state.tiles[pos[0]][pos[1]].surface.has_structure = True
@@ -117,15 +117,16 @@ def tick_structures(state: "GameState", heat: int) -> None:
 
             if structure.growth >= PLANTER_GROWTH_THRESHOLD:
                 structure.growth = 0
-                state.inventory["biomass"] = int(state.inventory["biomass"]) + 1
-                state.inventory["seeds"] = int(state.inventory["seeds"]) + 1
+                state.inventory.biomass += 1
+                state.inventory.seeds += 1
                 tile.water.surface_water = max(
                     tile.water.surface_water - PLANTER_WATER_COST, 0
                 )
 
-                # Add organics layer on harvest
-                tile.terrain.add_material_to_layer(SoilLayer.ORGANICS, 1)
+                # Add organics layer on harvest, with a cap
+                if tile.terrain.get_layer_depth(SoilLayer.ORGANICS) < MAX_ORGANICS_DEPTH:
+                    tile.terrain.add_material_to_layer(SoilLayer.ORGANICS, 1)
 
                 state.messages.append(
-                    f"Biomass harvested at {pos}! (Total {state.inventory['biomass']})"
+                    f"Biomass harvested at {pos}! (Total {state.inventory.biomass})"
                 )
