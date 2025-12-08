@@ -233,7 +233,7 @@ class TerrainColumn:
         
         for layer in SoilLayer:
             depth = self.get_layer_depth(layer)
-            if elevation >= current and elevation < current + depth:
+            if current <= elevation < current + depth:
                 return layer
             current += depth
         
@@ -259,7 +259,7 @@ class TerrainColumn:
         """
         Remove material from a layer (decreases depth).
         
-        Returns the actual amount removed (may be less if layer is thinner).
+        Returns the actual amount removed (could be less if layer is thinner).
         """
         if layer == SoilLayer.BEDROCK:
             return 0  # Can't modify bedrock
@@ -323,7 +323,7 @@ def create_default_terrain(bedrock_base: int, total_soil_depth: int) -> TerrainC
     subsoil_pct = 30     # 30% mineral accumulation
     eluviation_pct = 15  # 15% transition
     topsoil_pct = 25     # 25% active soil
-    organics_pct = 0     # 0% organic (desert - starts empty)
+    _organics_pct = 0     # 0% organic (desert - starts empty)
     
     return TerrainColumn(
         bedrock_depth=10,  # Fixed bedrock thickness (1m)

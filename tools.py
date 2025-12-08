@@ -14,10 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import List, Optional, Dict, TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from main import GameState
+from typing import List, Optional, Dict
 
 
 class ToolCategory(Enum):
@@ -83,8 +80,8 @@ class Tool:
         if self.options:
             opt = self.get_current_option()
             if opt:
-                return (self.action, [opt.id])
-        return (self.action, self.action_args)
+                return self.action, [opt.id]
+        return self.action, self.action_args
 
 
 # =============================================================================

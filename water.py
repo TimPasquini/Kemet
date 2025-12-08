@@ -67,7 +67,7 @@ class WaterColumn:
         """
         Remove water from a layer.
 
-        Returns actual amount removed (may be less if insufficient water).
+        Returns actual amount removed (could be less if insufficient water).
         """
         current = self.get_layer_water(layer)
         actual = min(amount, current)
@@ -341,12 +341,14 @@ def calculate_overflows(
         tiles: List[List[Tuple[TerrainColumn, WaterColumn]]],
         width: int,
         height: int,
-) -> Dict[Tuple[Point, SoilLayer], int]:
+) -> Tuple[Dict[Tuple[Point, SoilLayer], int], Dict[Point, int]]:
     """
     Calculates distribution of water in layers that are over capacity.
     This is a high-pressure, rapid version of subsurface flow.
+    Returns (subsurface_deltas, surface_deltas).
     """
-    deltas: Dict[Tuple[Point, SoilLayer], int] = defaultdict(int)
+    sub_deltas: Dict[Tuple[Point, SoilLayer], int] = defaultdict(int)
+    surf_deltas: Dict[Point, int] = defaultdict(int)
 
     for layer in reversed(SoilLayer): # Process from top down
         if layer == SoilLayer.BEDROCK: continue
@@ -378,9 +380,8 @@ def calculate_overflows(
 
                 if not flow_targets:
                     # If no neighbors, water is pushed to the surface
-                    # Record as a delta to maintain snapshot consistency
-                    deltas[((x, y), layer)] -= overflow_amount
-                    deltas[((x, y), "surface")] = deltas.get(((x, y), "surface"), 0) + overflow_amount
+                    sub_deltas[((x, y), layer)] -= overflow_amount
+                    surf_deltas[(x, y)] += overflow_amount
                     continue
 
                 # Distribute overflow to neighbors
@@ -388,13 +389,13 @@ def calculate_overflows(
                 for (nx, ny), diff in flow_targets:
                     portion = (overflow_amount * diff) // total_diff if total_diff > 0 else 0
                     if portion > 0:
-                        deltas[((nx, ny), layer)] += portion
+                        sub_deltas[((nx, ny), layer)] += portion
                         total_transferred += portion
 
                 if total_transferred > 0:
-                    deltas[((x, y), layer)] -= total_transferred
+                    sub_deltas[((x, y), layer)] -= total_transferred
 
-    return deltas
+    return sub_deltas, surf_deltas
 
 
 def apply_flows(
@@ -409,12 +410,8 @@ def apply_flows(
         # Ensure water doesn't go below zero from rounding
         water.surface_water = max(0, water.surface_water + amount)
 
-    # Apply subsurface flows (may include "surface" key from overflow)
+    # Apply subsurface flows
     for ((x, y), layer), amount in subsurface_deltas.items():
         _, water = tiles[x][y]
-        if layer == "surface":
-            # Handle overflow water pushed to surface
-            water.surface_water = max(0, water.surface_water + amount)
-        else:
-            current_water = water.get_layer_water(layer)
-            water.set_layer_water(layer, max(0, current_water + amount))
+        current_water = water.get_layer_water(layer)
+        water.set_layer_water(layer, max(0, current_water + amount))

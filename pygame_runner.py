@@ -15,7 +15,7 @@ Controls:
 from __future__ import annotations
 
 import sys
-from typing import Dict, List, Tuple
+from typing import cast, Dict, List, Tuple
 
 try:
     import pygame
@@ -24,7 +24,6 @@ except ImportError as exc:
 
 from main import (
     TILE_TYPES,
-    HEAT_NIGHT_THRESHOLD,
     GameState,
     build_initial_state,
     handle_command,
@@ -103,11 +102,11 @@ def elevation_brightness(elevation: float, min_elev: float, max_elev: float) -> 
 
 
 def apply_brightness(color: Color, brightness: float) -> Color:
-    return tuple(max(0, min(255, int(c * brightness))) for c in color)
+    return cast(Color, tuple(max(0, min(255, int(c * brightness))) for c in color))
 
 
 def blend_colors(color1: Color, color2: Color, weight: float = 0.5) -> Color:
-    return tuple(int(c1 * (1 - weight) + c2 * weight) for c1, c2 in zip(color1, color2))
+    return cast(Color, tuple(int(c1 * (1 - weight) + c2 * weight) for c1, c2 in zip(color1, color2)))
 
 
 def get_surface_material_color(tile) -> Color | None:
@@ -121,8 +120,8 @@ def get_surface_material_color(tile) -> Color | None:
 
 
 def color_for_tile(state_tile, tile_type, elevation_range: Tuple[float, float]) -> Color:
-    if state_tile.hydration >= 10.0: return (48, 133, 214)
-    if state_tile.hydration >= 5.0: return (92, 180, 238)
+    if state_tile.hydration >= 10.0: return 48, 133, 214
+    if state_tile.hydration >= 5.0: return 92, 180, 238
     base_color = BIOME_COLORS.get(tile_type.name, (200, 200, 200))
     material_color = get_surface_material_color(state_tile)
     if material_color:
@@ -162,21 +161,21 @@ def draw_soil_profile(surface, font, tile, pos: Tuple[int, int], width: int, hei
     scale = height / total_depth
     current_y = y
 
-    def draw_layer(layer: SoilLayer, label: str):
+    def draw_layer(soil_layer: SoilLayer, label: str):
         nonlocal current_y
-        depth = terrain.get_layer_depth(layer)
+        depth = terrain.get_layer_depth(soil_layer)
         if depth == 0: return
 
         layer_height = int(depth * scale)
         if layer_height < 1: layer_height = 1
 
-        props = MATERIAL_LIBRARY.get(terrain.get_layer_material(layer))
+        props = MATERIAL_LIBRARY.get(terrain.get_layer_material(soil_layer))
         color = props.display_color if props else (150, 150, 150)
         layer_rect = pygame.Rect(x + 1, current_y, width - 2, layer_height)
         pygame.draw.rect(surface, color, layer_rect)
 
-        water_in_layer = water.get_layer_water(layer)
-        max_storage = terrain.get_max_water_storage(layer)
+        water_in_layer = water.get_layer_water(soil_layer)
+        max_storage = terrain.get_max_water_storage(soil_layer)
         if water_in_layer > 0 and max_storage > 0:
             fill_pct = min(100, (water_in_layer * 100) // max_storage)
             water_height = (layer_height * fill_pct) // 100
@@ -351,16 +350,16 @@ def render(screen, font, state: GameState, tile_size: int, player_px: Tuple[floa
     inv_x, inv_y = screen.get_width() - inv_w - 12, clamp(map_height - inv_h - 12, 12, 9999)
     pygame.draw.rect(screen, (40, 40, 40), (inv_x, inv_y, inv_w, inv_h), 2)
     ix, iy = inv_x + 8, inv_y + 8
-    draw_text(screen, font, "Inventory", (ix, iy))
+    draw_text(screen, font, "Inventory", (ix, int(iy)))
     iy += LINE_HEIGHT
     inv = state.inventory
-    draw_text(screen, font, f"Water: {inv.water / 10:.1f}L", (ix, iy))
+    draw_text(screen, font, f"Water: {inv.water / 10:.1f}L", (ix, int(iy)))
     iy += LINE_HEIGHT
-    draw_text(screen, font, f"Scrap: {inv.scrap}", (ix, iy))
+    draw_text(screen, font, f"Scrap: {inv.scrap}", (ix, int(iy)))
     iy += LINE_HEIGHT
-    draw_text(screen, font, f"Seeds: {inv.seeds}", (ix, iy))
+    draw_text(screen, font, f"Seeds: {inv.seeds}", (ix, int(iy)))
     iy += LINE_HEIGHT
-    draw_text(screen, font, f"Biomass: {inv.biomass}kg", (ix, iy))
+    draw_text(screen, font, f"Biomass: {inv.biomass}kg", (ix, int(iy)))
     night_alpha = max(0, min(200, int((140 - state.heat) * 180 // 80)))
     if night_alpha > 0:
         overlay = pygame.Surface((map_width, map_height), pygame.SRCALPHA)
@@ -450,7 +449,7 @@ def run(window_size: MapSize = MAP_SIZE, tile_size: int = TILE_SIZE) -> None:
 
         # Handle player action timer
         if state.player_action_timer > 0:
-            state.player_action_timer = max(0, state.player_action_timer - dt)
+            state.player_action_timer = max(0.0, state.player_action_timer - dt)
 
         # Handle Inputs
         for event in pygame.event.get():
@@ -526,7 +525,7 @@ def run(window_size: MapSize = MAP_SIZE, tile_size: int = TILE_SIZE) -> None:
             simulate_tick(state)
             tick_timer -= TICK_INTERVAL
 
-        render(screen, font, state, tile_size, tuple(player_px), toolbar, show_help, elevation_range)
+        render(screen, font, state, tile_size, (player_px[0], player_px[1]), toolbar, show_help, elevation_range)
         pygame.display.flip()
     pygame.quit()
 

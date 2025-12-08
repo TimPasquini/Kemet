@@ -42,7 +42,7 @@ from utils import get_neighbors
 Point = Tuple[int, int]
 
 # Day/night cycle constants
-DAY_LENGTH = 1200  # 1200 ticks at 0.25s/tick = 300s = 5 minute day
+DAY_LENGTH = 1200  # 1200 ticks at 0.25s/tick = 300s = 5-minute day
 HEAT_MIN = 60
 HEAT_MAX = 140
 HEAT_NIGHT_THRESHOLD = 90
@@ -229,7 +229,7 @@ def wfc_like_map(width: int, height: int) -> List[List[Tile]]:
             for n in neighbor_types:
                 weight += adjacency.get(n, {}).get(kind, 0)
             weighted[kind] = weight
-        choice = random.choices(list(weighted.keys()), weights=weighted.values(), k=1)[0]
+        choice = random.choices(list(weighted.keys()), weights=list(weighted.values()), k=1)[0]
         depth_map = {"dune": random.uniform(1.5, 2.5), "flat": random.uniform(1.0, 2.0),
                      "wadi": random.uniform(0.5, 1.2), "rock": random.uniform(0.2, 0.6),
                      "salt": random.uniform(0.8, 1.5)}
@@ -430,7 +430,7 @@ def simulate_tick(state: GameState) -> None:
     if state.raining:
         if state.rain_timer <= 0:
             state.raining = False
-            # Scale up time between rain
+            # Scale up the time between rain
             state.rain_timer = random.randint(1200, 2000)
             state.messages.append("Rain fades.")
     elif state.rain_timer <= 0:
@@ -458,13 +458,15 @@ def simulate_tick(state: GameState) -> None:
 
     # 2. Calculate and apply all horizontal flows
     trench_map = {(x, y): state.tiles[x][y].surface.has_trench for x in range(state.width) for y in range(state.height)}
-    overflow_deltas = calculate_overflows(tiles_data, state.width, state.height)
+    overflow_sub_deltas, overflow_surf_deltas = calculate_overflows(tiles_data, state.width, state.height)
     surface_deltas = calculate_surface_flow(tiles_data, state.width, state.height, trench_map)
     subsurface_deltas = calculate_subsurface_flow(tiles_data, state.width, state.height)
 
     # Combine deltas before applying
-    for key, value in overflow_deltas.items():
+    for key, value in overflow_sub_deltas.items():
         subsurface_deltas[key] = subsurface_deltas.get(key, 0) + value
+    for key, value in overflow_surf_deltas.items():
+        surface_deltas[key] = surface_deltas.get(key, 0) + value
 
     apply_flows(tiles_data, surface_deltas, subsurface_deltas)
 
@@ -523,13 +525,22 @@ def survey_tile(state: GameState) -> None:
 
 
 def handle_command(state: GameState, cmd: str, args: List[str]) -> bool:
-    """Process a player command using a command map. Returns True if should quit."""
+    """Process a player command using a command map. Returns True if the game should quit."""
     command_map = {
-        "w": move_player, "a": move_player, "s": move_player, "d": move_player,
-        "dig": dig_trench, "lower": lower_ground, "raise": raise_ground,
-        "terrain": terrain_action,  # Shovel tool dispatcher
-        "build": build_structure, "collect": collect_water, "pour": pour_water,
-        "status": show_status, "survey": survey_tile, "end": end_day,
+        "w": lambda s, a: move_player(s, "w"),
+        "a": lambda s, a: move_player(s, "a"),
+        "s": lambda s, a: move_player(s, "s"),
+        "d": lambda s, a: move_player(s, "d"),
+        "dig": lambda s, a: dig_trench(s),
+        "lower": lambda s, a: lower_ground(s),
+        "raise": lambda s, a: raise_ground(s),
+        "terrain": lambda s, a: terrain_action(s, a[0] if a else ""),
+        "build": lambda s, a: build_structure(s, a[0] if a else ""),
+        "collect": lambda s, a: collect_water(s),
+        "pour": lambda s, a: pour_water(s, float(a[0])) if a else state.messages.append("Usage: pour <liters>"),
+        "status": lambda s, a: show_status(s),
+        "survey": lambda s, a: survey_tile(s),
+        "end": lambda s, a: end_day(s),
     }
     if cmd == "quit": return True
     if cmd == "help":
@@ -541,12 +552,7 @@ def handle_command(state: GameState, cmd: str, args: List[str]) -> bool:
         state.messages.append("Unknown command. Type 'help' for options.")
         return False
     try:
-        if cmd in ("w", "a", "s", "d"):
-            handler(state, cmd)
-        elif cmd == "pour":
-            handler(state, float(args[0]))
-        else:
-            handler(state, *args)
+        handler(state, args)
     except (TypeError, ValueError, IndexError):
         state.messages.append(f"Invalid usage for '{cmd}'. Check 'help'.")
     return False
