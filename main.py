@@ -1,8 +1,8 @@
 """
-Kemet – Desert Farm Prototype
-Turn-based ASCII simulation: explore, capture water, build, and green a patch.
+Kemet - Desert Farm Prototype
+Turn-based simulation: explore, capture water, build, and green a patch.
 
-Updated to use fixed-layer terrain and integer-based water systems.
+Uses fixed-layer terrain and integer-based water systems.
 """
 from __future__ import annotations
 
@@ -27,20 +27,16 @@ from water import (
     calculate_subsurface_flow,
     apply_flows,
 )
+from structures import (
+    Structure,
+    STRUCTURE_COSTS,
+    build_structure,
+    tick_structures,
+    TRENCH_EVAP_REDUCTION,
+    CISTERN_EVAP_REDUCTION,
+)
 
 Point = Tuple[int, int]
-
-# Game constants - simulation parameters
-CONDENSER_OUTPUT = 2  # Units of water per tick (0.2L)
-PLANTER_GROWTH_RATE = 25  # Growth points per tick (out of 100)
-PLANTER_GROWTH_THRESHOLD = 100
-PLANTER_WATER_COST = 3  # Units of water consumed on harvest
-TRENCH_EVAP_REDUCTION = 85  # Percentage (85 = 0.85x)
-CISTERN_EVAP_REDUCTION = 40  # Percentage (40 = 0.40x)
-CISTERN_CAPACITY = 500  # Units (50L)
-CISTERN_TRANSFER_RATE = 40  # Units per tick
-CISTERN_LOSS_RATE = 3  # Units per tick at max heat
-CISTERN_LOSS_RECOVERY = 50  # Percentage returned to surface
 
 # Day/night cycle constants
 DAY_LENGTH = 12
@@ -77,6 +73,10 @@ TILE_TYPES: Dict[str, TileType] = {
 }
 
 
+# Moisture history tracking constants
+MOISTURE_HISTORY_MAX = 24  # Track ~2 days of ticks
+
+
 @dataclass
 class Tile:
     """Represents a single map tile with layered terrain and water."""
@@ -84,10 +84,13 @@ class Tile:
     terrain: TerrainColumn
     water: WaterColumn
     surface: SurfaceTraits
-    
+
     # Tile-level properties
-    well_output: int = 0  # Water units produced per tick
+    wellspring_output: int = 0  # Water units produced per tick
     depot: bool = False
+
+    # Moisture tracking for dynamic biome calculation
+    moisture_history: List[int] = field(default_factory=list)
     
     # Backwards compatibility properties
     @property
@@ -112,22 +115,6 @@ class Tile:
 
 
 @dataclass
-class Structure:
-    """Represents a player-built structure on a tile."""
-    kind: str
-    hp: int = 3
-    stored: int = 0  # Water storage in units
-    growth: int = 0  # Growth progress (0-100)
-
-
-STRUCTURE_COSTS: Dict[str, Dict[str, Union[int, float]]] = {
-    "cistern": {"scrap": 3},
-    "condenser": {"scrap": 2},
-    "planter": {"scrap": 1, "seeds": 1},
-}
-
-
-@dataclass
 class GameState:
     """Main game state container."""
     width: int
@@ -143,6 +130,7 @@ class GameState:
     heat: int = 100  # Percentage
     rain_timer: int = 12
     raining: bool = False
+    is_night: bool = False  # True when day timer pauses, simulation continues
     messages: List[str] = field(default_factory=list)
 
 
@@ -159,6 +147,119 @@ def neighbors(x: int, y: int, width: int, height: int) -> List[Point]:
         if 0 <= nx < width and 0 <= ny < height:
             options.append((nx, ny))
     return options
+
+
+def update_moisture_history(tile: Tile) -> None:
+    """Track rolling moisture average for biome calculation."""
+    tile.moisture_history.append(tile.water.total_water())
+    if len(tile.moisture_history) > MOISTURE_HISTORY_MAX:
+        tile.moisture_history.pop(0)
+
+
+def get_average_moisture(tile: Tile) -> float:
+    """Get average moisture from history, or current if no history."""
+    if not tile.moisture_history:
+        return float(tile.water.total_water())
+    return sum(tile.moisture_history) / len(tile.moisture_history)
+
+
+def calculate_biome(tile: Tile, neighbor_tiles: List[Tile], elevation_percentile: float) -> str:
+    """
+    Determine biome type based on tile properties.
+
+    Factors:
+    - Elevation percentile (0.0=lowest, 1.0=highest in map)
+    - Soil depth and composition
+    - Moisture history
+    - Neighbor biome influence
+    """
+    avg_moisture = get_average_moisture(tile)
+    soil_depth = tile.terrain.get_total_soil_depth()
+    topsoil_material = tile.terrain.topsoil_material
+
+    # Rock: high elevation + thin soil (exposed bedrock/regolith)
+    if elevation_percentile > 0.75 and soil_depth < 5:  # <0.5m
+        return "rock"
+
+    # Wadi: low elevation + consistently wet
+    if elevation_percentile < 0.25 and avg_moisture > 50:  # >5L average
+        return "wadi"
+
+    # Dune: sandy topsoil + dry conditions
+    if topsoil_material == "sand" and avg_moisture < 20:  # <2L average
+        return "dune"
+
+    # Salt: low-mid elevation + very dry + no organic development
+    if elevation_percentile < 0.4 and avg_moisture < 15 and tile.terrain.organics_depth == 0:
+        return "salt"
+
+    # Neighbor influence for edge smoothing
+    if neighbor_tiles:
+        neighbor_biomes = [n.kind for n in neighbor_tiles]
+        # If surrounded by same biome, tend toward it
+        from collections import Counter
+        biome_counts = Counter(neighbor_biomes)
+        most_common, count = biome_counts.most_common(1)[0]
+        # If 3+ neighbors are same biome and we're borderline, adopt it
+        if count >= 3 and most_common in ("dune", "flat", "wadi"):
+            return most_common
+
+    # Default: flat (generic transitional terrain)
+    return "flat"
+
+
+def calculate_elevation_percentiles(state: "GameState") -> Dict[Point, float]:
+    """Calculate elevation percentile for each tile in the map."""
+    # Gather all elevations with positions
+    elevation_data = []
+    for x in range(state.width):
+        for y in range(state.height):
+            elevation_data.append((state.tiles[x][y].elevation, (x, y)))
+
+    # Sort by elevation
+    elevation_data.sort(key=lambda e: e[0])
+
+    # Assign percentiles
+    percentiles = {}
+    total = len(elevation_data)
+    for i, (elev, pos) in enumerate(elevation_data):
+        percentiles[pos] = i / max(1, total - 1)
+
+    return percentiles
+
+
+def recalculate_biomes(state: "GameState") -> None:
+    """
+    Update all tile biomes based on current properties.
+
+    Called at end of day to allow gradual biome shifts.
+    """
+    # Calculate elevation percentiles for all tiles
+    percentiles = calculate_elevation_percentiles(state)
+
+    changes = 0
+    for x in range(state.width):
+        for y in range(state.height):
+            tile = state.tiles[x][y]
+
+            # Skip depot tile (always flat)
+            if tile.depot:
+                continue
+
+            # Get neighbor tiles
+            neighbor_positions = neighbors(x, y, state.width, state.height)
+            neighbor_tiles = [state.tiles[nx][ny] for nx, ny in neighbor_positions]
+
+            # Calculate new biome
+            elev_pct = percentiles.get((x, y), 0.5)
+            new_biome = calculate_biome(tile, neighbor_tiles, elev_pct)
+
+            if new_biome != tile.kind:
+                tile.kind = new_biome
+                changes += 1
+
+    if changes > 0:
+        state.messages.append(f"Landscape shifted: {changes} tiles changed biome.")
 
 
 def wfc_like_map(width: int, height: int) -> List[List[Tile]]:
@@ -227,27 +328,63 @@ def wfc_like_map(width: int, height: int) -> List[List[Tile]]:
         surface = SurfaceTraits()
         tiles[x][y] = Tile(kind=choice, terrain=terrain, water=water, surface=surface)
 
-    # Seed wells (fixed sources)
-    wells = random.randint(3, 4)
-    for _ in range(wells):
-        rx, ry = random.randrange(width), random.randrange(height)
-        tiles[rx][ry].kind = "wadi"
-        # Varying rates: seep (1-2 units/tick) vs spring (3-6 units/tick)
-        tiles[rx][ry].well_output = random.choice([
-            random.randint(1, 2),
-            random.randint(3, 6)
-        ])
-        # Start wells with some subsurface water in regolith
-        tiles[rx][ry].water.regolith_water = 50
-        tiles[rx][ry].water.surface_water = 40
-    
+    # Generate wellsprings with guaranteed lowland primary spring
+    _generate_wellsprings(tiles, width, height)
+
     # Add initial water to wadis
     for x in range(width):
         for y in range(height):
             if tiles[x][y].kind == "wadi":
                 tiles[x][y].water.surface_water += random.randint(5, 30)
-    
+
     return tiles
+
+
+def _generate_wellsprings(tiles: List[List[Tile]], width: int, height: int) -> None:
+    """
+    Generate wellsprings with guaranteed lowland primary spring.
+
+    Primary wellspring: placed in lowest 25% elevation, strong flow (0.8-1.2 L/tick)
+    Secondary wellsprings: 1-2 additional at varied locations (0.2-0.6 L/tick)
+    """
+    # Gather all tiles with elevations
+    all_tiles = [
+        (x, y, tiles[x][y].elevation)
+        for x in range(width)
+        for y in range(height)
+    ]
+    all_tiles.sort(key=lambda t: t[2])  # Sort by elevation
+
+    # Lowland candidates: bottom 25%
+    lowland_count = max(1, len(all_tiles) // 4)
+    lowland_candidates = all_tiles[:lowland_count]
+
+    # Place primary wellspring in lowland (strong flow)
+    px, py, _ = random.choice(lowland_candidates)
+    tiles[px][py].kind = "wadi"
+    tiles[px][py].wellspring_output = random.randint(8, 12)  # 0.8-1.2 L/tick
+    tiles[px][py].water.regolith_water = 100
+    tiles[px][py].water.surface_water = 80  # Start with 8L (collectible)
+
+    # Place 1-2 secondary wellsprings anywhere (varied output)
+    secondary_count = random.randint(1, 2)
+    attempts = 0
+    placed = 0
+
+    while placed < secondary_count and attempts < 20:
+        sx, sy = random.randrange(width), random.randrange(height)
+        attempts += 1
+
+        # Don't overwrite primary or depot area (center)
+        if tiles[sx][sy].wellspring_output > 0:
+            continue
+        if (sx, sy) == (width // 2, height // 2):
+            continue
+
+        tiles[sx][sy].wellspring_output = random.randint(2, 6)  # 0.2-0.6 L/tick
+        tiles[sx][sy].water.regolith_water = 30
+        tiles[sx][sy].water.surface_water = 20
+        placed += 1
 
 
 def build_initial_state(width: int = 10, height: int = 10) -> GameState:
@@ -261,7 +398,7 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
     depot_tile.kind = "flat"
     depot_tile.surface.has_trench = False
     depot_tile.terrain = create_default_terrain(elevation_to_units(-2.0), elevation_to_units(1.0))
-    depot_tile.well_output = 0
+    depot_tile.wellspring_output = 0
     depot_tile.depot = True
     
     return GameState(width=width, height=height, tiles=tiles, player=player)
@@ -378,32 +515,6 @@ def raise_ground(state: GameState) -> None:
     state.messages.append(f"Added topsoil (cost 1 scrap). Elev: {tile.elevation:.2f}m")
 
 
-def build_structure(state: GameState, kind: str) -> None:
-    """Build a structure on current tile."""
-    kind = kind.lower()
-    if kind not in STRUCTURE_COSTS:
-        state.messages.append("Cannot build that.")
-        return
-    pos = state.player
-    if pos in state.structures:
-        state.messages.append("Tile already occupied.")
-        return
-    cost = STRUCTURE_COSTS[kind]
-    for resource, needed in cost.items():
-        if state.inventory.get(resource, 0) < needed:
-            state.messages.append(f"Need more {resource} to build {kind}.")
-            return
-    for resource, needed in cost.items():
-        current = state.inventory[resource]
-        if isinstance(needed, int):
-            state.inventory[resource] = int(current) - needed
-        else:
-            state.inventory[resource] = float(current) - needed
-    state.structures[pos] = Structure(kind=kind)
-    state.tiles[pos[0]][pos[1]].surface.has_structure = True
-    state.messages.append(f"Built {kind} at {pos}.")
-
-
 def collect_water(state: GameState) -> None:
     """Collect water from current tile into inventory."""
     tile = state.tiles[state.player[0]][state.player[1]]
@@ -442,58 +553,23 @@ def pour_water(state: GameState, amount: float) -> None:
     state.messages.append(f"Poured {amount:.1f}L water into soil.")
 
 
-def tick_structures(state: GameState, heat: int) -> None:
-    """Update all structures for one simulation tick."""
-    for pos, structure in list(state.structures.items()):
-        tile = state.tiles[pos[0]][pos[1]]
-        
-        if structure.kind == "condenser":
-            tile.water.surface_water += CONDENSER_OUTPUT
-            
-        elif structure.kind == "cistern":
-            # Transfer surface water into cistern storage
-            if tile.water.surface_water > CISTERN_TRANSFER_RATE and structure.stored < CISTERN_CAPACITY:
-                transfer = min(CISTERN_TRANSFER_RATE, tile.water.surface_water, CISTERN_CAPACITY - structure.stored)
-                tile.water.surface_water -= transfer
-                structure.stored += transfer
-            
-            # Cistern slowly leaks (scales with heat)
-            loss = (CISTERN_LOSS_RATE * heat) // 100
-            drained = min(structure.stored, loss)
-            structure.stored -= drained
-            recovered = (drained * CISTERN_LOSS_RECOVERY) // 100
-            tile.water.surface_water += recovered
-            
-        elif structure.kind == "planter":
-            total_water = tile.water.total_water()
-            if total_water >= 80:  # Need 8L of water
-                structure.growth += PLANTER_GROWTH_RATE
-                if structure.growth > PLANTER_GROWTH_THRESHOLD:
-                    structure.growth = PLANTER_GROWTH_THRESHOLD
-            else:
-                structure.growth = max(structure.growth - 10, 0)
-            
-            if structure.growth >= PLANTER_GROWTH_THRESHOLD:
-                structure.growth = 0
-                state.inventory["biomass"] = int(state.inventory["biomass"]) + 1
-                state.inventory["seeds"] = int(state.inventory["seeds"]) + 1
-                tile.water.surface_water = max(tile.water.surface_water - PLANTER_WATER_COST, 0)
-                
-                # Add organics layer on harvest
-                tile.terrain.add_material_to_layer(SoilLayer.ORGANICS, 1)
-                
-                state.messages.append(f"Biomass harvested at {pos}! (Total {state.inventory['biomass']})")
-
-
 def simulate_tick(state: GameState) -> None:
     """Advance simulation by one tick."""
-    # Heat cycle (percentage: 60-140)
-    state.turn_in_day += 1
-    daytime = state.turn_in_day % DAY_LENGTH
-    day_factor = (1 - abs((daytime / (DAY_LENGTH - 1)) * 2 - 1))
-    state.heat = HEAT_MIN + int((HEAT_MAX - HEAT_MIN) * day_factor)
 
-    # Rain scheduling
+    # Day/night cycle - only advance timer if not night
+    if not state.is_night:
+        state.turn_in_day += 1
+        daytime = state.turn_in_day % DAY_LENGTH
+        day_factor = (1 - abs((daytime / (DAY_LENGTH - 1)) * 2 - 1))
+        state.heat = HEAT_MIN + int((HEAT_MAX - HEAT_MIN) * day_factor)
+
+        # Check if day ended
+        if state.turn_in_day >= DAY_LENGTH:
+            state.is_night = True
+            state.heat = HEAT_MIN
+            state.messages.append("Night falls. Press Space to rest.")
+
+    # Rain scheduling (continues during night)
     state.rain_timer -= 1
     if state.raining:
         if state.rain_timer <= 0:
@@ -504,7 +580,7 @@ def simulate_tick(state: GameState) -> None:
         if state.rain_timer <= 0:
             state.raining = True
             state.rain_timer = random.randint(3, 5)
-            state.messages.append("Rain arrives! Springs surge.")
+            state.messages.append("Rain arrives! Wellsprings surge.")
 
     tick_structures(state, state.heat)
 
@@ -513,10 +589,13 @@ def simulate_tick(state: GameState) -> None:
         for y in range(state.height):
             tile = state.tiles[x][y]
             ttype = TILE_TYPES[tile.kind]
-            
-            # Wells feed water into subsurface (regolith layer)
-            if tile.well_output > 0:
-                gain = tile.well_output
+
+            # Track moisture for biome calculation
+            update_moisture_history(tile)
+
+            # Wellsprings feed water into subsurface (regolith layer)
+            if tile.wellspring_output > 0:
+                gain = tile.wellspring_output
                 if state.raining:
                     gain = (gain * 150) // 100  # 1.5x during rain
                 tile.water.regolith_water += gain
@@ -553,13 +632,19 @@ def simulate_tick(state: GameState) -> None:
 
 
 def end_day(state: GameState) -> None:
-    """Advance to next day and run several simulation ticks."""
+    """Rest and advance to next day (only works at night)."""
+    if not state.is_night:
+        state.messages.append("Can only rest at night. Wait for day to end.")
+        return
+
     state.day += 1
     state.turn_in_day = 0
+    state.is_night = False
     state.heat = 100
-    state.messages.append("Night falls. Heat resets; small evap recovery.")
-    for _ in range(4):
-        simulate_tick(state)
+    state.messages.append(f"Day {state.day} begins.")
+
+    # Recalculate biomes based on accumulated moisture and terrain
+    recalculate_biomes(state)
 
 
 def show_status(state: GameState) -> None:
@@ -593,8 +678,8 @@ def survey_tile(state: GameState) -> None:
     desc.append(f"topsoil={units_to_meters(tile.terrain.topsoil_depth):.1f}m")
     desc.append(f"organics={units_to_meters(tile.terrain.organics_depth):.1f}m")
     
-    if tile.well_output > 0:
-        desc.append(f"well={tile.well_output/10:.2f}L/t")
+    if tile.wellspring_output > 0:
+        desc.append(f"wellspring={tile.wellspring_output/10:.2f}L/t")
     if tile.surface.has_trench:
         desc.append("trench")
     if structure:

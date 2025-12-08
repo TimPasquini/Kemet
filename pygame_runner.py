@@ -1,24 +1,17 @@
 """
 Pygame-CE frontend for the Kemet prototype.
-Controls (while window focused):
+
+Controls:
 - W/A/S/D: move
-- T: dig trench
-- Z: lower ground
-- X: raise ground
-- C: build cistern
-- N: build condenser
-- P: build planter
-- E: collect water on tile
-- F: pour 1L water on tile
-- V: survey tile
-- SPACE: end day
-- H: show help in log
-- ESC or close window: quit
+- 1-9: select and use tool
+- Space: rest (at night)
+- H: show help
+- ESC: quit
 """
 from __future__ import annotations
 
 import sys
-from typing import List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 try:
     import pygame
@@ -37,6 +30,11 @@ from main import (
     simulate_tick,
 )
 from ground import SoilLayer, MATERIAL_LIBRARY, units_to_meters
+from tools import TOOLS, get_tool_by_number, Tool
+from keybindings import CONTROL_DESCRIPTIONS, MOVE_KEYS, TOOL_KEYS, HELP_KEY, QUIT_KEY
+
+# Type alias
+Color = Tuple[int, int, int]
 
 # Display constants
 SIDEBAR_WIDTH = 300
@@ -50,56 +48,123 @@ MOVE_SPEED = 220  # pixels per second
 DIAGONAL_FACTOR = 0.707  # 1/sqrt(2) for normalized diagonal movement
 
 # Rendering constants
-TICK_INTERVAL = 0.7  # seconds per simulation tick
+TICK_INTERVAL = 25.0  # seconds per simulation tick (25s × 12 ticks = 5 min day)
 PLAYER_RADIUS_DIVISOR = 3
 STRUCTURE_INSET = 8
 TRENCH_INSET = 10
-WELL_RADIUS = 6
+WELLSPRING_RADIUS = 6
 
-# Profile meter constants (thinner per request)
+# Profile meter constants
 PROFILE_WIDTH = 140
 PROFILE_HEIGHT = 240
 PROFILE_MARGIN = 10
 
-# Control scheme - single source of truth
-CONTROLS = [
-    "WASD: move",
-    "T: dig trench",
-    "Z: lower ground",
-    "X: raise ground",
-    "C: build cistern",
-    "N: build condenser",
-    "P: build planter",
-    "E: collect water",
-    "F: pour 1L",
-    "V: survey",
-    "Space: end day",
-    "H: help",
-    "Esc: quit"
-]
+# Toolbar constants
+TOOLBAR_HEIGHT = 32
+TOOLBAR_BG_COLOR = (30, 30, 35)
+TOOLBAR_SELECTED_COLOR = (60, 55, 40)
+TOOLBAR_TEXT_COLOR = (200, 200, 180)
 
 MapSize = Tuple[int, int]
 
+# Biome base colors
+BIOME_COLORS: Dict[str, Color] = {
+    "dune": (204, 174, 120),
+    "flat": (188, 158, 112),
+    "wadi": (150, 125, 96),
+    "rock": (128, 128, 128),
+    "salt": (220, 220, 210),
+}
 
-def color_for_tile(state_tile, tile_type) -> Tuple[int, int, int]:
+# Elevation shading constants
+ELEVATION_BRIGHTNESS_MIN = 0.7   # Darkest (lowest elevation)
+ELEVATION_BRIGHTNESS_MAX = 1.3   # Brightest (highest elevation)
+
+# Material blend weight
+MATERIAL_BLEND_WEIGHT = 0.35
+ORGANICS_BLEND_WEIGHT = 0.50
+
+
+def calculate_elevation_range(state: "GameState") -> Tuple[float, float]:
+    """Get min/max elevation across all tiles for shading normalization."""
+    elevations = [
+        state.tiles[x][y].elevation
+        for x in range(state.width)
+        for y in range(state.height)
+    ]
+    return (min(elevations), max(elevations))
+
+
+def elevation_brightness(elevation: float, min_elev: float, max_elev: float) -> float:
+    """Return brightness multiplier based on elevation within map range."""
+    if max_elev == min_elev:
+        return 1.0
+    normalized = (elevation - min_elev) / (max_elev - min_elev)
+    return ELEVATION_BRIGHTNESS_MIN + (normalized * (ELEVATION_BRIGHTNESS_MAX - ELEVATION_BRIGHTNESS_MIN))
+
+
+def apply_brightness(color: Color, brightness: float) -> Color:
+    """Apply brightness multiplier to a color, clamping to valid range."""
+    return tuple(max(0, min(255, int(c * brightness))) for c in color)
+
+
+def blend_colors(color1: Color, color2: Color, weight: float = 0.5) -> Color:
+    """Blend two RGB colors. Weight is amount of color2 (0.0-1.0)."""
+    return tuple(int(c1 * (1 - weight) + c2 * weight) for c1, c2 in zip(color1, color2))
+
+
+def get_surface_material_color(tile) -> Color | None:
+    """Get color from topmost soil layer material."""
+    terrain = tile.terrain
+
+    # Check organics first (player-built layer)
+    if terrain.organics_depth > 0:
+        props = MATERIAL_LIBRARY.get("humus")
+        if props:
+            return props.display_color
+
+    # Then topsoil material
+    material = terrain.topsoil_material
+    props = MATERIAL_LIBRARY.get(material)
+    if props:
+        return props.display_color
+
+    return None
+
+
+def color_for_tile(state_tile, tile_type, elevation_range: Tuple[float, float] = None) -> Color:
     """
-    Determine the display color for a tile based on hydration and terrain type.
-    
-    Prioritizes water visualization over base terrain color.
+    Determine the display color for a tile based on terrain, materials, and elevation.
+
+    Color is computed by:
+    1. Start with biome base color
+    2. Blend in surface material color (organics or topsoil)
+    3. Apply elevation-based brightness shading
+    4. Override with water color if sufficiently wet
     """
-    # Hydration overlays
+    # Water overlay takes priority for wet tiles
     if state_tile.hydration >= 10.0:
         return (48, 133, 214)  # deep water
     if state_tile.hydration >= 5.0:
         return (92, 180, 238)  # damp
-    # Base per tile kind
-    return {
-        "dune": (204, 174, 120),
-        "flat": (188, 158, 112),
-        "wadi": (150, 125, 96),
-        "rock": (128, 128, 128),
-        "salt": (220, 220, 210),
-    }.get(tile_type.name, (200, 200, 200))
+
+    # Start with biome base color
+    base_color = BIOME_COLORS.get(tile_type.name, (200, 200, 200))
+
+    # Blend in surface material color
+    material_color = get_surface_material_color(state_tile)
+    if material_color:
+        # Use stronger blend for organics (player progress visible)
+        weight = ORGANICS_BLEND_WEIGHT if state_tile.terrain.organics_depth > 0 else MATERIAL_BLEND_WEIGHT
+        base_color = blend_colors(base_color, material_color, weight)
+
+    # Apply elevation shading if range provided
+    if elevation_range:
+        min_elev, max_elev = elevation_range
+        brightness = elevation_brightness(state_tile.elevation, min_elev, max_elev)
+        base_color = apply_brightness(base_color, brightness)
+
+    return base_color
 
 
 def draw_text(surface, font, text: str, pos: Tuple[int, int], color=(230, 230, 230)) -> None:
@@ -205,24 +270,100 @@ def draw_soil_profile(surface, font, tile, pos: Tuple[int, int], width: int, hei
     draw_layer(SoilLayer.BEDROCK, "Bedrock")
 
 
-def render(screen, font, state: GameState, tile_size: int, sidebar: int, player_px: Tuple[float, float]) -> None:
+def draw_toolbar(
+    surface, font, tools: List[Tool], selected_idx: int,
+    pos: Tuple[int, int], width: int, height: int
+) -> None:
+    """Draw numbered toolbar with tool icons and names."""
+    x, y = pos
+    tool_count = len(tools)
+    tool_width = width // tool_count
+
+    # Background
+    pygame.draw.rect(surface, TOOLBAR_BG_COLOR, (x, y, width, height))
+    pygame.draw.line(surface, (60, 60, 60), (x, y), (x + width, y), 1)
+
+    for i, tool in enumerate(tools):
+        tx = x + (i * tool_width)
+
+        # Highlight selected tool
+        if i == selected_idx:
+            pygame.draw.rect(
+                surface, TOOLBAR_SELECTED_COLOR,
+                (tx + 1, y + 1, tool_width - 2, height - 2)
+            )
+
+        # Draw number and icon
+        num_text = f"{i + 1}"
+        draw_text(surface, font, num_text, (tx + 4, y + 2), color=(150, 150, 130))
+        draw_text(surface, font, tool.icon, (tx + 18, y + 2), color=TOOLBAR_TEXT_COLOR)
+
+        # Draw tool name (abbreviated if needed)
+        name = tool.name[:6]
+        draw_text(surface, font, name, (tx + 4, y + 16), color=(140, 140, 140))
+
+        # Separator
+        if i < tool_count - 1:
+            pygame.draw.line(
+                surface, (50, 50, 50),
+                (tx + tool_width - 1, y + 4),
+                (tx + tool_width - 1, y + height - 4), 1
+            )
+
+
+def draw_help_overlay(
+    surface, font, controls: List[str],
+    pos: Tuple[int, int], available_width: int, available_height: int
+) -> None:
+    """Draw controls in a multi-column grid layout."""
+    x, y = pos
+    col_width = 130  # Width per control entry
+    cols = max(1, available_width // col_width)
+    row_height = 18
+
+    # Draw background
+    pygame.draw.rect(
+        surface, (25, 25, 30),
+        (x - 4, y - 4, available_width, available_height), 0
+    )
+
+    draw_text(surface, font, "CONTROLS", (x, y), color=(220, 200, 120))
+    y += row_height + 4
+
+    for i, control in enumerate(controls):
+        col = i % cols
+        row = i // cols
+        cx = x + (col * col_width)
+        cy = y + (row * row_height)
+
+        if cy + row_height < pos[1] + available_height:
+            draw_text(surface, font, control, (cx, cy), color=(180, 180, 160))
+
+
+def render(
+    screen, font, state: GameState, tile_size: int, sidebar: int,
+    player_px: Tuple[float, float], selected_tool: int = 0, show_help: bool = False
+) -> None:
     """
     Render the complete game state to the pygame window.
-    
+
     Draws tiles, structures, player, HUD sidebar with inventory and soil profile.
     Log messages displayed in bottom panel across full width.
     """
     screen.fill((20, 20, 25))
-    
+
     map_width = state.width * tile_size
     map_height = state.height * tile_size
-    
+
+    # Calculate elevation range for shading (cache could be added for performance)
+    elevation_range = calculate_elevation_range(state)
+
     # Draw tiles
     for y in range(state.height):
         for x in range(state.width):
             tile = state.tiles[x][y]
             ttype = TILE_TYPES[tile.kind]
-            color = color_for_tile(tile, ttype)
+            color = color_for_tile(tile, ttype, elevation_range)
             rect = pygame.Rect(x * tile_size, y * tile_size, tile_size - 1, tile_size - 1)
             pygame.draw.rect(screen, color, rect)
             if tile.trench:
@@ -235,15 +376,15 @@ def render(screen, font, state: GameState, tile_size: int, sidebar: int, player_
         label = {"cistern": "C", "condenser": "N", "planter": "P"}.get(structure.kind, "?")
         draw_text(screen, font, label, (rect.x + 6, rect.y + 4))
     
-    # Draw wells and depot markers
+    # Draw wellsprings and depot markers
     for y in range(state.height):
         for x in range(state.width):
             tile = state.tiles[x][y]
             rect = pygame.Rect(x * tile_size, y * tile_size, tile_size - 1, tile_size - 1)
-            if tile.well_output > 0:
+            if tile.wellspring_output > 0:
                 # Different colors for seep vs spring (converting units to L for comparison)
-                well_color = (100, 180, 240) if tile.well_output/10 > 0.3 else (70, 140, 220)
-                pygame.draw.circle(screen, well_color, rect.center, WELL_RADIUS)
+                spring_color = (100, 180, 240) if tile.wellspring_output / 10 > 0.5 else (70, 140, 220)
+                pygame.draw.circle(screen, spring_color, rect.center, WELLSPRING_RADIUS)
             if tile.depot:
                 pygame.draw.rect(screen, (200, 200, 60), rect.inflate(-TRENCH_INSET, -TRENCH_INSET), border_radius=3)
                 draw_text(screen, font, "D", (rect.x + 6, rect.y + 4), color=(40, 40, 20))
@@ -306,8 +447,8 @@ def render(screen, font, state: GameState, tile_size: int, sidebar: int, player_
         draw_text(screen, font, f"  Ground: {subsurface/10:.1f}L", (hud_x + 10, y_offset), color=(180, 180, 180))
         y_offset += LINE_HEIGHT
     
-    if tile.well_output > 0:
-        draw_text(screen, font, f"Well: {tile.well_output/10:.2f}L/tick", (hud_x, y_offset), color=(100, 180, 255))
+    if tile.wellspring_output > 0:
+        draw_text(screen, font, f"Wellspring: {tile.wellspring_output/10:.2f}L/tick", (hud_x, y_offset), color=(100, 180, 255))
         y_offset += LINE_HEIGHT
     
     if tile.trench:
@@ -357,27 +498,38 @@ def render(screen, font, state: GameState, tile_size: int, sidebar: int, player_
         overlay = pygame.Surface((map_width, map_height), pygame.SRCALPHA)
         overlay.fill((10, 20, 40, night_alpha))
         screen.blit(overlay, (0, 0))
-    
-    # Draw log panel at bottom (full width)
-    log_panel_y = map_height
-    log_panel_height = screen.get_height() - map_height
-    
+
+    # Draw toolbar at bottom of map area
+    toolbar_y = map_height
+    draw_toolbar(screen, font, TOOLS, selected_tool, (0, toolbar_y), map_width, TOOLBAR_HEIGHT)
+
+    # Draw log panel below toolbar (full width)
+    log_panel_y = map_height + TOOLBAR_HEIGHT
+    log_panel_height = screen.get_height() - log_panel_y
+
     # Draw separator line
     pygame.draw.line(screen, (80, 80, 80), (0, log_panel_y), (screen.get_width(), log_panel_y), 2)
-    
-    # Log header
+
     log_x = 12
     log_y = log_panel_y + 8
-    draw_text(screen, font, "EVENT LOG", (log_x, log_y), color=(200, 180, 120))
-    log_y += LINE_HEIGHT + 4
-    
-    # Display recent messages
-    available_width = screen.get_width() - 24
-    max_messages = (log_panel_height - 40) // 18
-    
-    for msg in state.messages[-max_messages:]:
-        draw_text(screen, font, f"• {msg}", (log_x, log_y), color=(160, 200, 160))
-        log_y += 18
+
+    if show_help:
+        # Show help overlay instead of log
+        draw_help_overlay(
+            screen, font, CONTROL_DESCRIPTIONS,
+            (log_x, log_y), screen.get_width() - 24, log_panel_height - 16
+        )
+    else:
+        # Log header
+        draw_text(screen, font, "EVENT LOG", (log_x, log_y), color=(200, 180, 120))
+        log_y += LINE_HEIGHT + 4
+
+        # Display recent messages
+        max_messages = (log_panel_height - 40) // 18
+
+        for msg in state.messages[-max_messages:]:
+            draw_text(screen, font, f"• {msg}", (log_x, log_y), color=(160, 200, 160))
+            log_y += 18
 
 
 def issue(state: GameState, cmd: str, args: List[str]) -> None:
@@ -445,57 +597,63 @@ def update_player_position(state: GameState, player_px: List[float], vel: Tuple[
 def run(window_size: MapSize = (20, 15), tile_size: int = TILE_SIZE) -> None:
     """
     Main pygame event loop.
-    
+
     Handles input, updates game state, and renders to screen.
     """
     pygame.init()
     map_w, map_h = window_size
-    # Window sized to fit map + log area below + wider sidebar
-    log_height = 150
+
+    # Window sized to fit map + toolbar + log area below + sidebar
+    log_height = 120
     window_width = map_w * tile_size + SIDEBAR_WIDTH
-    window_height = map_h * tile_size + log_height
+    window_height = map_h * tile_size + TOOLBAR_HEIGHT + log_height
+
     screen = pygame.display.set_mode((window_width, window_height))
-    pygame.display.set_caption("Kemet Prototype - Desert Terraforming")
+    pygame.display.set_caption("Kemet - Desert Terraforming")
     font = pygame.font.Font(None, FONT_SIZE)
     clock = pygame.time.Clock()
     state = build_initial_state(width=map_w, height=map_h)
-    state.messages.append("Welcome to Kemet. Press H for help.")
-    player_px = [state.player[0] * tile_size + tile_size / 2, state.player[1] * tile_size + tile_size / 2]
+    state.messages.append("Welcome to Kemet. Press H for help, 1-9 to select tools.")
+
+    player_px = [
+        state.player[0] * tile_size + tile_size / 2,
+        state.player[1] * tile_size + tile_size / 2
+    ]
     tick_timer = 0.0
+
+    # UI state
+    selected_tool = 0  # Currently selected tool index
+    show_help = False  # Toggle help overlay
 
     running = True
     while running:
         dt = clock.tick(60) / 1000.0
+
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
+
             elif event.type == pygame.KEYDOWN:
+                # System keys
                 if event.key == pygame.K_ESCAPE:
                     running = False
-                elif event.key == pygame.K_t:
-                    issue(state, "dig", [])
-                elif event.key == pygame.K_z:
-                    issue(state, "lower", [])
-                elif event.key == pygame.K_x:
-                    issue(state, "raise", [])
-                elif event.key == pygame.K_c:
-                    issue(state, "build", ["cistern"])
-                elif event.key == pygame.K_n:
-                    issue(state, "build", ["condenser"])
-                elif event.key == pygame.K_p:
-                    issue(state, "build", ["planter"])
-                elif event.key == pygame.K_e:
-                    issue(state, "collect", [])
-                elif event.key == pygame.K_f:
-                    issue(state, "pour", ["1"])
-                elif event.key == pygame.K_v:
-                    issue(state, "survey", [])
+
+                # Help toggle
+                elif event.key == pygame.K_h:
+                    show_help = not show_help
+
+                # Rest/end day
                 elif event.key == pygame.K_SPACE:
                     issue(state, "end", [])
-                elif event.key == pygame.K_h:
-                    for control in CONTROLS:
-                        state.messages.append(control)
-        
+
+                # Number keys select AND use tool
+                elif event.key in TOOL_KEYS:
+                    tool_num = TOOL_KEYS[event.key]
+                    tool = get_tool_by_number(tool_num)
+                    if tool:
+                        selected_tool = tool_num - 1
+                        issue(state, tool.action, tool.args)
+
         # Continuous movement with WASD
         keys = pygame.key.get_pressed()
         vx = vy = 0.0
@@ -507,18 +665,21 @@ def run(window_size: MapSize = (20, 15), tile_size: int = TILE_SIZE) -> None:
             vx -= MOVE_SPEED
         if keys[pygame.K_d]:
             vx += MOVE_SPEED
-        
+
         update_player_position(state, player_px, (vx, vy), dt, tile_size)
-        
+
         # Automatic simulation ticks
         tick_timer += dt
         while tick_timer >= TICK_INTERVAL:
             simulate_tick(state)
             tick_timer -= TICK_INTERVAL
-        
-        render(screen, font, state, tile_size, SIDEBAR_WIDTH, tuple(player_px))
+
+        render(
+            screen, font, state, tile_size, SIDEBAR_WIDTH,
+            tuple(player_px), selected_tool, show_help
+        )
         pygame.display.flip()
-    
+
     pygame.quit()
 
 
