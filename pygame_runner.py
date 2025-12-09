@@ -2,6 +2,15 @@
 """
 Pygame-CE frontend for the Kemet prototype.
 
+Architecture:
+- World space: tile/pixel coordinates in the game world (can be larger than screen)
+- Virtual screen space: fixed 1280x720 UI layout surface
+- Screen space: actual window pixels (scales with resize)
+
+The camera controls which portion of the world is visible in the map viewport.
+All UI elements render at virtual screen coordinates.
+Mouse input transforms: screen -> virtual -> world (for map clicks)
+
 Controls:
 - W/A/S/D: move (or menu navigation when menu open)
 - 1-9: select tool
@@ -30,6 +39,7 @@ from main import (
     simulate_tick,
     end_day,
 )
+from camera import Camera
 from tools import get_toolbar, Toolbar
 from ui_state import get_ui_state, UIState
 from keybindings import (
@@ -43,7 +53,6 @@ from keybindings import (
 )
 from utils import clamp
 from config import (
-    SIDEBAR_WIDTH,
     TILE_SIZE,
     MOVE_SPEED,
     DIAGONAL_FACTOR,
@@ -57,99 +66,268 @@ from config import (
 )
 from render import (
     calculate_elevation_range,
-    render_map,
-    render_player,
     render_hud,
     render_inventory,
     render_soil_profile,
     render_toolbar,
     render_help_overlay,
-    render_night_overlay,
     render_event_log,
 )
 
-MapSize = Tuple[int, int]
+# Virtual screen dimensions (fixed internal resolution)
+VIRTUAL_WIDTH = 1280
+VIRTUAL_HEIGHT = 720
+
+# Layout constants for virtual screen
+SIDEBAR_WIDTH = 280
+MAP_VIEWPORT_WIDTH = VIRTUAL_WIDTH - SIDEBAR_WIDTH  # 1000
+MAP_VIEWPORT_HEIGHT = VIRTUAL_HEIGHT - TOOLBAR_HEIGHT - 100  # 588
+LOG_PANEL_HEIGHT = 100
 
 
 @dataclass
-class UILayout:
-    """Calculates and holds the rectangles for all UI components."""
-    screen_width: int
-    screen_height: int
-
+class VirtualLayout:
+    """Fixed layout regions in virtual screen coordinates."""
+    # Map viewport (where the world is displayed)
     map_rect: pygame.Rect
+
+    # Sidebar (HUD, soil profile, inventory)
     sidebar_rect: pygame.Rect
-    log_panel_rect: pygame.Rect
+
+    # Bottom panels
     toolbar_rect: pygame.Rect
+    log_panel_rect: pygame.Rect
 
     @classmethod
-    def from_screen_size(cls, screen_size: Tuple[int, int], map_pixel_size: Tuple[int, int]) -> UILayout:
-        sw, sh = screen_size
-        mw, mh = map_pixel_size
-        map_rect = pygame.Rect(0, 0, mw, mh)
-        sidebar_rect = pygame.Rect(mw, 0, sw - mw, sh)
-        toolbar_rect = pygame.Rect(0, mh, mw, TOOLBAR_HEIGHT)
-        log_panel_rect = pygame.Rect(0, mh + TOOLBAR_HEIGHT, sw, sh - mh - TOOLBAR_HEIGHT)
-        return cls(sw, sh, map_rect, sidebar_rect, log_panel_rect, toolbar_rect)
+    def create(cls) -> VirtualLayout:
+        """Create the standard layout for virtual screen."""
+        map_rect = pygame.Rect(0, 0, MAP_VIEWPORT_WIDTH, MAP_VIEWPORT_HEIGHT)
+        sidebar_rect = pygame.Rect(MAP_VIEWPORT_WIDTH, 0, SIDEBAR_WIDTH, VIRTUAL_HEIGHT)
+        toolbar_rect = pygame.Rect(0, MAP_VIEWPORT_HEIGHT, MAP_VIEWPORT_WIDTH, TOOLBAR_HEIGHT)
+        log_panel_rect = pygame.Rect(0, MAP_VIEWPORT_HEIGHT + TOOLBAR_HEIGHT, VIRTUAL_WIDTH, LOG_PANEL_HEIGHT)
+
+        return cls(map_rect, sidebar_rect, toolbar_rect, log_panel_rect)
 
 
-def render(
-    virtual_screen,
+def screen_to_virtual(
+    screen_pos: Tuple[int, int],
+    screen_size: Tuple[int, int],
+) -> Tuple[int, int]:
+    """Transform screen coordinates to virtual screen coordinates."""
+    screen_w, screen_h = screen_size
+    scale = min(screen_w / VIRTUAL_WIDTH, screen_h / VIRTUAL_HEIGHT)
+    scaled_w = VIRTUAL_WIDTH * scale
+    scaled_h = VIRTUAL_HEIGHT * scale
+    offset_x = (screen_w - scaled_w) / 2
+    offset_y = (screen_h - scaled_h) / 2
+
+    vx = int((screen_pos[0] - offset_x) / scale)
+    vy = int((screen_pos[1] - offset_y) / scale)
+
+    return (vx, vy)
+
+
+def virtual_to_world(
+    virtual_pos: Tuple[int, int],
+    layout: VirtualLayout,
+    camera: Camera,
+) -> Optional[Tuple[float, float]]:
+    """
+    Transform virtual screen coordinates to world coordinates.
+    Returns None if position is outside the map viewport.
+    """
+    if not layout.map_rect.collidepoint(virtual_pos):
+        return None
+
+    # Position within the map viewport
+    vp_x = virtual_pos[0] - layout.map_rect.x
+    vp_y = virtual_pos[1] - layout.map_rect.y
+
+    # Scale from viewport to camera viewport size
+    scale_x = camera.viewport_width / layout.map_rect.width
+    scale_y = camera.viewport_height / layout.map_rect.height
+
+    cam_vp_x = vp_x * scale_x
+    cam_vp_y = vp_y * scale_y
+
+    # Convert to world coordinates
+    world_x, world_y = camera.viewport_to_world(cam_vp_x, cam_vp_y)
+
+    return (world_x, world_y)
+
+
+def render_map_viewport(
+    surface: pygame.Surface,
     font,
     state: GameState,
+    camera: Camera,
     tile_size: int,
-    player_px: Tuple[float, float],
-    toolbar: Toolbar,
-    show_help: bool,
-    elevation_range: Optional[Tuple[float, float]],
-    ui_state: UIState,
+    elevation_range: Tuple[float, float],
+    player_world_pos: Tuple[float, float],
 ) -> None:
-    """Main render function that composes all rendering components."""
+    """Render the visible portion of the world to the map viewport surface."""
+    surface.fill((20, 20, 25))
+
+    # Get visible tile range
+    start_x, start_y, end_x, end_y = camera.get_visible_tile_range()
+
+    # Import here to avoid circular dependency
+    from mapgen import TILE_TYPES
+    from render.colors import color_for_tile
+    from render.primitives import draw_text
+    from config import STRUCTURE_INSET, TRENCH_INSET, WELLSPRING_RADIUS, PLAYER_RADIUS_DIVISOR
+
+    # Draw visible tiles
+    for ty in range(start_y, end_y):
+        for tx in range(start_x, end_x):
+            tile = state.tiles[tx][ty]
+            color = color_for_tile(tile, TILE_TYPES[tile.kind], elevation_range)
+
+            # Convert tile position to viewport position
+            world_x, world_y = camera.tile_to_world(tx, ty)
+            vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
+
+            rect = pygame.Rect(int(vp_x), int(vp_y), tile_size - 1, tile_size - 1)
+            pygame.draw.rect(surface, color, rect)
+
+            if tile.trench:
+                pygame.draw.rect(surface, (80, 80, 60), rect.inflate(-TRENCH_INSET, -TRENCH_INSET))
+
+    # Draw structures
+    for (sx, sy), structure in state.structures.items():
+        if not camera.is_tile_visible(sx, sy):
+            continue
+        world_x, world_y = camera.tile_to_world(sx, sy)
+        vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
+        rect = pygame.Rect(int(vp_x), int(vp_y), tile_size - 1, tile_size - 1)
+        pygame.draw.rect(surface, (30, 30, 30), rect.inflate(-STRUCTURE_INSET, -STRUCTURE_INSET))
+        draw_text(surface, font, structure.kind[0].upper(), (rect.x + 6, rect.y + 4))
+
+    # Draw special features (wellsprings, depots)
+    for ty in range(start_y, end_y):
+        for tx in range(start_x, end_x):
+            tile = state.tiles[tx][ty]
+            world_x, world_y = camera.tile_to_world(tx, ty)
+            vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
+            rect = pygame.Rect(int(vp_x), int(vp_y), tile_size - 1, tile_size - 1)
+
+            if tile.wellspring_output > 0:
+                spring_color = (100, 180, 240) if tile.wellspring_output / 10 > 0.5 else (70, 140, 220)
+                pygame.draw.circle(surface, spring_color, rect.center, WELLSPRING_RADIUS)
+            if tile.depot:
+                pygame.draw.rect(surface, (200, 200, 60), rect.inflate(-TRENCH_INSET, -TRENCH_INSET), border_radius=3)
+                draw_text(surface, font, "D", (rect.x + 6, rect.y + 4), color=(40, 40, 20))
+
+    # Draw player
+    player_vp_x, player_vp_y = camera.world_to_viewport(player_world_pos[0], player_world_pos[1])
+    player_vp_x, player_vp_y = int(player_vp_x), int(player_vp_y)
+
+    pygame.draw.circle(
+        surface,
+        (240, 240, 90),
+        (player_vp_x, player_vp_y),
+        tile_size // PLAYER_RADIUS_DIVISOR,
+    )
+
+    # Draw action timer bar if busy
+    if state.is_busy():
+        bar_width = tile_size
+        bar_height = 4
+        bar_x = player_vp_x - bar_width // 2
+        bar_y = player_vp_y - tile_size // 2 - bar_height - 2
+        progress = state.get_action_progress()
+        pygame.draw.rect(surface, (50, 50, 50), (bar_x, bar_y, bar_width, bar_height))
+        pygame.draw.rect(surface, (200, 200, 80), (bar_x, bar_y, int(bar_width * progress), bar_height))
+
+    # Draw night overlay
+    night_alpha = max(0, min(200, int((140 - state.heat) * 180 // 80)))
+    if night_alpha > 0:
+        overlay = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
+        overlay.fill((10, 20, 40, night_alpha))
+        surface.blit(overlay, (0, 0))
+
+
+def render_to_virtual_screen(
+    virtual_screen: pygame.Surface,
+    font,
+    state: GameState,
+    camera: Camera,
+    tile_size: int,
+    elevation_range: Tuple[float, float],
+    player_world_pos: Tuple[float, float],
+    toolbar: Toolbar,
+    ui_state: UIState,
+    layout: VirtualLayout,
+    show_help: bool,
+) -> None:
+    """Render everything to the virtual screen at fixed resolution."""
     virtual_screen.fill((20, 20, 25))
-    map_width = state.width * tile_size
-    map_height = state.height * tile_size
 
-    # Render map and player
-    render_map(virtual_screen, font, state, tile_size, elevation_range)
-    render_player(virtual_screen, state, player_px, tile_size)
+    # 1. Render map viewport
+    map_surface = pygame.Surface((camera.viewport_width, camera.viewport_height))
+    render_map_viewport(map_surface, font, state, camera, tile_size, elevation_range, player_world_pos)
 
-    # Render night overlay (before HUD so it only affects map)
-    render_night_overlay(virtual_screen, state, map_width, map_height)
+    # Scale map surface to fit the layout's map rect
+    scaled_map = pygame.transform.scale(map_surface, layout.map_rect.size)
+    virtual_screen.blit(scaled_map, layout.map_rect.topleft)
 
-    # Render HUD panels
-    hud_x = map_width + 12
-    render_hud(virtual_screen, font, state, hud_x, 12)
+    # 2. Render sidebar elements
+    sidebar_x = layout.sidebar_rect.x + 12
+    y_offset = 12
 
-    # Render soil profile
-    x, y = state.player
-    tile = state.tiles[x][y]
-    soil_x = virtual_screen.get_width() - PROFILE_WIDTH - PROFILE_MARGIN
-    render_soil_profile(virtual_screen, font, tile, (soil_x, 12 + 22), PROFILE_WIDTH, PROFILE_HEIGHT - 22)
+    # HUD
+    render_hud(virtual_screen, font, state, sidebar_x, y_offset)
 
-    # Render inventory
+    # Soil profile
+    soil_x = layout.sidebar_rect.x + PROFILE_MARGIN
+    soil_y = 180  # Below HUD
+    px, py = state.player
+    render_soil_profile(virtual_screen, font, state.tiles[px][py], (soil_x, soil_y), PROFILE_WIDTH, PROFILE_HEIGHT - 22)
+
+    # Inventory
     inv_w, inv_h = 180, 140
-    inv_x = virtual_screen.get_width() - inv_w - 12
-    inv_y = clamp(map_height - inv_h - 12, 12, 9999)
-    render_inventory(virtual_screen, font, state, (inv_x, int(inv_y)), inv_w, inv_h)
+    inv_x = VIRTUAL_WIDTH - inv_w - 12
+    inv_y = layout.map_rect.bottom - inv_h - 12
+    render_inventory(virtual_screen, font, state, (inv_x, inv_y), inv_w, inv_h)
 
-    # Render toolbar and store bounds for mouse interaction
-    render_toolbar(virtual_screen, font, toolbar, (0, map_height), map_width, TOOLBAR_HEIGHT, ui_state)
-    ui_state.toolbar_rect = pygame.Rect(0, map_height, map_width, TOOLBAR_HEIGHT)
-    ui_state.tool_slot_width = map_width // len(toolbar.tools) if toolbar.tools else 0
+    # 3. Render toolbar
+    render_toolbar(virtual_screen, font, toolbar, layout.toolbar_rect.topleft,
+                   layout.toolbar_rect.width, TOOLBAR_HEIGHT, ui_state)
 
-    # Render log panel area
-    log_panel_y = map_height + TOOLBAR_HEIGHT
-    log_panel_height = virtual_screen.get_height() - log_panel_y
-    pygame.draw.line(virtual_screen, (80, 80, 80), (0, log_panel_y), (virtual_screen.get_width(), log_panel_y), 2)
+    # Update ui_state bounds (in virtual coordinates)
+    ui_state.toolbar_rect = layout.toolbar_rect
+    ui_state.tool_slot_width = layout.toolbar_rect.width // len(toolbar.tools) if toolbar.tools else 0
+    ui_state.log_panel_rect = layout.log_panel_rect
 
-    # Store log panel bounds for scroll detection
-    ui_state.log_panel_rect = pygame.Rect(0, log_panel_y, virtual_screen.get_width(), log_panel_height)
+    # 4. Render log panel
+    pygame.draw.line(virtual_screen, (80, 80, 80),
+                     (0, layout.log_panel_rect.y),
+                     (VIRTUAL_WIDTH, layout.log_panel_rect.y), 2)
 
-    log_x, log_y = 12, log_panel_y + 8
+    log_x, log_y = 12, layout.log_panel_rect.y + 8
     if show_help:
-        render_help_overlay(virtual_screen, font, CONTROL_DESCRIPTIONS, (log_x, log_y), virtual_screen.get_width() - 24, log_panel_height - 16)
+        render_help_overlay(virtual_screen, font, CONTROL_DESCRIPTIONS,
+                            (log_x, log_y), VIRTUAL_WIDTH - 24, LOG_PANEL_HEIGHT - 16)
     else:
-        render_event_log(virtual_screen, font, state, (log_x, log_y), log_panel_height, ui_state.log_scroll_offset)
+        render_event_log(virtual_screen, font, state,
+                         (log_x, log_y), LOG_PANEL_HEIGHT, ui_state.log_scroll_offset)
+
+
+def blit_virtual_to_screen(virtual_screen: pygame.Surface, screen: pygame.Surface) -> None:
+    """Scale and blit the virtual screen to the actual display, with letterboxing."""
+    screen_w, screen_h = screen.get_size()
+    scale = min(screen_w / VIRTUAL_WIDTH, screen_h / VIRTUAL_HEIGHT)
+    scaled_w = int(VIRTUAL_WIDTH * scale)
+    scaled_h = int(VIRTUAL_HEIGHT * scale)
+    offset_x = (screen_w - scaled_w) // 2
+    offset_y = (screen_h - scaled_h) // 2
+
+    # Fill letterbox areas
+    screen.fill((0, 0, 0))
+
+    # Scale and blit
+    scaled = pygame.transform.scale(virtual_screen, (scaled_w, scaled_h))
+    screen.blit(scaled, (offset_x, offset_y))
 
 
 def issue(state: GameState, cmd: str, args: List[str]) -> None:
@@ -170,12 +348,12 @@ def issue(state: GameState, cmd: str, args: List[str]) -> None:
 
 def update_player_position(
     state: GameState,
-    player_px: List[float],
+    player_world_pos: List[float],
     vel: Tuple[float, float],
     dt: float,
     tile_size: int,
 ) -> None:
-    """Update player pixel position and tile position based on velocity."""
+    """Update player world position and tile position based on velocity."""
     if state.is_busy():
         return
 
@@ -187,73 +365,72 @@ def update_player_position(
         vx *= DIAGONAL_FACTOR
         vy *= DIAGONAL_FACTOR
 
-    new_x = clamp(player_px[0] + vx * dt, 0, state.width * tile_size - 1)
-    new_y = clamp(player_px[1] + vy * dt, 0, state.height * tile_size - 1)
+    world_width = state.width * tile_size
+    world_height = state.height * tile_size
+
+    new_x = clamp(player_world_pos[0] + vx * dt, 0, world_width - 1)
+    new_y = clamp(player_world_pos[1] + vy * dt, 0, world_height - 1)
     target_tile_x, target_tile_y = int(new_x // tile_size), int(new_y // tile_size)
 
     # Check for rock collision
     if state.tiles[target_tile_x][target_tile_y].kind == "rock":
-        current_tile_x, current_tile_y = int(player_px[0] // tile_size), int(player_px[1] // tile_size)
+        current_tile_x = int(player_world_pos[0] // tile_size)
+        current_tile_y = int(player_world_pos[1] // tile_size)
         if (target_tile_x, target_tile_y) != (current_tile_x, current_tile_y):
             if (target_tile_x, target_tile_y) != state.last_rock_blocked:
                 state.messages.append("Rock blocks the way.")
                 state.last_rock_blocked = (target_tile_x, target_tile_y)
             return
 
-    player_px[0], player_px[1] = new_x, new_y
+    player_world_pos[0], player_world_pos[1] = new_x, new_y
     state.player = (target_tile_x, target_tile_y)
-
-
-def transform_mouse_pos(pos: Tuple[int, int], screen_size: Tuple[int, int], virtual_size: Tuple[int, int]) -> Tuple[int, int]:
-    """Transforms mouse coordinates from screen space to virtual surface space."""
-    screen_w, screen_h = screen_size
-    virtual_w, virtual_h = virtual_size
-    x, y = pos
-
-    # Calculate scaling factor and letterbox/pillarbox offsets
-    scale = min(screen_w / virtual_w, screen_h / virtual_h)
-    scaled_w, scaled_h = virtual_w * scale, virtual_h * scale
-    offset_x = (screen_w - scaled_w) / 2
-    offset_y = (screen_h - scaled_h) / 2
-
-    # Transform coordinates
-    transformed_x = int((x - offset_x) / scale)
-    transformed_y = int((y - offset_y) / scale)
-
-    return transformed_x, transformed_y
 
 
 def run(tile_size: int = TILE_SIZE) -> None:
     """Main game loop."""
     pygame.init()
 
-    # Define a standard base resolution (16:9) and create the virtual surface
-    base_width, base_height = 1280, 720
-    virtual_screen = pygame.Surface((base_width, base_height))
-    
-    # The map size is now fixed based on our ideal layout, not the window.
-    # The map view will scale; the UI will not.
-    map_w, map_h = MAP_SIZE
-    state = build_initial_state(width=map_w, height=map_h)
+    # Create virtual screen (fixed internal resolution)
+    virtual_screen = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT))
 
-    # Set up the actual display window
-    screen = pygame.display.set_mode((base_width, base_height), pygame.RESIZABLE)
+    # Create actual display window (resizable)
+    screen = pygame.display.set_mode((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.RESIZABLE)
     pygame.display.set_caption("Kemet - Desert Terraforming")
+
     font = pygame.font.Font(None, FONT_SIZE)
     clock = pygame.time.Clock()
 
-    state.messages.append("Welcome to Kemet. Press H for help. 1-9 select tools, R opens options (W/S to navigate), F to use.")
+    # Create game state
+    map_w, map_h = MAP_SIZE
+    state = build_initial_state(width=map_w, height=map_h)
+    state.messages.append("Welcome to Kemet. Press H for help.")
 
-    player_px = [state.player[0] * tile_size + tile_size / 2, state.player[1] * tile_size + tile_size / 2]
-    tick_timer = 0.0
+    # Create layout (fixed virtual screen layout)
+    layout = VirtualLayout.create()
+
+    # Create camera - viewport sized to fit map area in layout
+    camera = Camera()
+    camera.set_world_bounds(state.width, state.height, tile_size)
+    # Set viewport to match what fits in the map display area
+    camera.set_viewport_size(MAP_VIEWPORT_WIDTH, MAP_VIEWPORT_HEIGHT)
+
+    # Player position in world pixels
+    player_world_pos = [
+        state.player[0] * tile_size + tile_size / 2,
+        state.player[1] * tile_size + tile_size / 2
+    ]
+
+    # Center camera on player
+    camera.center_on(player_world_pos[0], player_world_pos[1])
+
+    # UI state
     toolbar = get_toolbar()
     ui_state = get_ui_state()
     show_help = False
     elevation_range = calculate_elevation_range(state)
 
-    # Calculate visible message count for scroll limits
-    log_panel_height = 120 - 16  # Approximate, will be updated in render
-    visible_messages = (log_panel_height - 40) // 18
+    # Scroll state
+    visible_messages = (LOG_PANEL_HEIGHT - 40) // 18
 
     running = True
     while running:
@@ -262,85 +439,80 @@ def run(tile_size: int = TILE_SIZE) -> None:
 
         # Handle events
         for event in pygame.event.get():
-            if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE):
+            if event.type == pygame.QUIT:
                 running = False
-            # The RESIZABLE flag allows the window to be resized by the user.
-            # We don't need to do anything here; the main loop will handle the new size.
+                continue
+
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                if toolbar.menu_open:
+                    toolbar.close_menu()
+                else:
+                    running = False
+                continue
 
             # Mouse wheel scrolling
-            elif event.type == pygame.MOUSEWHEEL:
-                scroll_dir = event.y  # positive = up, negative = down
+            if event.type == pygame.MOUSEWHEEL:
+                scroll_dir = event.y
 
-                # If menu is open, scroll always controls the menu highlight
                 if toolbar.menu_open:
-                    # Scroll up = previous option, scroll down = next option
                     toolbar.cycle_menu_highlight(-scroll_dir)
                 else:
-                    # Otherwise scroll the event log
-                    mouse_pos = transform_mouse_pos(pygame.mouse.get_pos(), screen.get_size(), virtual_screen.get_size())
-                    ui_state.handle_scroll(mouse_pos, scroll_dir, len(state.messages), visible_messages)
+                    virtual_pos = screen_to_virtual(pygame.mouse.get_pos(), screen.get_size())
+                    ui_state.handle_scroll(virtual_pos, scroll_dir, len(state.messages), visible_messages)
+                continue
 
-            # Mouse button clicks (ignore scroll wheel buttons 4/5, handled by MOUSEWHEEL)
-            elif event.type == pygame.MOUSEBUTTONDOWN and event.button not in (4, 5):
-                mouse_pos = transform_mouse_pos(pygame.mouse.get_pos(), screen.get_size(), virtual_screen.get_size())
+            # Mouse clicks
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button not in (4, 5):
+                virtual_pos = screen_to_virtual(pygame.mouse.get_pos(), screen.get_size())
 
                 # Check popup clicks first (when menu is open)
                 if toolbar.menu_open:
-                    option_idx = ui_state.get_popup_option_at(mouse_pos)
+                    option_idx = ui_state.get_popup_option_at(virtual_pos)
                     if option_idx is not None:
-                        # Click on option: set highlight and confirm
                         toolbar.menu_highlight_index = option_idx
                         toolbar.confirm_menu_selection()
                         continue
-                    # Click outside popup - left click confirms, right click cancels
-                    elif not ui_state.is_over_popup(mouse_pos):
-                        if event.button == 1:  # Left click confirms highlighted option
+                    elif not ui_state.is_over_popup(virtual_pos):
+                        if event.button == 1:
                             toolbar.confirm_menu_selection()
-                        else:  # Right click cancels
+                        else:
                             toolbar.close_menu()
                         continue
 
-                # Left click on toolbar to select tool or toggle menu
-                if event.button == 1:  # Left click
-                    slot = ui_state.get_toolbar_slot_at(mouse_pos, len(toolbar.tools))
+                # Left click
+                if event.button == 1:
+                    slot = ui_state.get_toolbar_slot_at(virtual_pos, len(toolbar.tools))
                     if slot is not None:
                         if slot == toolbar.selected_index:
-                            # Clicking already-selected tool toggles its menu
                             tool = toolbar.get_selected_tool()
                             if tool and tool.has_menu():
                                 toolbar.toggle_menu()
                         else:
-                            # Clicking different tool selects it and closes menu
                             toolbar.close_menu()
                             toolbar.select_by_number(slot + 1)
 
-                # Right click to toggle tool options menu
-                elif event.button == 3:  # Right click
-                    # Check if clicking on toolbar first
-                    slot = ui_state.get_toolbar_slot_at(mouse_pos, len(toolbar.tools))
+                # Right click
+                elif event.button == 3:
+                    slot = ui_state.get_toolbar_slot_at(virtual_pos, len(toolbar.tools))
                     if slot is not None:
-                        # Right click on toolbar selects that tool and opens menu
                         toolbar.select_by_number(slot + 1)
                         tool = toolbar.get_selected_tool()
                         if tool and tool.has_menu():
                             toolbar.toggle_menu()
-                    else:
-                        # Right click in map area toggles menu for selected tool
-                        map_width = state.width * tile_size
-                        map_height = state.height * tile_size
-                        if mouse_pos[0] < map_width and mouse_pos[1] < map_height:
-                            tool = toolbar.get_selected_tool()
-                            if tool and tool.has_menu():
-                                toolbar.toggle_menu()
+                    elif layout.map_rect.collidepoint(virtual_pos):
+                        # Right click in map area
+                        tool = toolbar.get_selected_tool()
+                        if tool and tool.has_menu():
+                            toolbar.toggle_menu()
+                continue
 
-            elif event.type == pygame.KEYDOWN:
-                # Help toggle works even when busy
+            # Keyboard
+            if event.type == pygame.KEYDOWN:
                 if event.key == HELP_KEY:
                     show_help = not show_help
                     toolbar.close_menu()
                     continue
 
-                # Tool menu navigation when menu is open
                 if toolbar.menu_open:
                     if event.key == pygame.K_w:
                         toolbar.cycle_menu_highlight(-1)
@@ -351,20 +523,14 @@ def run(tile_size: int = TILE_SIZE) -> None:
                     elif event.key == TOOL_MENU_KEY:
                         toolbar.confirm_menu_selection()
                         continue
-                    elif event.key == pygame.K_ESCAPE:
-                        toolbar.close_menu()
-                        continue
                     elif event.key == USE_TOOL_KEY:
                         toolbar.confirm_menu_selection()
                         # Fall through to use tool
 
-                # Tool selection
                 if event.key in TOOL_KEYS:
-                    tool_num = TOOL_KEYS[event.key]
-                    toolbar.select_by_number(tool_num)
+                    toolbar.select_by_number(TOOL_KEYS[event.key])
                     continue
 
-                # Block other actions while busy
                 if state.is_busy():
                     continue
 
@@ -386,7 +552,7 @@ def run(tile_size: int = TILE_SIZE) -> None:
                         if action in ("terrain", "raise", "lower"):
                             elevation_range = calculate_elevation_range(state)
 
-        # Handle continuous movement (disabled when menu is open)
+        # Movement (when menu closed)
         if not toolbar.menu_open:
             keys = pygame.key.get_pressed()
             vx = vy = 0.0
@@ -398,70 +564,31 @@ def run(tile_size: int = TILE_SIZE) -> None:
                 vx -= MOVE_SPEED
             if keys[pygame.K_d]:
                 vx += MOVE_SPEED
-            update_player_position(state, player_px, (vx, vy), dt, tile_size)
+            update_player_position(state, player_world_pos, (vx, vy), dt, tile_size)
 
-        # Continuous world simulation tick
-        tick_timer += dt
+        # Camera follows player
+        camera.follow(player_world_pos[0], player_world_pos[1])
+
+        # Simulation tick
+        tick_timer = getattr(state, '_tick_timer', 0.0) + dt
         if tick_timer >= TICK_INTERVAL:
             simulate_tick(state)
             tick_timer -= TICK_INTERVAL
+        state._tick_timer = tick_timer
 
-        # Reset scroll when new messages arrive (user is at bottom)
-        if ui_state.log_scroll_offset == 0:
-            pass  # Already at bottom, new messages will show
-        # Update visible message count from actual log panel
+        # Update visible messages count
         if ui_state.log_panel_rect:
             visible_messages = (ui_state.log_panel_rect.height - 40) // 18
 
-        # --- Dynamic Layout Calculation ---
-        screen_w, screen_h = screen.get_size()
-        
-        # 1. Calculate the available area for the map
-        available_width = max(1, screen_w - SIDEBAR_WIDTH)
-        available_height = max(1, screen_h - TOOLBAR_HEIGHT - 120)
+        # Render to virtual screen
+        render_to_virtual_screen(
+            virtual_screen, font, state, camera, tile_size, elevation_range,
+            (player_world_pos[0], player_world_pos[1]),
+            toolbar, ui_state, layout, show_help
+        )
 
-        # 2. Determine map size that fits available area while preserving aspect ratio
-        map_aspect_ratio = state.width / state.height
-        
-        map_pixel_width = available_width
-        map_pixel_height = int(map_pixel_width / map_aspect_ratio)
-        if map_pixel_height > available_height:
-            map_pixel_height = available_height
-            map_pixel_width = int(map_pixel_height * map_aspect_ratio)
-        layout = UILayout.from_screen_size(screen.get_size(), (map_pixel_width, map_pixel_height))
-
-        # --- Rendering ---
-        screen.fill((20, 20, 25))
-
-        # 1. Render the map to a separate surface and scale it to fit its area
-        map_surface = pygame.Surface((state.width * tile_size, state.height * tile_size))
-        render_map(map_surface, font, state, tile_size, elevation_range)
-        render_player(map_surface, state, player_px, tile_size)
-        render_night_overlay(map_surface, state, map_surface.get_width(), map_surface.get_height())
-        
-        scaled_map = pygame.transform.scale(map_surface, layout.map_rect.size)
-        screen.blit(scaled_map, layout.map_rect.topleft)
-
-        # 2. Render all UI elements directly to the screen at native resolution
-        # HUD (top-right)
-        render_hud(screen, font, state, layout.sidebar_rect.x + 12, 12)
-
-        # Soil Profile (below HUD)
-        soil_x = layout.sidebar_rect.x + PROFILE_MARGIN
-        render_soil_profile(screen, font, state.tiles[state.player[0]][state.player[1]], (soil_x, 12 + 22), PROFILE_WIDTH, PROFILE_HEIGHT - 22)
-
-        # Inventory (bottom-right)
-        inv_w, inv_h = 180, 140
-        inv_x = layout.screen_width - inv_w - 12
-        inv_y = clamp(layout.map_rect.bottom - inv_h - 12, 12, 9999)
-        render_inventory(screen, font, state, (inv_x, int(inv_y)), inv_w, inv_h)
-
-        # Toolbar and Log Panel (bottom)
-        render_toolbar(screen, font, toolbar, layout.toolbar_rect.topleft, layout.toolbar_rect.width, TOOLBAR_HEIGHT, ui_state)
-        if show_help:
-            render_help_overlay(screen, font, CONTROL_DESCRIPTIONS, (layout.log_panel_rect.x + 12, layout.log_panel_rect.y + 8), layout.log_panel_rect.width - 24, layout.log_panel_rect.height - 16)
-        else:
-            render_event_log(screen, font, state, (layout.log_panel_rect.x + 12, layout.log_panel_rect.y + 8), layout.log_panel_rect.height, ui_state.log_scroll_offset)
+        # Scale and blit to actual screen
+        blit_virtual_to_screen(virtual_screen, screen)
 
         pygame.display.flip()
 

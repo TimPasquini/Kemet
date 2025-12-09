@@ -102,7 +102,7 @@ FONT_SIZE = 18
 SECTION_SPACING = 8
 MOVE_SPEED = 220
 DIAGONAL_FACTOR = 0.707
-MAP_SIZE: Tuple[int, int] = (40, 30)
+MAP_SIZE: Tuple[int, int] = (60, 45)  # Larger than viewport to test camera
 
 # Rendering constants
 PLAYER_RADIUS_DIVISOR = 3
