@@ -224,11 +224,32 @@ def distribute_upward_seepage(tile, water_amount):
 
 ---
 
+## Known Issues
+
+- **Player movement stuttery** - Movement feels choppy, needs review of update_player_movement()
+
+---
+
+## Future Work (Not Yet Implemented)
+
+### Actions at Range
+Currently actions (dig, build, pour, etc.) happen at the player's tile. The interaction range system is visual-only. Need to:
+- Pass `target_subsquare` to action handlers
+- Convert target sub-square to tile for tile-level actions
+- Update `handle_command()` to use target position instead of player position
+
+### Tool Previews
+- **Shovel:** Show elevation change preview at target
+- **Pour:** Show water spread preview (which sub-squares will receive water)
+- **Build:** Show structure footprint preview (may span multiple sub-squares)
+
+---
+
 ## Testing Checkpoints
 
 1. Player renders at sub-grid position, moves in smaller increments
 2. Sub-grid renders, can see tile subdivisions
 3. Cursor highlights target sub-square within range
-4. Actions work at range (dig/build on target tile)
+4. Actions work at range (dig/build on target tile) - **NOT YET IMPLEMENTED**
 5. Subsurface simulation runs at reduced frequency
 6. Surface water flows at sub-grid level, pools in low spots
