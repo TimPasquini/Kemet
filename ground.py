@@ -18,12 +18,7 @@ from dataclasses import dataclass
 from typing import Tuple, Optional
 from enum import IntEnum
 
-# Reference elevation (sea level equivalent)
-SEA_LEVEL = 0
-
-# Layer depth units (1 unit = ~10cm for granularity while staying integer)
-# This gives us millimeter precision when we need it: 1 unit = 100mm
-DEPTH_UNIT_MM = 100
+from config import DEPTH_UNIT_MM, SEA_LEVEL
 
 # Layer names as enum for type safety
 class SoilLayer(IntEnum):

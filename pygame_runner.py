@@ -15,7 +15,7 @@ Controls:
 from __future__ import annotations
 
 import sys
-from typing import cast, Dict, List, Tuple
+from typing import cast, List, Tuple
 
 try:
     import pygame
@@ -43,51 +43,38 @@ from keybindings import (
     MENU_UP_KEY,
     MENU_DOWN_KEY,
 )
-# Import from our new utils file
 from utils import clamp
+from config import (
+    SIDEBAR_WIDTH,
+    TILE_SIZE,
+    LINE_HEIGHT,
+    FONT_SIZE,
+    SECTION_SPACING,
+    MOVE_SPEED,
+    DIAGONAL_FACTOR,
+    TICK_INTERVAL,
+    PLAYER_RADIUS_DIVISOR,
+    STRUCTURE_INSET,
+    TRENCH_INSET,
+    WELLSPRING_RADIUS,
+    PROFILE_WIDTH,
+    PROFILE_HEIGHT,
+    PROFILE_MARGIN,
+    TOOLBAR_HEIGHT,
+    TOOLBAR_BG_COLOR,
+    TOOLBAR_SELECTED_COLOR,
+    TOOLBAR_TEXT_COLOR,
+    MAP_SIZE,
+    ACTION_DURATIONS,
+    BIOME_COLORS,
+    ELEVATION_BRIGHTNESS_MIN,
+    ELEVATION_BRIGHTNESS_MAX,
+    MATERIAL_BLEND_WEIGHT,
+    ORGANICS_BLEND_WEIGHT,
+)
 
 Color = Tuple[int, int, int]
-SIDEBAR_WIDTH = 300
-TILE_SIZE = 32
-LINE_HEIGHT = 20
-FONT_SIZE = 18
-SECTION_SPACING = 8
-MOVE_SPEED = 220
-DIAGONAL_FACTOR = 0.707
-TICK_INTERVAL = 0.25  # Run a simulation tick every 0.25 seconds for a continuous feel.
-PLAYER_RADIUS_DIVISOR = 3
-STRUCTURE_INSET = 8
-TRENCH_INSET = 10
-WELLSPRING_RADIUS = 6
-PROFILE_WIDTH = 140
-PROFILE_HEIGHT = 240
-PROFILE_MARGIN = 10
-TOOLBAR_HEIGHT = 32
-TOOLBAR_BG_COLOR = (30, 30, 35)
-TOOLBAR_SELECTED_COLOR = (60, 55, 40)
-TOOLBAR_TEXT_COLOR = (200, 200, 180)
 MapSize = Tuple[int, int]
-MAP_SIZE: MapSize = (40, 30)
-
-# --- Action Duration System ---
-# Defines how long (in seconds) the player is locked while performing an action.
-ACTION_DURATIONS = {
-    "terrain": 1.0,  # Shovel tool (trench/lower/raise)
-    "dig": 1.0,
-    "lower": 1.5,
-    "raise": 0.8,
-    "build": 2.0,
-    "collect": 0.5,
-    "pour": 0.5,
-    "survey": 0.3,
-}
-
-BIOME_COLORS: Dict[str, Color] = {"dune": (204, 174, 120), "flat": (188, 158, 112), "wadi": (150, 125, 96),
-                                  "rock": (128, 128, 128), "salt": (220, 220, 210)}
-ELEVATION_BRIGHTNESS_MIN = 0.7
-ELEVATION_BRIGHTNESS_MAX = 1.3
-MATERIAL_BLEND_WEIGHT = 0.35
-ORGANICS_BLEND_WEIGHT = 0.50
 
 
 def calculate_elevation_range(state: "GameState") -> Tuple[float, float]:
@@ -285,14 +272,13 @@ def render(screen, font, state: GameState, tile_size: int, player_px: Tuple[floa
     player_center_x, player_center_y = int(player_px[0]), int(player_px[1])
     pygame.draw.circle(screen, (240, 240, 90), (player_center_x, player_center_y),
                        tile_size // PLAYER_RADIUS_DIVISOR)
-    if state.player_action_timer > 0:
+    if state.is_busy():
         bar_width = tile_size
         bar_height = 4
         bar_x = player_center_x - bar_width // 2
         bar_y = player_center_y - tile_size // 2 - bar_height - 2
 
-        action_duration = ACTION_DURATIONS.get(state.last_action, 1.0)
-        progress = state.player_action_timer / action_duration
+        progress = state.get_action_progress()
 
         pygame.draw.rect(screen, (50, 50, 50), (bar_x, bar_y, bar_width, bar_height))
         pygame.draw.rect(screen, (200, 200, 80), (bar_x, bar_y, int(bar_width * progress), bar_height))
@@ -384,7 +370,7 @@ def render(screen, font, state: GameState, tile_size: int, player_px: Tuple[floa
 
 def issue(state: GameState, cmd: str, args: List[str]) -> None:
     """Issues a command and sets the player's action timer."""
-    if state.player_action_timer > 0:
+    if state.is_busy():
         return  # Player is busy
 
     # Handle special case for resting
@@ -397,15 +383,12 @@ def issue(state: GameState, cmd: str, args: List[str]) -> None:
         return
 
     # Set the action timer if the command has a duration
-    duration = ACTION_DURATIONS.get(cmd)
-    if duration:
-        state.player_action_timer = duration
-        state.last_action = cmd
+    state.start_action(cmd)
 
 
 def update_player_position(state: GameState, player_px: List[float], vel: Tuple[float, float], dt: float,
                            tile_size: int) -> None:
-    if state.player_action_timer > 0:
+    if state.is_busy():
         return  # Player is busy
 
     if vel == (0.0, 0.0): return
@@ -448,8 +431,7 @@ def run(window_size: MapSize = MAP_SIZE, tile_size: int = TILE_SIZE) -> None:
         dt = clock.tick(60) / 1000.0
 
         # Handle player action timer
-        if state.player_action_timer > 0:
-            state.player_action_timer = max(0.0, state.player_action_timer - dt)
+        state.update_action_timer(dt)
 
         # Handle Inputs
         for event in pygame.event.get():
@@ -485,7 +467,7 @@ def run(window_size: MapSize = MAP_SIZE, tile_size: int = TILE_SIZE) -> None:
                     continue
 
                 # Block other actions while busy
-                if state.player_action_timer > 0:
+                if state.is_busy():
                     continue
 
                 if event.key == REST_KEY:

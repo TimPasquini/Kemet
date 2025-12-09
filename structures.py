@@ -10,30 +10,27 @@ Defines structure types, costs, and behavior:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from ground import SoilLayer
+from config import (
+    CONDENSER_OUTPUT,
+    PLANTER_GROWTH_RATE,
+    PLANTER_GROWTH_THRESHOLD,
+    PLANTER_WATER_COST,
+    PLANTER_WATER_REQUIREMENT,
+    MAX_ORGANICS_DEPTH,
+    CISTERN_CAPACITY,
+    CISTERN_TRANSFER_RATE,
+    CISTERN_LOSS_RATE,
+    CISTERN_LOSS_RECOVERY,
+    TRENCH_EVAP_REDUCTION,
+    CISTERN_EVAP_REDUCTION,
+    STRUCTURE_COSTS,
+)
 
 if TYPE_CHECKING:
     from main import GameState
-
-# Structure behavior constants
-CONDENSER_OUTPUT = 2  # Units of water per tick (0.2L)
-PLANTER_GROWTH_RATE = 1  # Growth points per tick. 100 ticks to mature.
-PLANTER_GROWTH_THRESHOLD = 100
-PLANTER_WATER_COST = 3  # Units of water consumed on harvest
-PLANTER_WATER_REQUIREMENT = 80  # Units (8L) needed for growth
-MAX_ORGANICS_DEPTH = 10 # Cap organic layer growth at 1m
-
-# Cistern constants
-CISTERN_CAPACITY = 500  # Units (50L)
-CISTERN_TRANSFER_RATE = 40  # Units per tick
-CISTERN_LOSS_RATE = 3  # Units per tick at max heat
-CISTERN_LOSS_RECOVERY = 50  # Percentage returned to surface
-
-# Evaporation reduction multipliers (percentage - lower = more reduction)
-TRENCH_EVAP_REDUCTION = 85  # 85% = 15% reduction
-CISTERN_EVAP_REDUCTION = 40  # 40% = 60% reduction
 
 
 @dataclass
@@ -43,13 +40,6 @@ class Structure:
     hp: int = 3
     stored: int = 0  # Water storage in units (cistern)
     growth: int = 0  # Growth progress 0-100 (planter)
-
-
-STRUCTURE_COSTS: Dict[str, Dict[str, int]] = {
-    "cistern": {"scrap": 3},
-    "condenser": {"scrap": 2},
-    "planter": {"scrap": 1, "seeds": 1},
-}
 
 
 def build_structure(state: "GameState", kind: str) -> None:

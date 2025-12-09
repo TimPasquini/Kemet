@@ -21,19 +21,16 @@ from ground import (
     SoilLayer,
     MATERIAL_LIBRARY,
 )
-# Import from our new utils file
 from utils import get_neighbors
-
-# Flow rate constants (as percentages: 0-100)
-SURFACE_FLOW_RATE = 50  # Fast surface flow (50% per tick)
-SUBSURFACE_FLOW_RATE = 8  # Slow subsurface flow (8% per tick)
-OVERFLOW_FLOW_RATE = 90  # Overflow is a rapid, high-pressure event
-VERTICAL_SEEPAGE_RATE = 30  # Vertical seepage speed (30% per tick)
-CAPILLARY_RISE_RATE = 5  # Capillary rise is much slower (5% per tick)
-
-# Flow threshold constants (in depth units)
-SURFACE_FLOW_THRESHOLD = 1  # Minimum elevation difference for surface flow (~1cm)
-SUBSURFACE_FLOW_THRESHOLD = 1  # Minimum pressure difference for subsurface flow
+from config import (
+    SURFACE_FLOW_RATE,
+    SUBSURFACE_FLOW_RATE,
+    OVERFLOW_FLOW_RATE,
+    VERTICAL_SEEPAGE_RATE,
+    CAPILLARY_RISE_RATE,
+    SURFACE_FLOW_THRESHOLD,
+    SUBSURFACE_FLOW_THRESHOLD,
+)
 
 Point = Tuple[int, int]
 
