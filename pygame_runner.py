@@ -15,6 +15,7 @@ Controls:
 from __future__ import annotations
 
 import sys
+from dataclasses import dataclass
 from typing import List, Tuple, Optional
 
 try:
@@ -68,6 +69,28 @@ from render import (
 )
 
 MapSize = Tuple[int, int]
+
+
+@dataclass
+class UILayout:
+    """Calculates and holds the rectangles for all UI components."""
+    screen_width: int
+    screen_height: int
+
+    map_rect: pygame.Rect
+    sidebar_rect: pygame.Rect
+    log_panel_rect: pygame.Rect
+    toolbar_rect: pygame.Rect
+
+    @classmethod
+    def from_screen_size(cls, screen_size: Tuple[int, int], map_pixel_size: Tuple[int, int]) -> UILayout:
+        sw, sh = screen_size
+        mw, mh = map_pixel_size
+        map_rect = pygame.Rect(0, 0, mw, mh)
+        sidebar_rect = pygame.Rect(mw, 0, sw - mw, sh)
+        toolbar_rect = pygame.Rect(0, mh, mw, TOOLBAR_HEIGHT)
+        log_panel_rect = pygame.Rect(0, mh + TOOLBAR_HEIGHT, sw, sh - mh - TOOLBAR_HEIGHT)
+        return cls(sw, sh, map_rect, sidebar_rect, log_panel_rect, toolbar_rect)
 
 
 def render(
@@ -200,22 +223,25 @@ def transform_mouse_pos(pos: Tuple[int, int], screen_size: Tuple[int, int], virt
     return transformed_x, transformed_y
 
 
-def run(window_size: MapSize = MAP_SIZE, tile_size: int = TILE_SIZE) -> None:
+def run(tile_size: int = TILE_SIZE) -> None:
     """Main game loop."""
     pygame.init()
 
-    # Define a fixed base resolution for the game UI and logic
-    map_w, map_h = window_size
-    base_width = map_w * tile_size + SIDEBAR_WIDTH
-    base_height = map_h * tile_size + TOOLBAR_HEIGHT + 120
+    # Define a standard base resolution (16:9) and create the virtual surface
+    base_width, base_height = 1280, 720
     virtual_screen = pygame.Surface((base_width, base_height))
+    
+    # The map size is now fixed based on our ideal layout, not the window.
+    # The map view will scale; the UI will not.
+    map_w, map_h = MAP_SIZE
+    state = build_initial_state(width=map_w, height=map_h)
 
+    # Set up the actual display window
     screen = pygame.display.set_mode((base_width, base_height), pygame.RESIZABLE)
     pygame.display.set_caption("Kemet - Desert Terraforming")
     font = pygame.font.Font(None, FONT_SIZE)
     clock = pygame.time.Clock()
 
-    state = build_initial_state(width=map_w, height=map_h)
     state.messages.append("Welcome to Kemet. Press H for help. 1-9 select tools, R opens options (W/S to navigate), F to use.")
 
     player_px = [state.player[0] * tile_size + tile_size / 2, state.player[1] * tile_size + tile_size / 2]
@@ -238,8 +264,8 @@ def run(window_size: MapSize = MAP_SIZE, tile_size: int = TILE_SIZE) -> None:
         for event in pygame.event.get():
             if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE):
                 running = False
-            elif event.type == pygame.VIDEORESIZE:
-                screen = pygame.display.set_mode(event.size, pygame.RESIZABLE)
+            # The RESIZABLE flag allows the window to be resized by the user.
+            # We don't need to do anything here; the main loop will handle the new size.
 
             # Mouse wheel scrolling
             elif event.type == pygame.MOUSEWHEEL:
@@ -387,20 +413,56 @@ def run(window_size: MapSize = MAP_SIZE, tile_size: int = TILE_SIZE) -> None:
         if ui_state.log_panel_rect:
             visible_messages = (ui_state.log_panel_rect.height - 40) // 18
 
-        # --- Main Rendering ---
-        # 1. Render all game elements to the off-screen virtual surface
-        render(virtual_screen, font, state, tile_size, (player_px[0], player_px[1]), toolbar, show_help, elevation_range, ui_state)
-
-        # 2. Scale the virtual surface to fit the actual window, preserving aspect ratio
+        # --- Dynamic Layout Calculation ---
         screen_w, screen_h = screen.get_size()
-        virtual_w, virtual_h = virtual_screen.get_size()
-        scale = min(screen_w / virtual_w, screen_h / virtual_h)
-        scaled_surf = pygame.transform.smoothscale(virtual_screen, (int(virtual_w * scale), int(virtual_h * scale)))
-        dest_rect = scaled_surf.get_rect(center=(screen_w / 2, screen_h / 2))
+        
+        # 1. Calculate the available area for the map
+        available_width = max(1, screen_w - SIDEBAR_WIDTH)
+        available_height = max(1, screen_h - TOOLBAR_HEIGHT - 120)
 
-        # 3. Blit the scaled surface to the screen
-        screen.fill((0, 0, 0))  # Black bars for letterboxing
-        screen.blit(scaled_surf, dest_rect)
+        # 2. Determine map size that fits available area while preserving aspect ratio
+        map_aspect_ratio = state.width / state.height
+        
+        map_pixel_width = available_width
+        map_pixel_height = int(map_pixel_width / map_aspect_ratio)
+        if map_pixel_height > available_height:
+            map_pixel_height = available_height
+            map_pixel_width = int(map_pixel_height * map_aspect_ratio)
+        layout = UILayout.from_screen_size(screen.get_size(), (map_pixel_width, map_pixel_height))
+
+        # --- Rendering ---
+        screen.fill((20, 20, 25))
+
+        # 1. Render the map to a separate surface and scale it to fit its area
+        map_surface = pygame.Surface((state.width * tile_size, state.height * tile_size))
+        render_map(map_surface, font, state, tile_size, elevation_range)
+        render_player(map_surface, state, player_px, tile_size)
+        render_night_overlay(map_surface, state, map_surface.get_width(), map_surface.get_height())
+        
+        scaled_map = pygame.transform.scale(map_surface, layout.map_rect.size)
+        screen.blit(scaled_map, layout.map_rect.topleft)
+
+        # 2. Render all UI elements directly to the screen at native resolution
+        # HUD (top-right)
+        render_hud(screen, font, state, layout.sidebar_rect.x + 12, 12)
+
+        # Soil Profile (below HUD)
+        soil_x = layout.sidebar_rect.x + PROFILE_MARGIN
+        render_soil_profile(screen, font, state.tiles[state.player[0]][state.player[1]], (soil_x, 12 + 22), PROFILE_WIDTH, PROFILE_HEIGHT - 22)
+
+        # Inventory (bottom-right)
+        inv_w, inv_h = 180, 140
+        inv_x = layout.screen_width - inv_w - 12
+        inv_y = clamp(layout.map_rect.bottom - inv_h - 12, 12, 9999)
+        render_inventory(screen, font, state, (inv_x, int(inv_y)), inv_w, inv_h)
+
+        # Toolbar and Log Panel (bottom)
+        render_toolbar(screen, font, toolbar, layout.toolbar_rect.topleft, layout.toolbar_rect.width, TOOLBAR_HEIGHT, ui_state)
+        if show_help:
+            render_help_overlay(screen, font, CONTROL_DESCRIPTIONS, (layout.log_panel_rect.x + 12, layout.log_panel_rect.y + 8), layout.log_panel_rect.width - 24, layout.log_panel_rect.height - 16)
+        else:
+            render_event_log(screen, font, state, (layout.log_panel_rect.x + 12, layout.log_panel_rect.y + 8), layout.log_panel_rect.height, ui_state.log_scroll_offset)
+
         pygame.display.flip()
 
     pygame.quit()
