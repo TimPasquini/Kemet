@@ -8,12 +8,10 @@ Uses fixed-layer terrain and integer-based water systems.
 from __future__ import annotations
 
 import random
-import sys
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple
 
 from config import (
-    HEAT_NIGHT_THRESHOLD,
     MAX_POUR_AMOUNT,
     MIN_LAYER_THICKNESS,
     DEPOT_WATER_AMOUNT,
@@ -155,60 +153,6 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
         tiles=tiles,
         player_state=PlayerState(position=start_pos),
     )
-
-
-def render(state: GameState) -> None:
-    print("\n" * 2)
-    phase = "Night" if state.heat < HEAT_NIGHT_THRESHOLD else "Day"
-    print(
-        f"Day {state.day} [{phase}] Heat {state.heat}%  Rain in {state.rain_timer} ({'on' if state.raining else 'off'})")
-    inv = state.inventory
-    print(f"Water {inv.water / 10:.1f}L | Scrap {inv.scrap} | Seeds {inv.seeds} | Biomass {inv.biomass}")
-    print("Legend: @ you, D depot, C cistern, N condenser, P planter, = trench, ~ wet, : damp")
-    print("Map:")
-    for y in range(state.height):
-        row = []
-        for x in range(state.width):
-            pos = (x, y)
-            tile = state.tiles[x][y]
-            structure = state.structures.get(pos)
-            symbol = TILE_TYPES[tile.kind].char
-            if tile.water.total_water() >= 100:
-                symbol = "~"
-            elif tile.water.total_water() >= 50:
-                symbol = ":"
-            if tile.surface.has_trench: symbol = "="
-            if tile.depot: symbol = "D"
-            if structure: symbol = {"cistern": "C", "condenser": "N", "planter": "P"}.get(structure.kind, "?")
-            if state.player == pos: symbol = "@"
-            row.append(symbol)
-        print("".join(row))
-    if state.messages:
-        print("Events:")
-        for msg in state.messages[-5:]:
-            print(f"- {msg}")
-
-
-def parse_command(raw: str) -> Tuple[str, List[str]]:
-    parts = raw.strip().lower().split()
-    return (parts[0], parts[1:]) if parts else ("", [])
-
-
-def move_player(state: GameState, direction: str) -> None:
-    dxdy = {"w": (0, -1), "s": (0, 1), "a": (-1, 0), "d": (1, 0)}
-    if direction not in dxdy:
-        state.messages.append("Unknown move.")
-        return
-    dx, dy = dxdy[direction]
-    nx, ny = state.player[0] + dx, state.player[1] + dy
-    if 0 <= nx < state.width and 0 <= ny < state.height:
-        if state.tiles[nx][ny].kind == "rock":
-            state.messages.append("Rock blocks the way.")
-            return
-        state.player = (nx, ny)
-        state.messages.append(f"Moved to {nx},{ny}.")
-    else:
-        state.messages.append("You hit the edge of the desert.")
 
 
 def dig_trench(state: GameState) -> None:
@@ -375,12 +319,8 @@ def survey_tile(state: GameState) -> None:
 
 
 def handle_command(state: GameState, cmd: str, args: List[str]) -> bool:
-    """Process a player command using a command map. Returns True if the game should quit."""
+    """Process a player command. Returns True if the game should quit."""
     command_map = {
-        "w": lambda s, a: move_player(s, "w"),
-        "a": lambda s, a: move_player(s, "a"),
-        "s": lambda s, a: move_player(s, "s"),
-        "d": lambda s, a: move_player(s, "d"),
         "dig": lambda s, a: dig_trench(s),
         "lower": lambda s, a: lower_ground(s),
         "raise": lambda s, a: raise_ground(s),
@@ -392,45 +332,14 @@ def handle_command(state: GameState, cmd: str, args: List[str]) -> bool:
         "survey": lambda s, a: survey_tile(s),
         "end": lambda s, a: end_day(s),
     }
-    if cmd == "quit": return True
-    if cmd == "help":
-        state.messages.append(
-            "Commands: w/a/s/d, dig, lower, raise, build <type>, collect, pour <liters>, survey, status, end, quit")
-        return False
+    if cmd == "quit":
+        return True
     handler = command_map.get(cmd)
     if not handler:
-        state.messages.append("Unknown command. Type 'help' for options.")
+        state.messages.append(f"Unknown command: {cmd}")
         return False
     try:
         handler(state, args)
     except (TypeError, ValueError, IndexError):
-        state.messages.append(f"Invalid usage for '{cmd}'. Check 'help'.")
+        state.messages.append(f"Invalid usage for '{cmd}'.")
     return False
-
-
-def main() -> None:
-    random.seed()
-    state = build_initial_state()
-    state.messages.extend([
-        "You arrive with a cart of scrap, a few seeds, and two canteens of water.",
-        "Find water, trap it, and grow biomass.",
-        "Units: 1L water = 10 units, 1m soil = 10 units"
-    ])
-    while True:
-        render(state)
-        raw = input("\nCommand> ")
-        cmd, args = parse_command(raw)
-        if not cmd:
-            continue
-        if handle_command(state, cmd, args):
-            print("Exiting. Thanks for playing the prototype.")
-            break
-        if cmd not in ("status", "help", "survey"):
-            simulate_tick(state)
-
-
-if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        sys.exit(0)

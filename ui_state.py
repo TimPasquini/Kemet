@@ -2,7 +2,7 @@
 """
 UI state management for pygame frontend.
 
-Tracks transient UI state like scroll positions, hover states, and click regions.
+Tracks layout regions, scroll positions, hover states, and click regions.
 Keeps UI state separate from game state.
 """
 from __future__ import annotations
@@ -11,6 +11,18 @@ from dataclasses import dataclass, field
 from typing import Tuple, Optional, Callable, List
 
 import pygame
+
+from config import TOOLBAR_HEIGHT
+
+# Virtual screen dimensions (fixed internal resolution)
+VIRTUAL_WIDTH = 1280
+VIRTUAL_HEIGHT = 720
+
+# Layout constants
+SIDEBAR_WIDTH = 280
+MAP_VIEWPORT_WIDTH = VIRTUAL_WIDTH - SIDEBAR_WIDTH  # 1000
+MAP_VIEWPORT_HEIGHT = VIRTUAL_HEIGHT - TOOLBAR_HEIGHT - 100  # 588
+LOG_PANEL_HEIGHT = 100
 
 
 @dataclass
@@ -24,11 +36,20 @@ class ClickRegion:
 @dataclass
 class UIState:
     """
-    Manages all transient UI state.
+    Manages UI layout and transient state.
 
-    This keeps UI concerns (scroll positions, hover states, click regions)
-    separate from game logic.
+    Layout regions are fixed at creation time. Other state (scroll, hover, etc.)
+    changes during gameplay.
     """
+    # Fixed layout regions (set once at init)
+    map_rect: pygame.Rect = field(default_factory=lambda: pygame.Rect(0, 0, MAP_VIEWPORT_WIDTH, MAP_VIEWPORT_HEIGHT))
+    sidebar_rect: pygame.Rect = field(default_factory=lambda: pygame.Rect(MAP_VIEWPORT_WIDTH, 0, SIDEBAR_WIDTH, VIRTUAL_HEIGHT))
+    toolbar_rect: pygame.Rect = field(default_factory=lambda: pygame.Rect(0, MAP_VIEWPORT_HEIGHT, MAP_VIEWPORT_WIDTH, TOOLBAR_HEIGHT))
+    log_panel_rect: pygame.Rect = field(default_factory=lambda: pygame.Rect(0, MAP_VIEWPORT_HEIGHT + TOOLBAR_HEIGHT, VIRTUAL_WIDTH, LOG_PANEL_HEIGHT))
+
+    # Toolbar state
+    tool_slot_width: int = 0
+
     # Event log scrolling
     log_scroll_offset: int = 0  # 0 = showing most recent, positive = scrolled up
 
@@ -37,13 +58,6 @@ class UIState:
 
     # Hover state
     hovered_region: Optional[ClickRegion] = None
-
-    # Log panel bounds (set during render)
-    log_panel_rect: Optional[pygame.Rect] = None
-
-    # Toolbar bounds (set during render)
-    toolbar_rect: Optional[pygame.Rect] = None
-    tool_slot_width: int = 0
 
     # Tool options popup bounds (set during render when menu is open)
     popup_rect: Optional[pygame.Rect] = None

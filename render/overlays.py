@@ -46,27 +46,6 @@ def render_help_overlay(
             draw_text(surface, font, control, (cx, cy), color=(180, 180, 160))
 
 
-def render_night_overlay(
-    surface,
-    state: "GameState",
-    map_width: int,
-    map_height: int,
-) -> None:
-    """Render the night darkness overlay based on heat level.
-
-    Args:
-        surface: The pygame surface to draw on.
-        state: The current game state, containing the heat level.
-        map_width: The width of the map area to cover.
-        map_height: The height of the map area to cover.
-    """
-    night_alpha = max(0, min(200, int((140 - state.heat) * 180 // 80)))
-    if night_alpha > 0:
-        overlay = pygame.Surface((map_width, map_height), pygame.SRCALPHA)
-        overlay.fill((10, 20, 40, night_alpha))
-        surface.blit(overlay, (0, 0))
-
-
 def render_event_log(
     surface,
     font,

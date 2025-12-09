@@ -12,7 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Tuple
 
-from config import ACTION_DURATIONS
+from config import ACTION_DURATIONS, DIAGONAL_FACTOR
+from utils import clamp
 
 Point = Tuple[int, int]
 
@@ -70,3 +71,62 @@ class PlayerState:
             return 0.0
         duration = ACTION_DURATIONS.get(self.last_action, 1.0)
         return self.action_timer / duration
+
+
+def update_player_movement(
+    player_state: PlayerState,
+    world_pos: list[float],
+    velocity: Tuple[float, float],
+    dt: float,
+    tile_size: int,
+    world_width_tiles: int,
+    world_height_tiles: int,
+    is_tile_blocked: callable,
+) -> None:
+    """
+    Update player position based on velocity and collision.
+
+    Args:
+        player_state: The player state to update
+        world_pos: [x, y] world position in pixels (mutable, will be updated)
+        velocity: (vx, vy) velocity in pixels per second
+        dt: Delta time in seconds
+        tile_size: Size of tiles in pixels
+        world_width_tiles: World width in tiles
+        world_height_tiles: World height in tiles
+        is_tile_blocked: Function(x, y) -> bool to check if tile blocks movement
+    """
+    if player_state.is_busy():
+        return
+
+    vx, vy = velocity
+    if vx == 0.0 and vy == 0.0:
+        return
+
+    # Normalize diagonal movement
+    if vx != 0.0 and vy != 0.0:
+        vx *= DIAGONAL_FACTOR
+        vy *= DIAGONAL_FACTOR
+
+    world_width = world_width_tiles * tile_size
+    world_height = world_height_tiles * tile_size
+
+    # Calculate new position
+    new_x = clamp(world_pos[0] + vx * dt, 0, world_width - 1)
+    new_y = clamp(world_pos[1] + vy * dt, 0, world_height - 1)
+    target_tile_x = int(new_x // tile_size)
+    target_tile_y = int(new_y // tile_size)
+
+    # Check for collision
+    if is_tile_blocked(target_tile_x, target_tile_y):
+        current_tile_x = int(world_pos[0] // tile_size)
+        current_tile_y = int(world_pos[1] // tile_size)
+        if (target_tile_x, target_tile_y) != (current_tile_x, current_tile_y):
+            # Only set last_rock_blocked if entering a new blocked tile
+            if (target_tile_x, target_tile_y) != player_state.last_rock_blocked:
+                player_state.last_rock_blocked = (target_tile_x, target_tile_y)
+            return
+
+    # Update positions
+    world_pos[0], world_pos[1] = new_x, new_y
+    player_state.position = (target_tile_x, target_tile_y)
