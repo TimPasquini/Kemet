@@ -7,37 +7,11 @@ Uses fixed-layer terrain and integer-based water systems.
 """
 from __future__ import annotations
 
+import random
 import sys
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple
 
-from ground import (
-    SoilLayer,
-    create_default_terrain,
-    elevation_to_units,
-    units_to_meters,
-)
-from water import (
-    simulate_vertical_seepage,
-    calculate_surface_flow,
-    calculate_subsurface_flow,
-    calculate_overflows,
-    apply_flows,
-)
-from structures import (
-    Structure,
-    build_structure,
-    tick_structures,
-)
-from weather import WeatherSystem
-from mapgen import (
-    Tile,
-    TileType,
-    TILE_TYPES,
-    generate_map,
-    recalculate_biomes,
-    update_moisture_history,
-)
 from config import (
     HEAT_NIGHT_THRESHOLD,
     MAX_POUR_AMOUNT,
@@ -49,7 +23,33 @@ from config import (
     CISTERN_EVAP_REDUCTION,
     RAIN_WELLSPRING_MULTIPLIER,
 )
+from ground import (
+    SoilLayer,
+    create_default_terrain,
+    elevation_to_units,
+    units_to_meters,
+)
+from mapgen import (
+    Tile,
+    TILE_TYPES,
+    generate_map,
+    recalculate_biomes,
+    update_moisture_history,
+)
 from player import PlayerState
+from structures import (
+    Structure,
+    build_structure,
+    tick_structures,
+)
+from water import (
+    simulate_vertical_seepage,
+    calculate_surface_flow,
+    calculate_subsurface_flow,
+    calculate_overflows,
+    apply_flows,
+)
+from weather import WeatherSystem
 
 Point = Tuple[int, int]
 

@@ -156,6 +156,7 @@ class Toolbar:
         self.tools = tools if tools is not None else list(DEFAULT_TOOLS)
         self.selected_index: int = 0
         self.menu_open: bool = False
+        self.menu_highlight_index: int = 0  # Highlighted option in expanded menu
 
     def get_selected_tool(self) -> Optional[Tool]:
         """Get the currently selected tool."""
@@ -177,13 +178,40 @@ class Toolbar:
         """Select tool by number key (1-based). Returns True if valid."""
         return self.select_tool(num - 1)
 
+    def open_menu(self) -> bool:
+        """Open the tool's submenu. Returns True if menu opened."""
+        tool = self.get_selected_tool()
+        if tool and tool.has_menu():
+            self.menu_open = True
+            self.menu_highlight_index = tool.selected_option
+            return True
+        return False
+
     def toggle_menu(self) -> bool:
         """Toggle the tool's submenu. Returns True if menu is now open."""
         tool = self.get_selected_tool()
         if tool and tool.has_menu():
-            self.menu_open = not self.menu_open
+            if self.menu_open:
+                self.menu_open = False
+            else:
+                self.open_menu()
             return self.menu_open
         return False
+
+    def cycle_menu_highlight(self, direction: int = 1) -> None:
+        """Move the highlight up or down in the expanded menu."""
+        if self.menu_open:
+            tool = self.get_selected_tool()
+            if tool and tool.options:
+                self.menu_highlight_index = (self.menu_highlight_index + direction) % len(tool.options)
+
+    def confirm_menu_selection(self) -> None:
+        """Confirm the highlighted option and close the menu."""
+        if self.menu_open:
+            tool = self.get_selected_tool()
+            if tool:
+                tool.selected_option = self.menu_highlight_index
+            self.menu_open = False
 
     def cycle_menu_option(self, direction: int = 1) -> None:
         """Cycle through menu options if menu is open."""
