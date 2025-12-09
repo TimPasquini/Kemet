@@ -17,9 +17,6 @@ from config import (
     DEPOT_WATER_AMOUNT,
     DEPOT_SCRAP_AMOUNT,
     DEPOT_SEEDS_AMOUNT,
-    TRENCH_EVAP_REDUCTION,
-    CISTERN_EVAP_REDUCTION,
-    RAIN_WELLSPRING_MULTIPLIER,
 )
 from ground import (
     SoilLayer,
@@ -40,13 +37,8 @@ from structures import (
     build_structure,
     tick_structures,
 )
-from water import (
-    simulate_vertical_seepage,
-    calculate_surface_flow,
-    calculate_subsurface_flow,
-    calculate_overflows,
-    apply_flows,
-)
+from simulation.surface import simulate_surface_flow, get_tile_surface_water
+from simulation.subsurface import simulate_subsurface_tick, apply_tile_evaporation
 from weather import WeatherSystem
 
 Point = Tuple[int, int]
@@ -76,12 +68,17 @@ class GameState:
     # === Player convenience properties for backwards compatibility ===
     @property
     def player(self) -> Point:
-        """Player position (backwards compatibility)."""
-        return self.player_state.position
+        """Player tile position (backwards compatibility).
 
-    @player.setter
-    def player(self, value: Point) -> None:
-        self.player_state.position = value
+        Returns tile coordinates, not sub-grid coordinates.
+        Use player_state.position for sub-grid coordinates.
+        """
+        return self.player_state.tile_position
+
+    @property
+    def player_subsquare(self) -> Point:
+        """Player position in sub-grid coordinates."""
+        return self.player_state.position
 
     @property
     def last_rock_blocked(self) -> Point | None:
@@ -136,22 +133,27 @@ class GameState:
 
 def build_initial_state(width: int = 10, height: int = 10) -> GameState:
     """Create a new game state with generated map."""
+    from subgrid import tile_center_subsquare
+
     tiles = generate_map(width, height)
-    start_pos = (width // 2, height // 2)
+    start_tile = (width // 2, height // 2)
 
     # Set up depot at player start location
-    depot_tile = tiles[start_pos[0]][start_pos[1]]
+    depot_tile = tiles[start_tile[0]][start_tile[1]]
     depot_tile.kind = "flat"
     depot_tile.surface.has_trench = False
     depot_tile.terrain = create_default_terrain(elevation_to_units(-2.0), elevation_to_units(1.0))
     depot_tile.wellspring_output = 0
     depot_tile.depot = True
 
+    # Initialize player at center of starting tile (in sub-grid coords)
+    start_subsquare = tile_center_subsquare(start_tile[0], start_tile[1])
+
     return GameState(
         width=width,
         height=height,
         tiles=tiles,
-        player_state=PlayerState(position=start_pos),
+        player_state=PlayerState(position=start_subsquare),
     )
 
 
@@ -207,17 +209,33 @@ def collect_water(state: GameState) -> None:
         state.messages.append(
             f"Depot resupply: +{DEPOT_WATER_AMOUNT / 10:.1f}L water, +{DEPOT_SCRAP_AMOUNT} scrap, +{DEPOT_SEEDS_AMOUNT} seeds.")
         return
-    available = tile.water.surface_water
+
+    # Get total surface water from sub-squares in this tile
+    available = get_tile_surface_water(tile)
     if available <= 5:
         state.messages.append("No water to collect here.")
         return
+
     gathered = min(100, available)
-    tile.water.surface_water -= gathered
+
+    # Remove water proportionally from sub-squares
+    remaining = gathered
+    total_water = available
+    for row in tile.subgrid:
+        for subsquare in row:
+            if subsquare.surface_water > 0 and remaining > 0:
+                proportion = subsquare.surface_water / total_water
+                take = min(int(gathered * proportion) + 1, subsquare.surface_water, remaining)
+                subsquare.surface_water -= take
+                remaining -= take
+
     state.inventory.water += gathered
     state.messages.append(f"Collected {gathered / 10:.1f}L water.")
 
 
 def pour_water(state: GameState, amount: float) -> None:
+    from simulation.surface import distribute_upward_seepage
+
     amount_units = int(amount * 10)
     if not (0 < amount_units <= MAX_POUR_AMOUNT):
         state.messages.append(f"Pour between 0.1L and {MAX_POUR_AMOUNT / 10}L.")
@@ -225,59 +243,45 @@ def pour_water(state: GameState, amount: float) -> None:
     if state.inventory.water < amount_units:
         state.messages.append("Not enough water carried.")
         return
+
     tile = state.tiles[state.player[0]][state.player[1]]
-    tile.water.surface_water += amount_units
+
+    # Distribute water to sub-squares (lower elevation gets more)
+    distribute_upward_seepage(tile, amount_units)
+
     state.inventory.water -= amount_units
     state.messages.append(f"Poured {amount:.1f}L water into soil.")
 
 
 def simulate_tick(state: GameState) -> None:
+    """Run one simulation tick.
+
+    Water simulation is split into two phases:
+    - Surface flow: Sub-grid level, runs every tick
+    - Subsurface flow: Tile level, runs every tick (could be reduced later)
+    """
     # Update weather system (day/night cycle, heat, rain)
     weather_messages = state.weather.tick()
     state.messages.extend(weather_messages)
 
+    # Update structures (cisterns, planters, etc.)
     tick_structures(state, state.heat)
 
-    # --- Water Simulation Steps ---
-    # 1. Add water from sources and move it vertically
+    # Track moisture history for biome calculations
     for x in range(state.width):
         for y in range(state.height):
-            tile = state.tiles[x][y]
-            update_moisture_history(tile)
-            if tile.wellspring_output > 0:
-                gain = tile.wellspring_output * (RAIN_WELLSPRING_MULTIPLIER if state.raining else 100) // 100
-                tile.water.add_layer_water(SoilLayer.REGOLITH, gain)
-            simulate_vertical_seepage(tile.terrain, tile.water)
+            update_moisture_history(state.tiles[x][y])
 
-    # Create a snapshot of the tile data for flow calculations
-    tiles_data = [[(state.tiles[x][y].terrain, state.tiles[x][y].water) for y in range(state.height)] for x in
-                  range(state.width)]
+    # --- Water Simulation ---
+    # Phase 1: Surface flow at sub-grid resolution
+    simulate_surface_flow(state.tiles, state.width, state.height)
 
-    # 2. Calculate and apply all horizontal flows
-    trench_map = {(x, y): state.tiles[x][y].surface.has_trench for x in range(state.width) for y in range(state.height)}
-    overflow_sub_deltas, overflow_surf_deltas = calculate_overflows(tiles_data, state.width, state.height)
-    surface_deltas = calculate_surface_flow(tiles_data, state.width, state.height, trench_map)
-    subsurface_deltas = calculate_subsurface_flow(tiles_data, state.width, state.height)
+    # Phase 2: Subsurface flow at tile resolution
+    # (includes wellspring output, vertical seepage, horizontal subsurface flow)
+    simulate_subsurface_tick(state)
 
-    # Combine deltas before applying
-    for key, value in overflow_sub_deltas.items():
-        subsurface_deltas[key] = subsurface_deltas.get(key, 0) + value
-    for key, value in overflow_surf_deltas.items():
-        surface_deltas[key] = surface_deltas.get(key, 0) + value
-
-    apply_flows(tiles_data, surface_deltas, subsurface_deltas)
-
-    # 3. Apply evaporation after all water has moved
-    for x in range(state.width):
-        for y in range(state.height):
-            tile = state.tiles[x][y]
-            evap = (TILE_TYPES[tile.kind].evap * state.heat) // 100
-            if tile.surface.has_trench:
-                evap = (evap * TRENCH_EVAP_REDUCTION) // 100
-            if (x, y) in state.structures and state.structures[(x, y)].kind == "cistern":
-                evap = (evap * CISTERN_EVAP_REDUCTION) // 100
-            net_loss = evap - ((TILE_TYPES[tile.kind].retention * evap) // 100)
-            tile.water.surface_water = max(0, tile.water.surface_water - net_loss)
+    # Phase 3: Evaporation (applied to sub-squares)
+    apply_tile_evaporation(state)
 
 
 def end_day(state: GameState) -> None:
@@ -302,13 +306,20 @@ def survey_tile(state: GameState) -> None:
     x, y = state.player
     tile = state.tiles[x][y]
     structure = state.structures.get((x, y))
+
+    # Get total surface water from sub-squares
+    surface_water = get_tile_surface_water(tile)
+
     desc = [f"Tile {x},{y}", f"type={tile.kind}", f"elev={tile.elevation:.2f}m",
-            f"surf={tile.water.surface_water / 10:.1f}L"]
-    if tile.water.total_subsurface_water() > 0: desc.append(f"subsrf={tile.water.total_subsurface_water() / 10:.1f}L")
+            f"surf={surface_water / 10:.1f}L"]
+    if tile.water.total_subsurface_water() > 0:
+        desc.append(f"subsrf={tile.water.total_subsurface_water() / 10:.1f}L")
     desc.append(f"topsoil={units_to_meters(tile.terrain.topsoil_depth):.1f}m")
     desc.append(f"organics={units_to_meters(tile.terrain.organics_depth):.1f}m")
-    if tile.wellspring_output > 0: desc.append(f"wellspring={tile.wellspring_output / 10:.2f}L/t")
-    if tile.surface.has_trench: desc.append("trench")
+    if tile.wellspring_output > 0:
+        desc.append(f"wellspring={tile.wellspring_output / 10:.2f}L/t")
+    if tile.surface.has_trench:
+        desc.append("trench")
     if structure:
         desc.append(f"struct={structure.kind}")
         if structure.kind == "cistern":

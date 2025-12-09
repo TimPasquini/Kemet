@@ -24,10 +24,9 @@ from config import (
     CISTERN_TRANSFER_RATE,
     CISTERN_LOSS_RATE,
     CISTERN_LOSS_RECOVERY,
-    TRENCH_EVAP_REDUCTION,
-    CISTERN_EVAP_REDUCTION,
     STRUCTURE_COSTS,
 )
+from simulation.surface import get_tile_surface_water, distribute_upward_seepage
 
 if TYPE_CHECKING:
     from main import GameState
@@ -76,17 +75,22 @@ def tick_structures(state: "GameState", heat: int) -> None:
         tile = state.tiles[pos[0]][pos[1]]
 
         if structure.kind == "condenser":
-            tile.water.surface_water += CONDENSER_OUTPUT
+            # Add water to sub-squares (distributed by elevation)
+            distribute_upward_seepage(tile, CONDENSER_OUTPUT)
 
         elif structure.kind == "cistern":
+            # Get total surface water from sub-squares
+            surface_water = get_tile_surface_water(tile)
+
             # Transfer surface water into cistern storage
-            if tile.water.surface_water > CISTERN_TRANSFER_RATE and structure.stored < CISTERN_CAPACITY:
+            if surface_water > CISTERN_TRANSFER_RATE and structure.stored < CISTERN_CAPACITY:
                 transfer = min(
                     CISTERN_TRANSFER_RATE,
-                    tile.water.surface_water,
+                    surface_water,
                     CISTERN_CAPACITY - structure.stored
                 )
-                tile.water.surface_water -= transfer
+                # Remove water proportionally from sub-squares
+                _remove_water_from_subgrid(tile, transfer)
                 structure.stored += transfer
 
             # Cistern slowly leaks (scales with heat)
@@ -94,10 +98,13 @@ def tick_structures(state: "GameState", heat: int) -> None:
             drained = min(structure.stored, loss)
             structure.stored -= drained
             recovered = (drained * CISTERN_LOSS_RECOVERY) // 100
-            tile.water.surface_water += recovered
+            distribute_upward_seepage(tile, recovered)
 
         elif structure.kind == "planter":
-            total_water = tile.water.total_water()
+            # Total water includes sub-square surface water + subsurface
+            surface_water = get_tile_surface_water(tile)
+            total_water = surface_water + tile.water.total_subsurface_water()
+
             if total_water >= PLANTER_WATER_REQUIREMENT:
                 structure.growth += PLANTER_GROWTH_RATE
                 if structure.growth > PLANTER_GROWTH_THRESHOLD:
@@ -109,9 +116,9 @@ def tick_structures(state: "GameState", heat: int) -> None:
                 structure.growth = 0
                 state.inventory.biomass += 1
                 state.inventory.seeds += 1
-                tile.water.surface_water = max(
-                    tile.water.surface_water - PLANTER_WATER_COST, 0
-                )
+
+                # Remove water cost from sub-squares
+                _remove_water_from_subgrid(tile, PLANTER_WATER_COST)
 
                 # Add organics layer on harvest, with a cap
                 if tile.terrain.get_layer_depth(SoilLayer.ORGANICS) < MAX_ORGANICS_DEPTH:
@@ -120,3 +127,31 @@ def tick_structures(state: "GameState", heat: int) -> None:
                 state.messages.append(
                     f"Biomass harvested at {pos}! (Total {state.inventory.biomass})"
                 )
+
+
+def _remove_water_from_subgrid(tile, amount: int) -> int:
+    """Remove water proportionally from tile's sub-squares.
+
+    Args:
+        tile: Tile to remove water from
+        amount: Amount to remove
+
+    Returns:
+        Actual amount removed
+    """
+    total_water = get_tile_surface_water(tile)
+    if total_water <= 0:
+        return 0
+
+    to_remove = min(amount, total_water)
+    remaining = to_remove
+
+    for row in tile.subgrid:
+        for subsquare in row:
+            if subsquare.surface_water > 0 and remaining > 0:
+                proportion = subsquare.surface_water / total_water
+                take = min(int(to_remove * proportion) + 1, subsquare.surface_water, remaining)
+                subsquare.surface_water -= take
+                remaining -= take
+
+    return to_remove - remaining

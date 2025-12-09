@@ -2,17 +2,22 @@
 """
 UI state management for pygame frontend.
 
-Tracks layout regions, scroll positions, hover states, and click regions.
+Tracks layout regions, scroll positions, hover states, click regions,
+and cursor/target tracking for the sub-grid interaction system.
 Keeps UI state separate from game state.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Tuple, Optional, Callable, List
+from typing import Tuple, Optional, Callable, List, TYPE_CHECKING
 
 import pygame
 
-from config import TOOLBAR_HEIGHT
+from config import TOOLBAR_HEIGHT, INTERACTION_RANGE
+from subgrid import clamp_to_range, clamp_to_bounds
+
+if TYPE_CHECKING:
+    from camera import Camera
 
 # Virtual screen dimensions (fixed internal resolution)
 VIRTUAL_WIDTH = 1280
@@ -63,6 +68,10 @@ class UIState:
     popup_rect: Optional[pygame.Rect] = None
     popup_option_height: int = 24
     popup_option_count: int = 0
+
+    # Cursor tracking for sub-grid interaction system
+    hovered_subsquare: Optional[Tuple[int, int]] = None  # Raw sub-square under cursor
+    target_subsquare: Optional[Tuple[int, int]] = None   # Clamped to interaction range
 
     def clear_regions(self) -> None:
         """Clear all click regions (called at start of each frame)."""
@@ -152,6 +161,61 @@ class UIState:
         """Clear popup bounds (called when menu closes)."""
         self.popup_rect = None
         self.popup_option_count = 0
+
+    def update_cursor(
+        self,
+        virtual_pos: Tuple[int, int],
+        camera: "Camera",
+        player_pos: Tuple[int, int],
+        world_sub_width: int,
+        world_sub_height: int,
+    ) -> None:
+        """Update cursor tracking from mouse position.
+
+        Args:
+            virtual_pos: Mouse position in virtual screen coordinates
+            camera: Camera for coordinate transforms
+            player_pos: Player position in sub-grid coordinates
+            world_sub_width: World width in sub-squares
+            world_sub_height: World height in sub-squares
+        """
+        # Check if mouse is over the map viewport
+        if not self.map_rect.collidepoint(virtual_pos):
+            self.hovered_subsquare = None
+            self.target_subsquare = None
+            return
+
+        # Convert virtual screen position to viewport-local position
+        local_x = virtual_pos[0] - self.map_rect.x
+        local_y = virtual_pos[1] - self.map_rect.y
+
+        # Scale from UI rect to camera viewport
+        scale_x = camera.viewport_width / self.map_rect.width
+        scale_y = camera.viewport_height / self.map_rect.height
+
+        viewport_x = local_x * scale_x
+        viewport_y = local_y * scale_y
+
+        # Convert viewport position to world position
+        world_x, world_y = camera.viewport_to_world(viewport_x, viewport_y)
+
+        # Convert world position to sub-grid coordinates
+        self.hovered_subsquare = camera.world_to_subsquare(world_x, world_y)
+
+        # Clamp to world bounds
+        self.hovered_subsquare = clamp_to_bounds(
+            self.hovered_subsquare, world_sub_width, world_sub_height
+        )
+
+        # Clamp to interaction range of player
+        self.target_subsquare = clamp_to_range(
+            player_pos, self.hovered_subsquare, INTERACTION_RANGE
+        )
+
+        # Final bounds check on target
+        self.target_subsquare = clamp_to_bounds(
+            self.target_subsquare, world_sub_width, world_sub_height
+        )
 
 
 # Global UI state instance

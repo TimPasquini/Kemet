@@ -67,6 +67,7 @@ from config import (
     TOOLBAR_HEIGHT,
     MAP_SIZE,
     FONT_SIZE,
+    SUBGRID_SIZE,
 )
 from render import (
     calculate_elevation_range,
@@ -80,6 +81,8 @@ from render import (
     render_help_overlay,
     render_event_log,
 )
+from render.map import render_interaction_highlights
+from subgrid import tile_center_subsquare
 
 def screen_to_virtual(
     screen_pos: Tuple[int, int],
@@ -146,6 +149,17 @@ def render_to_virtual_screen(
     # 1. Render map viewport (tiles, structures, features)
     map_surface = pygame.Surface((camera.viewport_width, camera.viewport_height))
     render_map_viewport(map_surface, font, state, camera, tile_size, elevation_range)
+
+    # Render interaction highlights (before player, after tiles)
+    render_interaction_highlights(
+        map_surface,
+        camera,
+        state.player_state.position,  # Sub-grid coordinates
+        ui_state.target_subsquare,
+        toolbar.get_selected_tool(),
+        state,
+    )
+
     render_player(map_surface, state, camera, player_world_pos, tile_size)
     render_night_overlay(map_surface, state.heat)
 
@@ -160,10 +174,10 @@ def render_to_virtual_screen(
     # HUD
     render_hud(virtual_screen, font, state, sidebar_x, y_offset)
 
-    # Soil profile
+    # Soil profile (show tile at player's current position)
     soil_x = ui_state.sidebar_rect.x + PROFILE_MARGIN
     soil_y = 180  # Below HUD
-    px, py = state.player
+    px, py = state.player_state.tile_position
     render_soil_profile(virtual_screen, font, state.tiles[px][py], (soil_x, soil_y), PROFILE_WIDTH, PROFILE_HEIGHT - 22)
 
     # Inventory
@@ -254,11 +268,17 @@ def run(tile_size: int = TILE_SIZE) -> None:
     camera.set_world_bounds(state.width, state.height, tile_size)
     camera.set_viewport_size(ui_state.map_rect.width, ui_state.map_rect.height)
 
-    # Player position in world pixels
+    # Player position in world pixels (for smooth rendering)
+    # Position is already initialized in sub-grid coords by build_initial_state
+    sub_tile_size = tile_size / SUBGRID_SIZE
     player_world_pos = [
-        state.player[0] * tile_size + tile_size / 2,
-        state.player[1] * tile_size + tile_size / 2
+        state.player_state.position[0] * sub_tile_size + sub_tile_size / 2,
+        state.player_state.position[1] * sub_tile_size + sub_tile_size / 2
     ]
+
+    # World dimensions in sub-squares (for cursor clamping)
+    world_sub_width = state.width * SUBGRID_SIZE
+    world_sub_height = state.height * SUBGRID_SIZE
 
     # Center camera on player
     camera.center_on(player_world_pos[0], player_world_pos[1])
@@ -411,6 +431,17 @@ def run(tile_size: int = TILE_SIZE) -> None:
 
         # Camera follows player
         camera.follow(player_world_pos[0], player_world_pos[1])
+
+        # Update cursor tracking for interaction highlights
+        mouse_screen_pos = pygame.mouse.get_pos()
+        virtual_pos = screen_to_virtual(mouse_screen_pos, screen.get_size())
+        ui_state.update_cursor(
+            virtual_pos,
+            camera,
+            state.player_state.position,
+            world_sub_width,
+            world_sub_height,
+        )
 
         # Simulation tick
         tick_timer = getattr(state, '_tick_timer', 0.0) + dt

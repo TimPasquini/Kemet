@@ -93,9 +93,16 @@ DEPOT_SCRAP_AMOUNT = 3
 DEPOT_SEEDS_AMOUNT = 1
 
 # =============================================================================
+# SUB-GRID SYSTEM
+# =============================================================================
+SUBGRID_SIZE = 3              # 3x3 sub-squares per tile
+INTERACTION_RANGE = 6         # Sub-squares (= 2 tiles at 3x3)
+
+# =============================================================================
 # UI (Pygame)
 # =============================================================================
 TILE_SIZE = 32
+SUB_TILE_SIZE = TILE_SIZE // SUBGRID_SIZE  # ~10-11 pixels per sub-square
 SIDEBAR_WIDTH = 300
 LINE_HEIGHT = 20
 FONT_SIZE = 18

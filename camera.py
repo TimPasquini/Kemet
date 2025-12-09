@@ -2,10 +2,11 @@
 """
 Camera system for viewport management.
 
-Handles the transformation between three coordinate spaces:
-1. World space - tile/pixel coordinates in the game world
-2. Viewport space - coordinates within the visible map area
-3. Virtual screen space - coordinates on the fixed-resolution UI surface
+Handles the transformation between four coordinate spaces:
+1. World space - pixel coordinates in the game world
+2. Tile space - coarse grid coordinates (simulation level)
+3. Sub-grid space - fine grid coordinates (3x tile resolution)
+4. Viewport space - coordinates within the visible map area
 
 The camera tracks a position in world space and defines what portion
 of the world is visible in the viewport.
@@ -14,6 +15,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Tuple, Optional
+
+from config import SUBGRID_SIZE
 
 
 @dataclass
@@ -111,6 +114,67 @@ class Camera:
     def tile_to_world(self, tile_x: int, tile_y: int) -> Tuple[float, float]:
         """Convert tile coordinates to world pixel coordinates (top-left of tile)."""
         return (tile_x * self.tile_size, tile_y * self.tile_size)
+
+    # =========================================================================
+    # Sub-grid coordinate conversions
+    # =========================================================================
+
+    @property
+    def sub_tile_size(self) -> float:
+        """Size of a sub-square in world pixels."""
+        return self.tile_size / SUBGRID_SIZE
+
+    def world_to_subsquare(self, world_x: float, world_y: float) -> Tuple[int, int]:
+        """Convert world pixel coordinates to sub-grid coordinates."""
+        sub_size = self.sub_tile_size
+        return (int(world_x // sub_size), int(world_y // sub_size))
+
+    def subsquare_to_world(self, sub_x: int, sub_y: int) -> Tuple[float, float]:
+        """Convert sub-grid coordinates to world pixel coordinates (top-left of sub-square)."""
+        sub_size = self.sub_tile_size
+        return (sub_x * sub_size, sub_y * sub_size)
+
+    def subsquare_to_world_center(self, sub_x: int, sub_y: int) -> Tuple[float, float]:
+        """Convert sub-grid coordinates to world pixel coordinates (center of sub-square)."""
+        sub_size = self.sub_tile_size
+        return (sub_x * sub_size + sub_size / 2, sub_y * sub_size + sub_size / 2)
+
+    def subsquare_to_tile(self, sub_x: int, sub_y: int) -> Tuple[int, int]:
+        """Convert sub-grid coordinates to tile coordinates."""
+        return (sub_x // SUBGRID_SIZE, sub_y // SUBGRID_SIZE)
+
+    def tile_to_subsquare(self, tile_x: int, tile_y: int) -> Tuple[int, int]:
+        """Convert tile coordinates to sub-grid coordinates (top-left of tile)."""
+        return (tile_x * SUBGRID_SIZE, tile_y * SUBGRID_SIZE)
+
+    def get_visible_subsquare_range(self) -> Tuple[int, int, int, int]:
+        """
+        Get the range of sub-squares visible in the viewport.
+
+        Returns: (start_x, start_y, end_x, end_y) - end is exclusive
+        """
+        sub_size = self.sub_tile_size
+        world_sub_width = (self.world_pixel_width // self.tile_size) * SUBGRID_SIZE
+        world_sub_height = (self.world_pixel_height // self.tile_size) * SUBGRID_SIZE
+
+        start_x = max(0, int(self.world_x // sub_size))
+        start_y = max(0, int(self.world_y // sub_size))
+
+        end_x = min(
+            int((self.world_x + self.viewport_width) // sub_size) + 1,
+            world_sub_width
+        )
+        end_y = min(
+            int((self.world_y + self.viewport_height) // sub_size) + 1,
+            world_sub_height
+        )
+
+        return (start_x, start_y, end_x, end_y)
+
+    def is_subsquare_visible(self, sub_x: int, sub_y: int) -> bool:
+        """Check if a sub-square is within the visible viewport."""
+        start_x, start_y, end_x, end_y = self.get_visible_subsquare_range()
+        return start_x <= sub_x < end_x and start_y <= sub_y < end_y
 
     def get_visible_tile_range(self) -> Tuple[int, int, int, int]:
         """

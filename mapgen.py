@@ -25,7 +25,8 @@ from ground import (
 )
 from water import WaterColumn
 from utils import get_neighbors
-from config import MOISTURE_HISTORY_MAX
+from config import MOISTURE_HISTORY_MAX, SUBGRID_SIZE
+from subgrid import SubSquare
 
 Point = Tuple[int, int]
 
@@ -57,10 +58,28 @@ TILE_TYPES: Dict[str, TileType] = {
 # Tile Class
 # =============================================================================
 
+def _create_default_subgrid() -> List[List[SubSquare]]:
+    """Create a 3x3 subgrid with slight elevation variation."""
+    subgrid = []
+    for sx in range(SUBGRID_SIZE):
+        row = []
+        for sy in range(SUBGRID_SIZE):
+            # Small random elevation offset to create micro-terrain
+            # Range: -0.05 to +0.05 meters
+            offset = random.uniform(-0.05, 0.05)
+            row.append(SubSquare(elevation_offset=offset))
+        subgrid.append(row)
+    return subgrid
+
+
 @dataclass
 class Tile:
     """
     A single map tile containing terrain, water, and surface information.
+
+    Each tile contains a 3x3 subgrid for fine-grained surface interactions.
+    The subgrid allows water to flow at higher resolution and enables
+    buildings to span partial tiles.
     """
     kind: str                           # Biome type key into TILE_TYPES
     terrain: TerrainColumn              # Soil layers and elevation
@@ -69,6 +88,7 @@ class Tile:
     wellspring_output: int = 0          # Water output per tick (0 = not a wellspring)
     depot: bool = False                 # Is this the player's depot?
     moisture_history: List[int] = field(default_factory=list)
+    subgrid: List[List[SubSquare]] = field(default_factory=_create_default_subgrid)
 
     @property
     def elevation(self) -> float:
@@ -88,6 +108,14 @@ class Tile:
     @trench.setter
     def trench(self, value: bool) -> None:
         self.surface.has_trench = value
+
+    def get_subsquare(self, local_x: int, local_y: int) -> SubSquare:
+        """Get a subsquare by local index (0-2, 0-2)."""
+        return self.subgrid[local_x][local_y]
+
+    def get_subsquare_elevation(self, local_x: int, local_y: int) -> float:
+        """Get absolute elevation of a subsquare in meters."""
+        return self.elevation + self.subgrid[local_x][local_y].elevation_offset
 
 
 # =============================================================================
@@ -344,10 +372,52 @@ def generate_map(width: int, height: int) -> List[List[Tile]]:
     # Add wellsprings
     _generate_wellsprings(tiles, width, height)
 
-    # Add surface water to wadis
+    # Add surface water to wadis and distribute to sub-squares
     for x in range(width):
         for y in range(height):
-            if tiles[x][y].kind == "wadi":
-                tiles[x][y].water.surface_water += random.randint(5, 30)
+            tile = tiles[x][y]
+            if tile.kind == "wadi":
+                tile.water.surface_water += random.randint(5, 30)
+
+            # Distribute any tile surface water to sub-squares
+            if tile.water.surface_water > 0:
+                _distribute_surface_water_to_subgrid(tile)
 
     return tiles
+
+
+def _distribute_surface_water_to_subgrid(tile: Tile) -> None:
+    """Distribute tile's surface water to sub-squares by elevation.
+
+    Lower sub-squares receive more water (natural pooling).
+    Clears the tile's WaterColumn.surface_water after distribution.
+    """
+    amount = tile.water.surface_water
+    if amount <= 0:
+        return
+
+    # Calculate inverse elevation weights
+    weights = []
+    total_weight = 0.0
+
+    for lx in range(SUBGRID_SIZE):
+        for ly in range(SUBGRID_SIZE):
+            offset = tile.subgrid[lx][ly].elevation_offset
+            # Lower elevation = higher weight
+            weight = 1.0 / (offset + 0.15)
+            weights.append((lx, ly, weight))
+            total_weight += weight
+
+    # Distribute proportionally
+    distributed = 0
+    for i, (lx, ly, weight) in enumerate(weights):
+        if i == len(weights) - 1:
+            portion = amount - distributed
+        else:
+            portion = int((amount * weight) / total_weight)
+
+        tile.subgrid[lx][ly].surface_water += max(0, portion)
+        distributed += portion
+
+    # Clear tile-level surface water (now in sub-squares)
+    tile.water.surface_water = 0

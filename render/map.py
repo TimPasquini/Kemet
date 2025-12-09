@@ -1,8 +1,14 @@
 # render/map.py
-"""Map, tile, structure, and player rendering with camera support."""
+"""Map, tile, structure, and player rendering with camera support.
+
+Rendering now supports:
+- Tile-level features (biome colors, structures)
+- Sub-grid water visualization
+- Interaction range highlights
+"""
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Tuple
+from typing import TYPE_CHECKING, Tuple, Optional, List
 
 import pygame
 
@@ -14,11 +20,33 @@ from config import (
     TRENCH_INSET,
     WELLSPRING_RADIUS,
     PLAYER_RADIUS_DIVISOR,
+    SUBGRID_SIZE,
+    INTERACTION_RANGE,
+)
+from subgrid import (
+    subgrid_to_tile,
+    get_subsquare_index,
+    chebyshev_distance,
+    is_on_range_edge,
 )
 
 if TYPE_CHECKING:
     from main import GameState
     from camera import Camera
+    from tools import Tool
+
+# =============================================================================
+# Highlight Colors by Tool Type
+# =============================================================================
+HIGHLIGHT_COLORS = {
+    "build": (80, 140, 200),      # Blue for building
+    "build_invalid": (200, 80, 80),  # Red for invalid placement
+    "shovel": (200, 180, 80),     # Yellow for terrain
+    "bucket": (80, 180, 200),     # Cyan for water
+    "survey": (80, 200, 120),     # Green for survey
+    "default": (180, 180, 180),   # White/gray for no tool
+    "range_edge": (100, 100, 100, 80),  # Subtle range boundary
+}
 
 
 def render_map_viewport(
@@ -85,6 +113,62 @@ def render_map_viewport(
                 pygame.draw.rect(surface, (200, 200, 60), rect.inflate(-TRENCH_INSET, -TRENCH_INSET), border_radius=3)
                 draw_text(surface, font, "D", (rect.x + 6, rect.y + 4), color=(40, 40, 20))
 
+    # Render sub-grid water overlay
+    render_subgrid_water(surface, state, camera, tile_size)
+
+
+def render_subgrid_water(
+    surface: pygame.Surface,
+    state: "GameState",
+    camera: "Camera",
+    tile_size: int,
+) -> None:
+    """Render water levels at sub-grid resolution as semi-transparent overlay.
+
+    Water is shown as blue tint, more opaque = more water.
+    Only renders sub-squares with significant water (> 2 units).
+    """
+    sub_size = tile_size // SUBGRID_SIZE
+
+    # Get visible sub-square range
+    start_x, start_y, end_x, end_y = camera.get_visible_subsquare_range()
+
+    for sub_y in range(start_y, end_y):
+        for sub_x in range(start_x, end_x):
+            # Get tile and local coords
+            tile_x = sub_x // SUBGRID_SIZE
+            tile_y = sub_y // SUBGRID_SIZE
+            local_x = sub_x % SUBGRID_SIZE
+            local_y = sub_y % SUBGRID_SIZE
+
+            tile = state.tiles[tile_x][tile_y]
+            water = tile.subgrid[local_x][local_y].surface_water
+
+            # Skip if negligible water
+            if water <= 2:
+                continue
+
+            # Calculate water color/opacity based on amount
+            # Light water: 3-20 units, Medium: 21-50, Heavy: 51+
+            if water <= 20:
+                alpha = 40 + (water * 3)  # 40-100 alpha
+                color = (100, 180, 230)   # Light blue
+            elif water <= 50:
+                alpha = 100 + ((water - 20) * 2)  # 100-160 alpha
+                color = (60, 140, 210)    # Medium blue
+            else:
+                alpha = min(200, 160 + (water - 50))  # 160-200 alpha
+                color = (40, 100, 180)    # Deep blue
+
+            # Get sub-square screen position
+            world_x, world_y = camera.subsquare_to_world(sub_x, sub_y)
+            vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
+
+            # Draw semi-transparent water rectangle
+            water_surface = pygame.Surface((sub_size, sub_size), pygame.SRCALPHA)
+            water_surface.fill((*color, alpha))
+            surface.blit(water_surface, (int(vp_x), int(vp_y)))
+
 
 def render_player(
     surface: pygame.Surface,
@@ -140,3 +224,119 @@ def render_night_overlay(
         overlay = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
         overlay.fill((10, 20, 40, night_alpha))
         surface.blit(overlay, (0, 0))
+
+
+# =============================================================================
+# Interaction Highlighting
+# =============================================================================
+
+def get_tool_highlight_color(
+    tool: Optional["Tool"],
+    state: "GameState",
+    target_subsquare: Tuple[int, int],
+) -> Tuple[int, int, int]:
+    """Get the highlight color for a tool at a given target position.
+
+    Args:
+        tool: Currently selected tool (or None)
+        state: Game state for validation
+        target_subsquare: Target position in sub-grid coords
+
+    Returns:
+        RGB color tuple for the highlight
+    """
+    if tool is None:
+        return HIGHLIGHT_COLORS["default"]
+
+    tool_id = tool.id.lower()
+
+    if tool_id == "build":
+        # Check if target tile is valid for building
+        tile_x, tile_y = subgrid_to_tile(*target_subsquare)
+        if 0 <= tile_x < state.width and 0 <= tile_y < state.height:
+            tile = state.tiles[tile_x][tile_y]
+            # Invalid if: has structure, is rock, is depot
+            if (tile_x, tile_y) in state.structures or tile.kind == "rock" or tile.depot:
+                return HIGHLIGHT_COLORS["build_invalid"]
+        return HIGHLIGHT_COLORS["build"]
+
+    elif tool_id == "shovel":
+        return HIGHLIGHT_COLORS["shovel"]
+
+    elif tool_id == "bucket":
+        return HIGHLIGHT_COLORS["bucket"]
+
+    elif tool_id == "survey":
+        return HIGHLIGHT_COLORS["survey"]
+
+    return HIGHLIGHT_COLORS["default"]
+
+
+def render_interaction_highlights(
+    surface: pygame.Surface,
+    camera: "Camera",
+    player_pos: Tuple[int, int],
+    target_subsquare: Optional[Tuple[int, int]],
+    tool: Optional["Tool"],
+    state: "GameState",
+) -> None:
+    """Render interaction range indicator and target highlight.
+
+    Args:
+        surface: Surface to render to
+        camera: Camera for coordinate transforms
+        player_pos: Player position in sub-grid coordinates
+        target_subsquare: Currently targeted sub-square (or None)
+        tool: Currently selected tool
+        state: Game state for validation
+    """
+    sub_size = int(camera.sub_tile_size)
+
+    # Get visible range for culling
+    vis_start_x, vis_start_y, vis_end_x, vis_end_y = camera.get_visible_subsquare_range()
+
+    # Calculate world dimensions in sub-squares
+    world_sub_width = state.width * SUBGRID_SIZE
+    world_sub_height = state.height * SUBGRID_SIZE
+
+    # Draw range boundary (subtle outline on edge sub-squares)
+    for dx in range(-INTERACTION_RANGE, INTERACTION_RANGE + 1):
+        for dy in range(-INTERACTION_RANGE, INTERACTION_RANGE + 1):
+            sub_x = player_pos[0] + dx
+            sub_y = player_pos[1] + dy
+
+            # Bounds check
+            if not (0 <= sub_x < world_sub_width and 0 <= sub_y < world_sub_height):
+                continue
+
+            # Visibility check
+            if not (vis_start_x <= sub_x < vis_end_x and vis_start_y <= sub_y < vis_end_y):
+                continue
+
+            # Only draw edge of range
+            if is_on_range_edge((sub_x, sub_y), player_pos, INTERACTION_RANGE):
+                world_x, world_y = camera.subsquare_to_world(sub_x, sub_y)
+                vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
+                rect = pygame.Rect(int(vp_x), int(vp_y), sub_size, sub_size)
+                pygame.draw.rect(surface, HIGHLIGHT_COLORS["range_edge"][:3], rect, 1)
+
+    # Draw target highlight (bright outline)
+    if target_subsquare is not None:
+        sub_x, sub_y = target_subsquare
+
+        # Bounds and visibility check
+        if (0 <= sub_x < world_sub_width and 0 <= sub_y < world_sub_height and
+            vis_start_x <= sub_x < vis_end_x and vis_start_y <= sub_y < vis_end_y):
+
+            color = get_tool_highlight_color(tool, state, target_subsquare)
+            world_x, world_y = camera.subsquare_to_world(sub_x, sub_y)
+            vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
+            rect = pygame.Rect(int(vp_x), int(vp_y), sub_size, sub_size)
+
+            # Draw filled semi-transparent highlight
+            highlight_surface = pygame.Surface((sub_size, sub_size), pygame.SRCALPHA)
+            highlight_surface.fill((*color, 60))  # Semi-transparent fill
+            surface.blit(highlight_surface, (int(vp_x), int(vp_y)))
+
+            # Draw solid border
+            pygame.draw.rect(surface, color, rect, 2)
