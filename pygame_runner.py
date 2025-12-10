@@ -59,6 +59,7 @@ from keybindings import (
 )
 from config import (
     TILE_SIZE,
+    SUB_TILE_SIZE,
     MOVE_SPEED,
     TICK_INTERVAL,
     PROFILE_WIDTH,
@@ -82,7 +83,7 @@ from render import (
     render_event_log,
 )
 from render.map import render_interaction_highlights
-from subgrid import tile_center_subsquare
+
 
 def screen_to_virtual(
     screen_pos: Tuple[int, int],
@@ -99,7 +100,7 @@ def screen_to_virtual(
     vx = int((screen_pos[0] - offset_x) / scale)
     vy = int((screen_pos[1] - offset_y) / scale)
 
-    return (vx, vy)
+    return vx, vy
 
 
 def virtual_to_world(
@@ -128,7 +129,7 @@ def virtual_to_world(
     # Convert to world coordinates
     world_x, world_y = camera.viewport_to_world(cam_vp_x, cam_vp_y)
 
-    return (world_x, world_y)
+    return world_x, world_y
 
 
 def render_to_virtual_screen(
@@ -268,20 +269,16 @@ def run(tile_size: int = TILE_SIZE) -> None:
     camera.set_world_bounds(state.width, state.height, tile_size)
     camera.set_viewport_size(ui_state.map_rect.width, ui_state.map_rect.height)
 
-    # Player position in world pixels (for smooth rendering)
-    # Position is already initialized in sub-grid coords by build_initial_state
-    sub_tile_size = tile_size / SUBGRID_SIZE
-    player_world_pos = [
-        state.player_state.position[0] * sub_tile_size + sub_tile_size / 2,
-        state.player_state.position[1] * sub_tile_size + sub_tile_size / 2
-    ]
-
-    # World dimensions in sub-squares (for cursor clamping)
+    # World dimensions in sub-squares (for movement bounds and cursor clamping)
     world_sub_width = state.width * SUBGRID_SIZE
     world_sub_height = state.height * SUBGRID_SIZE
 
+    # Movement speed in sub-squares per second (not pixels)
+    move_speed_subsquares = MOVE_SPEED / SUB_TILE_SIZE
+
     # Center camera on player
-    camera.center_on(player_world_pos[0], player_world_pos[1])
+    player_px, player_py = state.player_state.world_pixel_pos
+    camera.center_on(player_px, player_py)
     show_help = False
     elevation_range = calculate_elevation_range(state)
 
@@ -413,24 +410,25 @@ def run(tile_size: int = TILE_SIZE) -> None:
             keys = pygame.key.get_pressed()
             vx = vy = 0.0
             if keys[pygame.K_w]:
-                vy -= MOVE_SPEED
+                vy -= move_speed_subsquares
             if keys[pygame.K_s]:
-                vy += MOVE_SPEED
+                vy += move_speed_subsquares
             if keys[pygame.K_a]:
-                vx -= MOVE_SPEED
+                vx -= move_speed_subsquares
             if keys[pygame.K_d]:
-                vx += MOVE_SPEED
+                vx += move_speed_subsquares
 
             def is_blocked(tx: int, ty: int) -> bool:
                 return state.tiles[tx][ty].kind == "rock"
 
             update_player_movement(
-                state.player_state, player_world_pos, (vx, vy), dt, tile_size,
-                state.width, state.height, is_blocked
+                state.player_state, (vx, vy), dt,
+                world_sub_width, world_sub_height, is_blocked
             )
 
-        # Camera follows player
-        camera.follow(player_world_pos[0], player_world_pos[1])
+        # Camera follows player (get pixel position from player state)
+        player_px, player_py = state.player_state.world_pixel_pos
+        camera.follow(player_px, player_py)
 
         # Update cursor tracking for interaction highlights
         mouse_screen_pos = pygame.mouse.get_pos()
@@ -457,7 +455,7 @@ def run(tile_size: int = TILE_SIZE) -> None:
         # Render to virtual screen
         render_to_virtual_screen(
             virtual_screen, font, state, camera, tile_size, elevation_range,
-            (player_world_pos[0], player_world_pos[1]),
+            state.player_state.world_pixel_pos,
             toolbar, ui_state, show_help
         )
 

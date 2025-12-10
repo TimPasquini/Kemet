@@ -57,7 +57,7 @@ def get_surface_material_color(tile) -> Color | None:
 
 
 def color_for_tile(state_tile, tile_type, elevation_range: Tuple[float, float]) -> Color:
-    """Calculate the final display color for a tile."""
+    """Calculate the final display color for a tile (legacy, uses tile.kind)."""
     # Water-saturated tiles show as blue
     if state_tile.hydration >= 10.0:
         return 48, 133, 214
@@ -76,6 +76,37 @@ def color_for_tile(state_tile, tile_type, elevation_range: Tuple[float, float]) 
     # Apply elevation-based brightness
     min_elev, max_elev = elevation_range
     brightness = elevation_brightness(state_tile.elevation, min_elev, max_elev)
+    base_color = apply_brightness(base_color, brightness)
+
+    return base_color
+
+
+def color_for_subsquare(
+    biome: str,
+    subsquare_elevation: float,
+    tile,
+    elevation_range: Tuple[float, float]
+) -> Color:
+    """Calculate the display color for a sub-square based on its biome.
+
+    Args:
+        biome: The sub-square's biome type
+        subsquare_elevation: Absolute elevation of the sub-square
+        tile: Parent tile (for material blending)
+        elevation_range: (min, max) elevation for brightness scaling
+    """
+    # Start with biome base color
+    base_color = BIOME_COLORS.get(biome, (200, 200, 200))
+
+    # Blend with surface material color from parent tile
+    material_color = get_surface_material_color(tile)
+    if material_color:
+        weight = ORGANICS_BLEND_WEIGHT if tile.terrain.organics_depth > 0 else MATERIAL_BLEND_WEIGHT
+        base_color = blend_colors(base_color, material_color, weight)
+
+    # Apply elevation-based brightness
+    min_elev, max_elev = elevation_range
+    brightness = elevation_brightness(subsquare_elevation, min_elev, max_elev)
     base_color = apply_brightness(base_color, brightness)
 
     return base_color

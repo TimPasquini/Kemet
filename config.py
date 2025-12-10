@@ -101,21 +101,24 @@ INTERACTION_RANGE = 6         # Sub-squares (= 2 tiles at 3x3)
 # =============================================================================
 # UI (Pygame)
 # =============================================================================
-TILE_SIZE = 32
-SUB_TILE_SIZE = TILE_SIZE // SUBGRID_SIZE  # ~10-11 pixels per sub-square
+# Sub-squares are player-scale tiles (48px each)
+# Simulation tiles contain 3x3 sub-squares (144px each)
+SUB_TILE_SIZE = 48                        # Player-scale tile size in pixels
+TILE_SIZE = SUB_TILE_SIZE * SUBGRID_SIZE  # 144px simulation tile
+
 SIDEBAR_WIDTH = 300
 LINE_HEIGHT = 20
 FONT_SIZE = 18
 SECTION_SPACING = 8
 MOVE_SPEED = 220
 DIAGONAL_FACTOR = 0.707
-MAP_SIZE: Tuple[int, int] = (60, 45)  # Larger than viewport to test camera
+MAP_SIZE: Tuple[int, int] = (60, 45)  # Large world for exploration
 
 # Rendering constants
-PLAYER_RADIUS_DIVISOR = 3
-STRUCTURE_INSET = 8
-TRENCH_INSET = 10
-WELLSPRING_RADIUS = 6
+PLAYER_RADIUS = 18                    # Player circle radius in pixels
+STRUCTURE_INSET = 36                  # Inset for structure rendering
+TRENCH_INSET = 45                     # Inset for trench rendering
+WELLSPRING_RADIUS = 27                # Wellspring indicator radius
 PROFILE_WIDTH = 140
 PROFILE_HEIGHT = 240
 PROFILE_MARGIN = 10

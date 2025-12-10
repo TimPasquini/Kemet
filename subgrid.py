@@ -16,10 +16,15 @@ class SubSquare:
     """A single sub-square within a tile.
 
     Attributes:
+        biome: Surface biome type (e.g., "dune", "flat", "wadi", "rock", "salt")
         elevation_offset: Height relative to tile base elevation (enables slopes within tile)
         surface_water: Water pooled on this sub-square (in same units as tile water)
         structure_id: Reference to structure occupying this sub-square, if any
+
+    Biome is a surface trait influenced by but independent from the underlying
+    simulation tile. This allows terrain features to vary within a tile.
     """
+    biome: str = "flat"
     elevation_offset: float = 0.0
     surface_water: int = 0
     structure_id: Optional[int] = None

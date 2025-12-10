@@ -148,12 +148,14 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
 
     # Initialize player at center of starting tile (in sub-grid coords)
     start_subsquare = tile_center_subsquare(start_tile[0], start_tile[1])
+    player_state = PlayerState()
+    player_state.position = start_subsquare  # Uses setter to center in sub-square
 
     return GameState(
         width=width,
         height=height,
         tiles=tiles,
-        player_state=PlayerState(position=start_subsquare),
+        player_state=player_state,
     )
 
 

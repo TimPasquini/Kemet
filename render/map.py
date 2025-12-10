@@ -13,15 +13,17 @@ from typing import TYPE_CHECKING, Tuple, Optional, List
 import pygame
 
 from mapgen import TILE_TYPES
-from render.colors import color_for_tile
+from render.colors import color_for_tile, color_for_subsquare
 from render.primitives import draw_text
 from config import (
     STRUCTURE_INSET,
     TRENCH_INSET,
     WELLSPRING_RADIUS,
-    PLAYER_RADIUS_DIVISOR,
+    PLAYER_RADIUS,
     SUBGRID_SIZE,
     INTERACTION_RANGE,
+    SUB_TILE_SIZE,
+    TILE_SIZE,
 )
 from subgrid import (
     subgrid_to_tile,
@@ -59,33 +61,53 @@ def render_map_viewport(
 ) -> None:
     """Render the visible portion of the world to the map viewport surface.
 
+    Renders at sub-square resolution - each sub-square has its own biome color.
+
     Args:
         surface: Surface to render to (sized to camera viewport)
         font: Font for text rendering
         state: Game state with tiles and structures
         camera: Camera defining visible region
-        tile_size: Size of each tile in pixels
+        tile_size: Size of each simulation tile in pixels
         elevation_range: (min, max) elevation for color scaling
     """
     surface.fill((20, 20, 25))
 
-    # Get visible tile range from camera
-    start_x, start_y, end_x, end_y = camera.get_visible_tile_range()
+    # Get visible sub-square range from camera
+    start_x, start_y, end_x, end_y = camera.get_visible_subsquare_range()
 
-    # Draw visible tiles
-    for ty in range(start_y, end_y):
-        for tx in range(start_x, end_x):
-            tile = state.tiles[tx][ty]
-            color = color_for_tile(tile, TILE_TYPES[tile.kind], elevation_range)
+    # Draw visible sub-squares (each with its own biome)
+    for sub_y in range(start_y, end_y):
+        for sub_x in range(start_x, end_x):
+            # Get tile and local coords
+            tile_x = sub_x // SUBGRID_SIZE
+            tile_y = sub_y // SUBGRID_SIZE
+            local_x = sub_x % SUBGRID_SIZE
+            local_y = sub_y % SUBGRID_SIZE
 
-            # Convert tile position to viewport position
-            world_x, world_y = camera.tile_to_world(tx, ty)
+            tile = state.tiles[tile_x][tile_y]
+            subsquare = tile.subgrid[local_x][local_y]
+
+            # Get color based on sub-square's biome
+            sub_elevation = tile.get_subsquare_elevation(local_x, local_y)
+            color = color_for_subsquare(subsquare.biome, sub_elevation, tile, elevation_range)
+
+            # Convert sub-square position to viewport position
+            world_x, world_y = camera.subsquare_to_world(sub_x, sub_y)
             vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
 
-            rect = pygame.Rect(int(vp_x), int(vp_y), tile_size - 1, tile_size - 1)
+            rect = pygame.Rect(int(vp_x), int(vp_y), SUB_TILE_SIZE, SUB_TILE_SIZE)
             pygame.draw.rect(surface, color, rect)
 
+    # Draw tile-level features (trenches) - over sub-squares
+    start_tx, start_ty, end_tx, end_ty = camera.get_visible_tile_range()
+    for ty in range(start_ty, end_ty):
+        for tx in range(start_tx, end_tx):
+            tile = state.tiles[tx][ty]
             if tile.trench:
+                world_x, world_y = camera.tile_to_world(tx, ty)
+                vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
+                rect = pygame.Rect(int(vp_x), int(vp_y), tile_size - 1, tile_size - 1)
                 pygame.draw.rect(surface, (80, 80, 60), rect.inflate(-TRENCH_INSET, -TRENCH_INSET))
 
     # Draw structures (only visible ones)
@@ -96,11 +118,11 @@ def render_map_viewport(
         vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
         rect = pygame.Rect(int(vp_x), int(vp_y), tile_size - 1, tile_size - 1)
         pygame.draw.rect(surface, (30, 30, 30), rect.inflate(-STRUCTURE_INSET, -STRUCTURE_INSET))
-        draw_text(surface, font, structure.kind[0].upper(), (rect.x + 6, rect.y + 4))
+        draw_text(surface, font, structure.kind[0].upper(), (rect.x + 18, rect.y + 12))
 
     # Draw special features (wellsprings, depots) - only visible tiles
-    for ty in range(start_y, end_y):
-        for tx in range(start_x, end_x):
+    for ty in range(start_ty, end_ty):
+        for tx in range(start_tx, end_tx):
             tile = state.tiles[tx][ty]
             world_x, world_y = camera.tile_to_world(tx, ty)
             vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
@@ -111,7 +133,7 @@ def render_map_viewport(
                 pygame.draw.circle(surface, spring_color, rect.center, WELLSPRING_RADIUS)
             if tile.depot:
                 pygame.draw.rect(surface, (200, 200, 60), rect.inflate(-TRENCH_INSET, -TRENCH_INSET), border_radius=3)
-                draw_text(surface, font, "D", (rect.x + 6, rect.y + 4), color=(40, 40, 20))
+                draw_text(surface, font, "D", (rect.x + 18, rect.y + 12), color=(40, 40, 20))
 
     # Render sub-grid water overlay
     render_subgrid_water(surface, state, camera, tile_size)
@@ -190,20 +212,20 @@ def render_player(
     vp_x, vp_y = camera.world_to_viewport(player_world_pos[0], player_world_pos[1])
     player_x, player_y = int(vp_x), int(vp_y)
 
-    # Draw player circle
+    # Draw player circle (sized relative to sub-tile, not simulation tile)
     pygame.draw.circle(
         surface,
         (240, 240, 90),
         (player_x, player_y),
-        tile_size // PLAYER_RADIUS_DIVISOR,
+        PLAYER_RADIUS,
     )
 
     # Draw action timer bar if busy
     if state.is_busy():
-        bar_width = tile_size
+        bar_width = SUB_TILE_SIZE
         bar_height = 4
         bar_x = player_x - bar_width // 2
-        bar_y = player_y - tile_size // 2 - bar_height - 2
+        bar_y = player_y - SUB_TILE_SIZE // 2 - bar_height - 2
         progress = state.get_action_progress()
         pygame.draw.rect(surface, (50, 50, 50), (bar_x, bar_y, bar_width, bar_height))
         pygame.draw.rect(surface, (200, 200, 80), (bar_x, bar_y, int(bar_width * progress), bar_height))
