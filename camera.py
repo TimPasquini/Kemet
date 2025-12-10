@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Tuple
 
 from config import SUBGRID_SIZE
+from subgrid import subgrid_to_tile, tile_to_subgrid
 
 
 @dataclass
@@ -139,15 +140,9 @@ class Camera:
         sub_size = self.sub_tile_size
         return sub_x * sub_size + sub_size / 2, sub_y * sub_size + sub_size / 2
 
-    @staticmethod
-    def subsquare_to_tile(sub_x: int, sub_y: int) -> Tuple[int, int]:
-        """Convert sub-grid coordinates to tile coordinates."""
-        return sub_x // SUBGRID_SIZE, sub_y // SUBGRID_SIZE
-
-    @staticmethod
-    def tile_to_subsquare(tile_x: int, tile_y: int) -> Tuple[int, int]:
-        """Convert tile coordinates to sub-grid coordinates (top-left of tile)."""
-        return tile_x * SUBGRID_SIZE, tile_y * SUBGRID_SIZE
+    # Re-export as static methods for backwards compatibility
+    subsquare_to_tile = staticmethod(subgrid_to_tile)
+    tile_to_subsquare = staticmethod(tile_to_subgrid)
 
     def get_visible_subsquare_range(self) -> Tuple[int, int, int, int]:
         """

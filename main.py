@@ -65,6 +65,10 @@ class GameState:
     weather: WeatherSystem = field(default_factory=WeatherSystem)
     messages: List[str] = field(default_factory=list)
 
+    # Target for actions (set by UI cursor tracking)
+    target_subsquare: Point | None = None  # Sub-grid coords
+    target_tile: Point | None = None       # Tile coords (derived from target_subsquare)
+
     # === Player convenience properties for backwards compatibility ===
     @property
     def player(self) -> Point:
@@ -80,13 +84,18 @@ class GameState:
         """Player position in sub-grid coordinates."""
         return self.player_state.position
 
-    @property
-    def last_rock_blocked(self) -> Point | None:
-        return self.player_state.last_rock_blocked
+    def set_target(self, subsquare: Point | None) -> None:
+        """Set the target for actions from UI cursor tracking."""
+        from subgrid import subgrid_to_tile
+        self.target_subsquare = subsquare
+        if subsquare is not None:
+            self.target_tile = subgrid_to_tile(subsquare[0], subsquare[1])
+        else:
+            self.target_tile = None
 
-    @last_rock_blocked.setter
-    def last_rock_blocked(self, value: Point | None) -> None:
-        self.player_state.last_rock_blocked = value
+    def get_action_target_tile(self) -> Point:
+        """Get the tile to target for actions (cursor target or player position)."""
+        return self.target_tile if self.target_tile is not None else self.player
 
     # === Weather convenience properties ===
     @property
@@ -160,7 +169,8 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
 
 
 def dig_trench(state: GameState) -> None:
-    tile = state.tiles[state.player[0]][state.player[1]]
+    tx, ty = state.get_action_target_tile()
+    tile = state.tiles[tx][ty]
     if tile.surface.has_trench:
         state.messages.append("Already trenched.")
         return
@@ -182,7 +192,8 @@ def terrain_action(state: GameState, action: str) -> None:
 
 
 def lower_ground(state: GameState) -> None:
-    tile = state.tiles[state.player[0]][state.player[1]]
+    tx, ty = state.get_action_target_tile()
+    tile = state.tiles[tx][ty]
     for layer, name in [(SoilLayer.TOPSOIL, "topsoil"), (SoilLayer.ELUVIATION, "eluviation"),
                         (SoilLayer.SUBSOIL, "subsoil")]:
         if tile.terrain.get_layer_depth(layer) > MIN_LAYER_THICKNESS:
@@ -196,14 +207,16 @@ def raise_ground(state: GameState) -> None:
     if state.inventory.scrap < 1:
         state.messages.append("Need 1 scrap to raise ground.")
         return
-    tile = state.tiles[state.player[0]][state.player[1]]
+    tx, ty = state.get_action_target_tile()
+    tile = state.tiles[tx][ty]
     state.inventory.scrap -= 1
     tile.terrain.add_material_to_layer(SoilLayer.TOPSOIL, 2)
     state.messages.append(f"Added topsoil (cost 1 scrap). Elev: {tile.elevation:.2f}m")
 
 
 def collect_water(state: GameState) -> None:
-    tile = state.tiles[state.player[0]][state.player[1]]
+    tx, ty = state.get_action_target_tile()
+    tile = state.tiles[tx][ty]
     if tile.depot:
         state.inventory.water += DEPOT_WATER_AMOUNT
         state.inventory.scrap += DEPOT_SCRAP_AMOUNT
@@ -246,7 +259,8 @@ def pour_water(state: GameState, amount: float) -> None:
         state.messages.append("Not enough water carried.")
         return
 
-    tile = state.tiles[state.player[0]][state.player[1]]
+    tx, ty = state.get_action_target_tile()
+    tile = state.tiles[tx][ty]
 
     # Distribute water to sub-squares (lower elevation gets more)
     distribute_upward_seepage(tile, amount_units)
@@ -305,7 +319,7 @@ def show_status(state: GameState) -> None:
 
 
 def survey_tile(state: GameState) -> None:
-    x, y = state.player
+    x, y = state.get_action_target_tile()
     tile = state.tiles[x][y]
     structure = state.structures.get((x, y))
 

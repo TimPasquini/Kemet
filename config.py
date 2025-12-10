@@ -96,7 +96,7 @@ DEPOT_SEEDS_AMOUNT = 1
 # SUB-GRID SYSTEM
 # =============================================================================
 SUBGRID_SIZE = 3              # 3x3 sub-squares per tile
-INTERACTION_RANGE = 6         # Sub-squares (= 2 tiles at 3x3)
+INTERACTION_RANGE = 2         # Sub-squares player can reach (1-2 squares out)
 
 # =============================================================================
 # UI (Pygame)

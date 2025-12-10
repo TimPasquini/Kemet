@@ -29,7 +29,6 @@ from subgrid import (
     subgrid_to_tile,
     get_subsquare_index,
     chebyshev_distance,
-    is_on_range_edge,
 )
 
 if TYPE_CHECKING:
@@ -47,7 +46,6 @@ HIGHLIGHT_COLORS = {
     "bucket": (80, 180, 200),     # Cyan for water
     "survey": (80, 200, 120),     # Green for survey
     "default": (180, 180, 180),   # White/gray for no tool
-    "range_edge": (100, 100, 100, 80),  # Subtle range boundary
 }
 
 
@@ -313,6 +311,7 @@ def render_interaction_highlights(
         state: Game state for validation
     """
     sub_size = int(camera.sub_tile_size)
+    tile_size = camera.tile_size
 
     # Get visible range for culling
     vis_start_x, vis_start_y, vis_end_x, vis_end_y = camera.get_visible_subsquare_range()
@@ -321,28 +320,7 @@ def render_interaction_highlights(
     world_sub_width = state.width * SUBGRID_SIZE
     world_sub_height = state.height * SUBGRID_SIZE
 
-    # Draw range boundary (subtle outline on edge sub-squares)
-    for dx in range(-INTERACTION_RANGE, INTERACTION_RANGE + 1):
-        for dy in range(-INTERACTION_RANGE, INTERACTION_RANGE + 1):
-            sub_x = player_pos[0] + dx
-            sub_y = player_pos[1] + dy
-
-            # Bounds check
-            if not (0 <= sub_x < world_sub_width and 0 <= sub_y < world_sub_height):
-                continue
-
-            # Visibility check
-            if not (vis_start_x <= sub_x < vis_end_x and vis_start_y <= sub_y < vis_end_y):
-                continue
-
-            # Only draw edge of range
-            if is_on_range_edge((sub_x, sub_y), player_pos, INTERACTION_RANGE):
-                world_x, world_y = camera.subsquare_to_world(sub_x, sub_y)
-                vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
-                rect = pygame.Rect(int(vp_x), int(vp_y), sub_size, sub_size)
-                pygame.draw.rect(surface, HIGHLIGHT_COLORS["range_edge"][:3], rect, 1)
-
-    # Draw target highlight (bright outline)
+    # Draw target highlight (cursor snaps to valid squares, no range outline needed)
     if target_subsquare is not None:
         sub_x, sub_y = target_subsquare
 
@@ -351,14 +329,32 @@ def render_interaction_highlights(
             vis_start_x <= sub_x < vis_end_x and vis_start_y <= sub_y < vis_end_y):
 
             color = get_tool_highlight_color(tool, state, target_subsquare)
-            world_x, world_y = camera.subsquare_to_world(sub_x, sub_y)
-            vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
-            rect = pygame.Rect(int(vp_x), int(vp_y), sub_size, sub_size)
+            tool_id = tool.id.lower() if tool else ""
 
-            # Draw filled semi-transparent highlight
-            highlight_surface = pygame.Surface((sub_size, sub_size), pygame.SRCALPHA)
-            highlight_surface.fill((*color, 60))  # Semi-transparent fill
-            surface.blit(highlight_surface, (int(vp_x), int(vp_y)))
+            # For build tool, show tile-sized preview
+            if tool_id == "build":
+                tile_x, tile_y = subgrid_to_tile(sub_x, sub_y)
+                tile_world_x, tile_world_y = camera.tile_to_world(tile_x, tile_y)
+                tile_vp_x, tile_vp_y = camera.world_to_viewport(tile_world_x, tile_world_y)
+                tile_rect = pygame.Rect(int(tile_vp_x), int(tile_vp_y), tile_size, tile_size)
 
-            # Draw solid border
-            pygame.draw.rect(surface, color, rect, 2)
+                # Draw tile-sized semi-transparent preview
+                preview_surface = pygame.Surface((tile_size, tile_size), pygame.SRCALPHA)
+                preview_surface.fill((*color, 40))  # More transparent for tile preview
+                surface.blit(preview_surface, (int(tile_vp_x), int(tile_vp_y)))
+
+                # Draw tile border
+                pygame.draw.rect(surface, color, tile_rect, 2)
+            else:
+                # Standard sub-square highlight for other tools
+                world_x, world_y = camera.subsquare_to_world(sub_x, sub_y)
+                vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
+                rect = pygame.Rect(int(vp_x), int(vp_y), sub_size, sub_size)
+
+                # Draw filled semi-transparent highlight
+                highlight_surface = pygame.Surface((sub_size, sub_size), pygame.SRCALPHA)
+                highlight_surface.fill((*color, 60))  # Semi-transparent fill
+                surface.blit(highlight_surface, (int(vp_x), int(vp_y)))
+
+                # Draw solid border
+                pygame.draw.rect(surface, color, rect, 2)

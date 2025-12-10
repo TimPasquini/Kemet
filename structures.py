@@ -42,15 +42,24 @@ class Structure:
 
 
 def build_structure(state: "GameState", kind: str) -> None:
-    """Build a structure on current tile."""
+    """Build a structure at target tile."""
     kind = kind.lower()
     if kind not in STRUCTURE_COSTS:
         state.messages.append("Cannot build that.")
         return
 
-    pos = state.player
+    pos = state.get_action_target_tile()
+    tile = state.tiles[pos[0]][pos[1]]
+
+    # Validate build location
     if pos in state.structures:
-        state.messages.append("Tile already occupied.")
+        state.messages.append("Tile already has a structure.")
+        return
+    if tile.kind == "rock":
+        state.messages.append("Cannot build on rock.")
+        return
+    if tile.depot:
+        state.messages.append("Cannot build on depot.")
         return
 
     cost = STRUCTURE_COSTS[kind]

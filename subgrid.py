@@ -39,7 +39,7 @@ def tile_to_subgrid(tile_x: int, tile_y: int) -> Tuple[int, int]:
 
     Example: tile (2, 3) -> sub-square (6, 9)
     """
-    return (tile_x * SUBGRID_SIZE, tile_y * SUBGRID_SIZE)
+    return tile_x * SUBGRID_SIZE, tile_y * SUBGRID_SIZE
 
 
 def subgrid_to_tile(sub_x: int, sub_y: int) -> Tuple[int, int]:
@@ -47,7 +47,7 @@ def subgrid_to_tile(sub_x: int, sub_y: int) -> Tuple[int, int]:
 
     Example: sub-square (7, 10) -> tile (2, 3)
     """
-    return (sub_x // SUBGRID_SIZE, sub_y // SUBGRID_SIZE)
+    return sub_x // SUBGRID_SIZE, sub_y // SUBGRID_SIZE
 
 
 def get_subsquare_index(sub_x: int, sub_y: int) -> Tuple[int, int]:
@@ -55,7 +55,7 @@ def get_subsquare_index(sub_x: int, sub_y: int) -> Tuple[int, int]:
 
     Example: sub-square (7, 10) -> index (1, 1) within its tile
     """
-    return (sub_x % SUBGRID_SIZE, sub_y % SUBGRID_SIZE)
+    return sub_x % SUBGRID_SIZE, sub_y % SUBGRID_SIZE
 
 
 def tile_center_subsquare(tile_x: int, tile_y: int) -> Tuple[int, int]:
@@ -63,7 +63,7 @@ def tile_center_subsquare(tile_x: int, tile_y: int) -> Tuple[int, int]:
 
     Example: tile (2, 3) -> sub-square (7, 10) (center of 3x3)
     """
-    return (tile_x * SUBGRID_SIZE + 1, tile_y * SUBGRID_SIZE + 1)
+    return tile_x * SUBGRID_SIZE + 1, tile_y * SUBGRID_SIZE + 1
 
 
 # =============================================================================
@@ -141,7 +141,7 @@ def clamp_to_range(player_pos: Tuple[int, int], target_pos: Tuple[int, int],
     dy = target_pos[1] - player_pos[1]
     dx = max(-interaction_range, min(interaction_range, dx))
     dy = max(-interaction_range, min(interaction_range, dy))
-    return (player_pos[0] + dx, player_pos[1] + dy)
+    return player_pos[0] + dx, player_pos[1] + dy
 
 
 def clamp_to_bounds(pos: Tuple[int, int], width: int, height: int) -> Tuple[int, int]:
@@ -155,10 +155,7 @@ def clamp_to_bounds(pos: Tuple[int, int], width: int, height: int) -> Tuple[int,
     Returns:
         Position clamped to valid range
     """
-    return (
-        max(0, min(width - 1, pos[0])),
-        max(0, min(height - 1, pos[1]))
-    )
+    return max(0, min(width - 1, pos[0])), max(0, min(height - 1, pos[1]))
 
 
 # =============================================================================
@@ -191,7 +188,7 @@ def get_neighbor_coords(sub_x: int, sub_y: int,
     Returns:
         Neighboring sub-square world coords
     """
-    return (sub_x + direction[0], sub_y + direction[1])
+    return sub_x + direction[0], sub_y + direction[1]
 
 
 def is_on_range_edge(pos: Tuple[int, int], center: Tuple[int, int],

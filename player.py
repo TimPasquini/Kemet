@@ -15,7 +15,7 @@ Coordinate Systems:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Tuple
+from typing import Tuple, Callable
 
 from config import ACTION_DURATIONS, DIAGONAL_FACTOR, SUBGRID_SIZE, SUB_TILE_SIZE
 from subgrid import subgrid_to_tile
@@ -38,7 +38,6 @@ class PlayerState:
 
     action_timer: float = 0.0
     last_action: str = ""
-    last_rock_blocked: Point | None = None  # Tile coordinates
 
     @property
     def position(self) -> Point:
@@ -64,7 +63,7 @@ class PlayerState:
     @property
     def world_pixel_pos(self) -> Tuple[float, float]:
         """Get world position in pixels for rendering."""
-        return (self.smooth_x * SUB_TILE_SIZE, self.smooth_y * SUB_TILE_SIZE)
+        return self.smooth_x * SUB_TILE_SIZE, self.smooth_y * SUB_TILE_SIZE
 
     def start_action(self, action: str) -> bool:
         """Start an action if not busy."""
@@ -99,13 +98,13 @@ def update_player_movement(
     dt: float,
     world_width_subsquares: int,
     world_height_subsquares: int,
-    is_tile_blocked: callable,
+    is_tile_blocked: Callable[[int, int], bool],
 ) -> None:
     """
     Update player position based on velocity and collision.
 
     Movement is in sub-grid space. Velocity is in sub-squares per second.
-    Collision checking occurs at tile level.
+    Collision checking occurs at tile level with axis-separated sliding.
 
     Args:
         player_state: The player state to update
@@ -127,25 +126,31 @@ def update_player_movement(
         vx *= DIAGONAL_FACTOR
         vy *= DIAGONAL_FACTOR
 
-    # Calculate new position in sub-grid space
-    new_x = player_state.smooth_x + vx * dt
-    new_y = player_state.smooth_y + vy * dt
+    current_x = player_state.smooth_x
+    current_y = player_state.smooth_y
 
-    # Clamp to world bounds
+    # Try X movement first
+    new_x = current_x + vx * dt
     new_x = clamp(new_x, 0.5, world_width_subsquares - 0.5)
+
+    # Check X collision
+    x_tile = subgrid_to_tile(int(new_x), int(current_y))
+    current_tile = player_state.tile_position
+    if x_tile != current_tile and is_tile_blocked(x_tile[0], x_tile[1]):
+        new_x = current_x  # Block X movement
+    else:
+        current_x = new_x  # Accept X movement
+
+    # Try Y movement (using potentially updated X)
+    new_y = current_y + vy * dt
     new_y = clamp(new_y, 0.5, world_height_subsquares - 0.5)
 
-    # Get target tile for collision check
-    target_tile = subgrid_to_tile(int(new_x), int(new_y))
-    current_tile = player_state.tile_position
-
-    # Check for collision at tile level
-    if is_tile_blocked(target_tile[0], target_tile[1]):
-        if target_tile != current_tile:
-            if target_tile != player_state.last_rock_blocked:
-                player_state.last_rock_blocked = target_tile
-            return
+    # Check Y collision
+    y_tile = subgrid_to_tile(int(current_x), int(new_y))
+    current_tile = subgrid_to_tile(int(current_x), int(current_y))
+    if y_tile != current_tile and is_tile_blocked(y_tile[0], y_tile[1]):
+        new_y = current_y  # Block Y movement
 
     # Update smooth position
-    player_state.smooth_x = new_x
+    player_state.smooth_x = current_x
     player_state.smooth_y = new_y

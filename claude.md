@@ -1,5 +1,18 @@
 # Kemet - Project Context for Claude
 
+## ⚠️ URGENT - Known Bugs (Playtest Findings)
+
+These issues need immediate attention:
+
+1. **Soil profile meter** - Still doesn't show surface/sub-square profile, only simulation tile
+2. **Shovel actions operate at sim-tile scale** - dig/raise/lower use cursor target but modify entire simulation tile, not individual sub-squares
+3. **Structure builds at sim-tile scale** - Uses cursor selection but builds on simulation tile, not surface layer
+4. **Trench tool mismatch** - Uses sub-square selection UI but builds at simulation tile scale
+
+**Root cause:** Actions target cursor but game logic still operates on `Tile` objects (simulation scale), not `SubSquare` objects (surface scale). Need to refactor terrain modification and structure placement to work at sub-square resolution.
+
+---
+
 ## Project Vision
 
 Kemet is a terraforming simulation where:
@@ -171,7 +184,7 @@ kemet/
 
 ### Config
 ```python
-INTERACTION_RANGE = 6  # sub-squares (= 2 tiles at 3x3)
+INTERACTION_RANGE = 2  # sub-squares from player
 SUBGRID_SIZE = 3
 ```
 
@@ -226,7 +239,9 @@ def distribute_upward_seepage(tile, water_amount):
 
 ## Known Issues
 
-- **Player movement stuttery** - Movement feels choppy, needs review of update_player_movement()
+- **Wall sliding implemented** - Axis-separated collision now allows sliding along obstacles
+- **Building collision** - Player blocked by structures
+- **Left-click triggers tools** - Click in map area uses selected tool at cursor
 
 ---
 

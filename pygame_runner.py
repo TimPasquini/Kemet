@@ -175,11 +175,11 @@ def render_to_virtual_screen(
     # HUD
     render_hud(virtual_screen, font, state, sidebar_x, y_offset)
 
-    # Soil profile (show tile at player's current position)
+    # Soil profile (show tile at cursor target, or player position if no target)
     soil_x = ui_state.sidebar_rect.x + PROFILE_MARGIN
     soil_y = 180  # Below HUD
-    px, py = state.player_state.tile_position
-    render_soil_profile(virtual_screen, font, state.tiles[px][py], (soil_x, soil_y), PROFILE_WIDTH, PROFILE_HEIGHT - 22)
+    profile_tile_pos = state.target_tile if state.target_tile else state.player_state.tile_position
+    render_soil_profile(virtual_screen, font, state.tiles[profile_tile_pos[0]][profile_tile_pos[1]], (soil_x, soil_y), PROFILE_WIDTH, PROFILE_HEIGHT - 22)
 
     # Inventory
     inv_w, inv_h = 180, 140
@@ -225,10 +225,20 @@ def blit_virtual_to_screen(virtual_screen: pygame.Surface, screen: pygame.Surfac
     screen.blit(scaled, (offset_x, offset_y))
 
 
-def issue(state: GameState, cmd: str, args: List[str]) -> None:
-    """Issues a command and sets the player's action timer."""
+def issue(state: GameState, cmd: str, args: List[str], target_subsquare: Optional[Tuple[int, int]] = None) -> None:
+    """Issues a command and sets the player's action timer.
+
+    Args:
+        state: Game state
+        cmd: Command to execute
+        args: Command arguments
+        target_subsquare: Target position in sub-grid coords (or None for player position)
+    """
     if state.is_busy():
         return
+
+    # Set target for action
+    state.set_target(target_subsquare)
 
     if cmd == "end":
         end_day(state)
@@ -343,6 +353,14 @@ def run(tile_size: int = TILE_SIZE) -> None:
                         else:
                             toolbar.close_menu()
                             toolbar.select_by_number(slot + 1)
+                    elif ui_state.map_rect.collidepoint(virtual_pos):
+                        # Left click in map area - trigger selected tool
+                        tool = toolbar.get_selected_tool()
+                        if tool:
+                            action, args = tool.get_action()
+                            issue(state, action, args, ui_state.target_subsquare)
+                            if action in ("terrain", "raise", "lower"):
+                                elevation_range = calculate_elevation_range(state)
 
                 # Right click
                 elif event.button == 3:
@@ -396,12 +414,12 @@ def run(tile_size: int = TILE_SIZE) -> None:
                     else:
                         state.messages.append("This tool has no options.")
                 elif event.key == INTERACT_KEY:
-                    issue(state, "collect", [])
+                    issue(state, "collect", [], ui_state.target_subsquare)
                 elif event.key == USE_TOOL_KEY:
                     tool = toolbar.get_selected_tool()
                     if tool:
                         action, args = tool.get_action()
-                        issue(state, action, args)
+                        issue(state, action, args, ui_state.target_subsquare)
                         if action in ("terrain", "raise", "lower"):
                             elevation_range = calculate_elevation_range(state)
 
@@ -419,7 +437,12 @@ def run(tile_size: int = TILE_SIZE) -> None:
                 vx += move_speed_subsquares
 
             def is_blocked(tx: int, ty: int) -> bool:
-                return state.tiles[tx][ty].kind == "rock"
+                # Block on rock tiles and structures
+                if state.tiles[tx][ty].kind == "rock":
+                    return True
+                if (tx, ty) in state.structures:
+                    return True
+                return False
 
             update_player_movement(
                 state.player_state, (vx, vy), dt,
@@ -440,6 +463,8 @@ def run(tile_size: int = TILE_SIZE) -> None:
             world_sub_width,
             world_sub_height,
         )
+        # Sync target to game state for rendering and commands
+        state.set_target(ui_state.target_subsquare)
 
         # Simulation tick
         tick_timer = getattr(state, '_tick_timer', 0.0) + dt
