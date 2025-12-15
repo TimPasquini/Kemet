@@ -39,6 +39,7 @@ RAIN_WELLSPRING_MULTIPLIER = 150  # Percentage boost to wellsprings during rain
 # =============================================================================
 # Flow rates (as percentages: 0-100)
 SURFACE_FLOW_RATE = 50       # Fast surface flow (50% per tick)
+SURFACE_SEEPAGE_RATE = 15    # Surface water seeping into soil (15% per tick)
 SUBSURFACE_FLOW_RATE = 8     # Slow subsurface flow (8% per tick)
 OVERFLOW_FLOW_RATE = 90      # Overflow is rapid, high-pressure
 VERTICAL_SEEPAGE_RATE = 30   # Vertical seepage speed (30% per tick)

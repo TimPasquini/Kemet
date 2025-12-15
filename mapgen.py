@@ -46,11 +46,13 @@ class TileType:
 
 
 TILE_TYPES: Dict[str, TileType] = {
-    "dune": TileType("dune", ".", evap=12, capacity=60, retention=5),
-    "flat": TileType("flat", ",", evap=9, capacity=90, retention=8),
-    "wadi": TileType("wadi", "w", evap=5, capacity=140, retention=20),
-    "rock": TileType("rock", "^", evap=6, capacity=50, retention=2),
-    "salt": TileType("salt", "_", evap=14, capacity=70, retention=3),
+    # Evap rates reduced ~10x for realistic water persistence
+    # At heat=100, evap per sub-square per tick: dune=1, flat=1, wadi=0, rock=1, salt=1
+    "dune": TileType("dune", ".", evap=1, capacity=60, retention=5),
+    "flat": TileType("flat", ",", evap=1, capacity=90, retention=8),
+    "wadi": TileType("wadi", "w", evap=0, capacity=140, retention=20),  # Wadis retain water well
+    "rock": TileType("rock", "^", evap=1, capacity=50, retention=2),
+    "salt": TileType("salt", "_", evap=2, capacity=70, retention=3),   # Salt flats dry fastest
 }
 
 
@@ -289,10 +291,11 @@ def _generate_wellsprings(tiles: List[List[Tile]], width: int, height: int) -> N
     lowland_candidates = all_tiles[:lowland_count]
     px, py, _ = random.choice(lowland_candidates)
     tiles[px][py].kind = "wadi"
-    tiles[px][py].wellspring_output = random.randint(8, 12)
-    tiles[px][py].water.add_layer_water(SoilLayer.REGOLITH, 100)
+    # Primary wellspring: strong output to create visible water pooling
+    tiles[px][py].wellspring_output = random.randint(40, 60)
+    tiles[px][py].water.add_layer_water(SoilLayer.REGOLITH, 200)
     # Distribute initial surface water to sub-squares
-    _distribute_water_to_subgrid(tiles[px][py], 80)
+    _distribute_water_to_subgrid(tiles[px][py], 200)
 
     # Secondary wellsprings
     secondary_count = random.randint(1, 2)
@@ -303,10 +306,11 @@ def _generate_wellsprings(tiles: List[List[Tile]], width: int, height: int) -> N
         # Don't place on existing wellspring or map center (depot location)
         if tiles[sx][sy].wellspring_output > 0 or (sx, sy) == (width // 2, height // 2):
             continue
-        tiles[sx][sy].wellspring_output = random.randint(2, 6)
-        tiles[sx][sy].water.add_layer_water(SoilLayer.REGOLITH, 30)
+        # Secondary wellsprings: moderate output
+        tiles[sx][sy].wellspring_output = random.randint(15, 30)
+        tiles[sx][sy].water.add_layer_water(SoilLayer.REGOLITH, 100)
         # Distribute initial surface water to sub-squares
-        _distribute_water_to_subgrid(tiles[sx][sy], 20)
+        _distribute_water_to_subgrid(tiles[sx][sy], 80)
         placed += 1
 
 

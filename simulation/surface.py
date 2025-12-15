@@ -15,8 +15,8 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import TYPE_CHECKING, Dict, List, Tuple
 
-from config import SUBGRID_SIZE, SURFACE_FLOW_RATE, SURFACE_FLOW_THRESHOLD
-from subgrid import NEIGHBORS_8, get_subsquare_index
+from config import SUBGRID_SIZE, SURFACE_FLOW_RATE, SURFACE_FLOW_THRESHOLD, SURFACE_SEEPAGE_RATE
+from subgrid import NEIGHBORS_8, get_subsquare_index, get_subsquare_terrain
 
 if TYPE_CHECKING:
     from mapgen import Tile
@@ -138,6 +138,69 @@ def simulate_surface_flow(
         tile = tiles[tile_x][tile_y]
         subsquare = tile.subgrid[local_x][local_y]
         subsquare.surface_water = max(0, subsquare.surface_water + delta)
+
+
+def simulate_surface_seepage(
+    tiles: List[List["Tile"]],
+    width: int,
+    height: int,
+) -> None:
+    """Simulate surface water seeping into the topmost soil layer.
+
+    Water on each sub-square seeps down into the tile's soil based on
+    the permeability of the exposed material.
+
+    Args:
+        tiles: 2D list of tiles [x][y]
+        width: Map width in tiles
+        height: Map height in tiles
+    """
+    from ground import MATERIAL_LIBRARY, SoilLayer
+
+    for tile_x in range(width):
+        for tile_y in range(height):
+            tile = tiles[tile_x][tile_y]
+
+            # Get the topmost soil layer for this tile
+            exposed_layer = tile.terrain.get_exposed_layer()
+            if exposed_layer == SoilLayer.BEDROCK:
+                continue  # Can't seep into bedrock
+
+            material = tile.terrain.get_layer_material(exposed_layer)
+            props = MATERIAL_LIBRARY.get(material)
+            if not props or props.permeability_vertical <= 0:
+                continue
+
+            # Calculate capacity remaining in the topmost layer
+            max_storage = tile.terrain.get_max_water_storage(exposed_layer)
+            current_water = tile.water.get_layer_water(exposed_layer)
+            available_capacity = max_storage - current_water
+
+            if available_capacity <= 0:
+                continue  # Layer is saturated
+
+            # Process each sub-square
+            for row in tile.subgrid:
+                for subsquare in row:
+                    if subsquare.surface_water <= 0:
+                        continue
+
+                    # Calculate seepage amount based on permeability
+                    seep_rate = (SURFACE_SEEPAGE_RATE * props.permeability_vertical) // 100
+                    seep_amount = (subsquare.surface_water * seep_rate) // 100
+
+                    # Cap at available capacity (shared across all sub-squares)
+                    seep_amount = min(seep_amount, available_capacity)
+
+                    if seep_amount > 0:
+                        subsquare.surface_water -= seep_amount
+                        tile.water.add_layer_water(exposed_layer, seep_amount)
+                        available_capacity -= seep_amount
+
+                    if available_capacity <= 0:
+                        break
+                if available_capacity <= 0:
+                    break
 
 
 def get_tile_surface_water(tile: "Tile") -> int:

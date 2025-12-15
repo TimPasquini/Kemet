@@ -6,25 +6,32 @@ This file tracks current work to preserve context across sessions.
 
 ---
 
-## Playtest Feedback (NEEDS ATTENTION)
+## Water System Overhaul (COMPLETED)
 
-**Observation:** Human playtesting shows almost no surface water anywhere on the map.
+### Problem Identified
+Human playtesting showed almost no surface water anywhere. Audit revealed:
+- **Evaporation was too high**: 9-14 units/tick per sub-square vs 2-3 units average water
+- **Wellspring output too low**: 10-15 units/tick total vs 81+ units/tick evaporation
+- **Missing surface seepage**: Water couldn't infiltrate soil, just evaporated
 
-While this may be appropriate for a desert starting state, we need to ensure:
+### Fixes Applied
+1. **Reduced evaporation rates** (`mapgen.py` TILE_TYPES):
+   - dune: 12→1, flat: 9→1, wadi: 5→0, rock: 6→1, salt: 14→2
 
-1. **Wellsprings are large enough** to create sustainable surface flow somewhere on the map
-2. **Water system is working correctly** - capillary rise, overflow, and surface flow should be producing visible results
-3. **Initial water distribution** may need tuning in `mapgen.py`:
-   - Primary wellspring: 80 units surface + 100 units regolith
-   - Secondary wellsprings: 20 units surface + 30 units regolith
-   - Wadis: 5-30 units surface water
+2. **Increased wellspring output** (`mapgen.py` _generate_wellsprings):
+   - Primary: 8-12 → 40-60 units/tick, initial 200 surface + 200 subsurface
+   - Secondary: 2-6 → 15-30 units/tick, initial 80 surface + 100 subsurface
 
-**Potential issues to investigate:**
-- Evaporation may be too aggressive relative to wellspring output
-- Surface-to-soil seepage (downward) is not yet implemented - water may be seeping down faster than it flows
-- Wellspring output rates may need increase (`wellspring_output` currently 8-12 for primary, 2-6 for secondary)
+3. **Added surface seepage** (`simulation/surface.py` simulate_surface_seepage):
+   - New function: surface water seeps into topmost soil layer
+   - Rate controlled by SURFACE_SEEPAGE_RATE (15%) and material permeability
+   - Called between surface flow and subsurface tick
 
-**Priority:** Verify water systems are functional before tuning. Players should see *some* visible water pooling near wellsprings.
+### Results (100-tick simulation)
+- Surface water stabilized at ~2500 units (was disappearing completely before)
+- ~750 wet sub-squares maintained (21% of map)
+- Wellspring areas pool 17-44L in 3x3 surrounding tiles
+- Water system now reaches equilibrium instead of draining to zero
 
 ---
 

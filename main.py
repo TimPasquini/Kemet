@@ -43,7 +43,7 @@ from structures import (
     build_structure,
     tick_structures,
 )
-from simulation.surface import simulate_surface_flow, get_tile_surface_water
+from simulation.surface import simulate_surface_flow, simulate_surface_seepage, get_tile_surface_water
 from simulation.subsurface import simulate_subsurface_tick, apply_tile_evaporation
 from weather import WeatherSystem
 
@@ -329,11 +329,14 @@ def simulate_tick(state: GameState) -> None:
     # Phase 1: Surface flow at sub-grid resolution
     simulate_surface_flow(state.tiles, state.width, state.height)
 
-    # Phase 2: Subsurface flow at tile resolution
+    # Phase 2: Surface seepage into soil
+    simulate_surface_seepage(state.tiles, state.width, state.height)
+
+    # Phase 3: Subsurface flow at tile resolution
     # (includes wellspring output, vertical seepage, horizontal subsurface flow)
     simulate_subsurface_tick(state)
 
-    # Phase 3: Evaporation (applied to sub-squares)
+    # Phase 4: Evaporation (applied to sub-squares)
     apply_tile_evaporation(state)
 
 
