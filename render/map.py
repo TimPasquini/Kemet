@@ -108,15 +108,21 @@ def render_map_viewport(
                 rect = pygame.Rect(int(vp_x), int(vp_y), tile_size - 1, tile_size - 1)
                 pygame.draw.rect(surface, (80, 80, 60), rect.inflate(-TRENCH_INSET, -TRENCH_INSET))
 
-    # Draw structures (only visible ones)
-    for (sx, sy), structure in state.structures.items():
-        if not camera.is_tile_visible(sx, sy):
+    # Draw structures (keyed by sub-square coords, rendered at sub-square position)
+    sub_size = tile_size // SUBGRID_SIZE
+    for (sub_x, sub_y), structure in state.structures.items():
+        # Convert sub-square to tile for visibility check
+        tile_x, tile_y = subgrid_to_tile(sub_x, sub_y)
+        if not camera.is_tile_visible(tile_x, tile_y):
             continue
-        world_x, world_y = camera.tile_to_world(sx, sy)
+        # Get world position for sub-square (using sub-square coords directly)
+        world_x = sub_x * sub_size
+        world_y = sub_y * sub_size
         vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
-        rect = pygame.Rect(int(vp_x), int(vp_y), tile_size - 1, tile_size - 1)
-        pygame.draw.rect(surface, (30, 30, 30), rect.inflate(-STRUCTURE_INSET, -STRUCTURE_INSET))
-        draw_text(surface, font, structure.kind[0].upper(), (rect.x + 18, rect.y + 12))
+        rect = pygame.Rect(int(vp_x), int(vp_y), sub_size - 1, sub_size - 1)
+        pygame.draw.rect(surface, (30, 30, 30), rect.inflate(-2, -2))
+        # Draw structure initial centered in sub-square
+        draw_text(surface, font, structure.kind[0].upper(), (rect.x + sub_size // 3, rect.y + sub_size // 4))
 
     # Draw special features (wellsprings, depots) - only visible tiles
     for ty in range(start_ty, end_ty):
@@ -271,12 +277,12 @@ def get_tool_highlight_color(
     tool_id = tool.id.lower()
 
     if tool_id == "build":
-        # Check if target tile is valid for building
+        # Check if target sub-square is valid for building
         tile_x, tile_y = subgrid_to_tile(*target_subsquare)
         if 0 <= tile_x < state.width and 0 <= tile_y < state.height:
             tile = state.tiles[tile_x][tile_y]
-            # Invalid if: has structure, is rock, is depot
-            if (tile_x, tile_y) in state.structures or tile.kind == "rock" or tile.depot:
+            # Invalid if: sub-square has structure, tile is rock, or tile is depot
+            if target_subsquare in state.structures or tile.kind == "rock" or tile.depot:
                 return HIGHLIGHT_COLORS["build_invalid"]
         return HIGHLIGHT_COLORS["build"]
 

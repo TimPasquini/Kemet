@@ -4,12 +4,27 @@
 
 These issues need immediate attention:
 
-1. **Soil profile meter** - Still doesn't show surface/sub-square profile, only simulation tile
-2. **Shovel actions operate at sim-tile scale** - dig/raise/lower use cursor target but modify entire simulation tile, not individual sub-squares
-3. **Structure builds at sim-tile scale** - Uses cursor selection but builds on simulation tile, not surface layer
-4. **Trench tool mismatch** - Uses sub-square selection UI but builds at simulation tile scale
+1. ~~**Soil profile meter** - Still doesn't show surface/sub-square profile, only simulation tile~~ **FIXED** - Now uses `get_subsquare_terrain()` for correct sub-square display
+2. ~~**Shovel actions operate at sim-tile scale** - dig/raise/lower use cursor target but modify entire simulation tile, not individual sub-squares~~ **FIXED** - Uses `get_target_tile_and_subsquare()` and `ensure_terrain_override()`
+3. ~~**Structure builds at sim-tile scale** - Uses cursor selection at simulation scale and builds on simulation tile, should be surface layer for both~~ **FIXED** - Uses `get_action_target_subsquare()`, stores by sub-square coords
+4. ~~**Trench tool mismatch** - Uses sub-square selection UI but builds at simulation tile scale~~ **FIXED** - Uses `get_target_tile_and_subsquare()` to modify `subsquare.has_trench`
 
-**Root cause:** Actions target cursor but game logic still operates on `Tile` objects (simulation scale), not `SubSquare` objects (surface scale). Need to refactor terrain modification and structure placement to work at sub-square resolution.
+5. **Stuttery** - Moving over simulation tile thresholds seems to happen a hair slower than regular movement creating a stuttery experience, This is worse when the movement also induces camera movement
+
+**Root cause** Not yet investigated. Code analysis found potential causes: per-frame Surface allocations in water rendering, `pygame.transform.scale()` every frame. Needs runtime profiling.
+
+6. **Navigation** - It's getting hard to figure out where the depot is, we need to add a minimap.
+7. **UI proportions off** - We can probably re-examine the proportions for the information displays, especially considering a map being added. Environment, Current Tile, and Inventory are not in a clean column
+8. **Dead Space** - There is a lot of UI deadspace and the map feels a little crowded because of it. Consider shifting to more of a HUD overlying the full canvas map area. Windows floating over the map, some transparent and some not
+9. **No clock** - It's hard to tell how far through the day it is.
+
+**Root cause** - Ad hoc development of UI over time. Underlying UI system was refactored and built out but actual layout and proportions were never addressed
+
+## **CRITICAL ARCHITECTURE CHANGES**
+
+With the surface, subterranean, and planned atmospheric layers and water logic long postponed, we need to clean up the layer architecture to avoid building on unresolved technical debt. A unified abstract layer system should define all soil and environmental sub-layers in a single framework. This allows shared rules with custom behavior per layer. Meta-group tags like “surface” for atmosphere, organics, and top-soil or “underground” for deeper strata should function only as labels, not containers. Any layer must be able to serve as the top layer of a player-scale subtile, render as such, and define its behavior relative to neighboring top layers.
+
+When planning, we should identify all shared behavior between the existing surface and subsurface systems. We should also review the subsurface sub-layers to determine which traits and behaviors already exist or should exist, and which of those need dedicated support in the unified layer system.
 
 ---
 
@@ -234,14 +249,6 @@ def distribute_upward_seepage(tile, water_amount):
     # Weight by inverse elevation - lower sub-squares get more
     weight = 1.0 / (sub.elevation_offset + 0.1)
 ```
-
----
-
-## Known Issues
-
-- **Wall sliding implemented** - Axis-separated collision now allows sliding along obstacles
-- **Building collision** - Player blocked by structures
-- **Left-click triggers tools** - Click in map area uses selected tool at cursor
 
 ---
 

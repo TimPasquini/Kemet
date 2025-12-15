@@ -112,8 +112,9 @@ class Tile:
 
     @property
     def hydration(self) -> float:
-        """Total water in liters."""
-        return self.water.total_water() / 10.0
+        """Total water in liters (surface + subsurface)."""
+        surface = sum(ss.surface_water for row in self.subgrid for ss in row)
+        return (surface + self.water.total_subsurface_water()) / 10.0
 
     @property
     def trench(self) -> bool:
@@ -144,9 +145,15 @@ class Tile:
 # Biome Calculation
 # =============================================================================
 
+def _get_tile_total_water(tile: Tile) -> int:
+    """Get total water (surface + subsurface) for a tile."""
+    surface = sum(ss.surface_water for row in tile.subgrid for ss in row)
+    return surface + tile.water.total_subsurface_water()
+
+
 def update_moisture_history(tile: Tile) -> None:
     """Track moisture over time for biome calculations."""
-    tile.moisture_history.append(tile.water.total_water())
+    tile.moisture_history.append(_get_tile_total_water(tile))
     if len(tile.moisture_history) > MOISTURE_HISTORY_MAX:
         tile.moisture_history.pop(0)
 
@@ -154,7 +161,7 @@ def update_moisture_history(tile: Tile) -> None:
 def get_average_moisture(tile: Tile) -> float:
     """Get average moisture over recent history."""
     if not tile.moisture_history:
-        return float(tile.water.total_water())
+        return float(_get_tile_total_water(tile))
     return sum(tile.moisture_history) / len(tile.moisture_history)
 
 
@@ -284,7 +291,8 @@ def _generate_wellsprings(tiles: List[List[Tile]], width: int, height: int) -> N
     tiles[px][py].kind = "wadi"
     tiles[px][py].wellspring_output = random.randint(8, 12)
     tiles[px][py].water.add_layer_water(SoilLayer.REGOLITH, 100)
-    tiles[px][py].water.surface_water = 80
+    # Distribute initial surface water to sub-squares
+    _distribute_water_to_subgrid(tiles[px][py], 80)
 
     # Secondary wellsprings
     secondary_count = random.randint(1, 2)
@@ -297,7 +305,8 @@ def _generate_wellsprings(tiles: List[List[Tile]], width: int, height: int) -> N
             continue
         tiles[sx][sy].wellspring_output = random.randint(2, 6)
         tiles[sx][sy].water.add_layer_water(SoilLayer.REGOLITH, 30)
-        tiles[sx][sy].water.surface_water = 20
+        # Distribute initial surface water to sub-squares
+        _distribute_water_to_subgrid(tiles[sx][sy], 20)
         placed += 1
 
 
@@ -394,27 +403,25 @@ def generate_map(width: int, height: int) -> List[List[Tile]]:
     # Add wellsprings
     _generate_wellsprings(tiles, width, height)
 
-    # Add surface water to wadis and distribute to sub-squares
+    # Add surface water to wadis (distributed directly to sub-squares)
     for x in range(width):
         for y in range(height):
             tile = tiles[x][y]
             if tile.kind == "wadi":
-                tile.water.surface_water += random.randint(5, 30)
-
-            # Distribute any tile surface water to sub-squares
-            if tile.water.surface_water > 0:
-                _distribute_surface_water_to_subgrid(tile)
+                _distribute_water_to_subgrid(tile, random.randint(5, 30))
 
     return tiles
 
 
-def _distribute_surface_water_to_subgrid(tile: Tile) -> None:
-    """Distribute tile's surface water to sub-squares by elevation.
+def _distribute_water_to_subgrid(tile: Tile, amount: int) -> None:
+    """Distribute water to a tile's sub-squares by elevation.
 
-    Lower sub-squares receive more water (natural pooling).
-    Clears the tile's WaterColumn.surface_water after distribution.
+    Lower sub-squares receive more water (natural pooling behavior).
+
+    Args:
+        tile: Tile to distribute water to
+        amount: Amount of water to distribute
     """
-    amount = tile.water.surface_water
     if amount <= 0:
         return
 
@@ -440,6 +447,3 @@ def _distribute_surface_water_to_subgrid(tile: Tile) -> None:
 
         tile.subgrid[lx][ly].surface_water += max(0, portion)
         distributed += portion
-
-    # Clear tile-level surface water (now in sub-squares)
-    tile.water.surface_water = 0

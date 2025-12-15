@@ -24,6 +24,12 @@ from ground import (
     elevation_to_units,
     units_to_meters,
 )
+from subgrid import (
+    subgrid_to_tile,
+    get_subsquare_index,
+    ensure_terrain_override,
+    get_subsquare_terrain,
+)
 from mapgen import (
     Tile,
     TILE_TYPES,
@@ -86,7 +92,6 @@ class GameState:
 
     def set_target(self, subsquare: Point | None) -> None:
         """Set the target for actions from UI cursor tracking."""
-        from subgrid import subgrid_to_tile
         self.target_subsquare = subsquare
         if subsquare is not None:
             self.target_tile = subgrid_to_tile(subsquare[0], subsquare[1])
@@ -96,6 +101,24 @@ class GameState:
     def get_action_target_tile(self) -> Point:
         """Get the tile to target for actions (cursor target or player position)."""
         return self.target_tile if self.target_tile is not None else self.player
+
+    def get_action_target_subsquare(self) -> Point:
+        """Get the sub-square to target for actions (cursor target or player position)."""
+        return self.target_subsquare if self.target_subsquare is not None else self.player_subsquare
+
+    def get_target_tile_and_subsquare(self) -> tuple[Tile, "SubSquare", Point]:
+        """Get the tile, sub-square, and local index for the current action target.
+
+        Returns:
+            (tile, subsquare, (local_x, local_y)) for the targeted sub-square
+        """
+        from subgrid import SubSquare  # Import here to avoid circular imports
+        sub_pos = self.get_action_target_subsquare()
+        tile_pos = subgrid_to_tile(sub_pos[0], sub_pos[1])
+        local_x, local_y = get_subsquare_index(sub_pos[0], sub_pos[1])
+        tile = self.tiles[tile_pos[0]][tile_pos[1]]
+        subsquare = tile.subgrid[local_x][local_y]
+        return tile, subsquare, (local_x, local_y)
 
     # === Weather convenience properties ===
     @property
@@ -169,13 +192,13 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
 
 
 def dig_trench(state: GameState) -> None:
-    tx, ty = state.get_action_target_tile()
-    tile = state.tiles[tx][ty]
-    if tile.surface.has_trench:
+    tile, subsquare, _ = state.get_target_tile_and_subsquare()
+    if subsquare.has_trench:
         state.messages.append("Already trenched.")
         return
-    tile.surface.has_trench = True
-    tile.water.surface_water = max(tile.water.surface_water - 10, 0)
+    subsquare.has_trench = True
+    # Remove some surface water from this sub-square when digging
+    subsquare.surface_water = max(subsquare.surface_water - 10, 0)
     state.messages.append("Dug a trench; flow improves, evap drops here.")
 
 
@@ -192,26 +215,40 @@ def terrain_action(state: GameState, action: str) -> None:
 
 
 def lower_ground(state: GameState) -> None:
-    tx, ty = state.get_action_target_tile()
-    tile = state.tiles[tx][ty]
-    for layer, name in [(SoilLayer.TOPSOIL, "topsoil"), (SoilLayer.ELUVIATION, "eluviation"),
-                        (SoilLayer.SUBSOIL, "subsoil")]:
-        if tile.terrain.get_layer_depth(layer) > MIN_LAYER_THICKNESS:
-            removed = tile.terrain.remove_material_from_layer(layer, 2)
-            state.messages.append(f"Removed {units_to_meters(removed):.2f}m {name}. Elev: {tile.elevation:.2f}m")
-            return
-    state.messages.append("Can't dig further - regolith/bedrock too close!")
+    tile, subsquare, _ = state.get_target_tile_and_subsquare()
+    # Get or create terrain override for this sub-square
+    terrain = ensure_terrain_override(subsquare, tile.terrain)
+    # Find the exposed layer and remove from it
+    exposed = terrain.get_exposed_layer()
+    if exposed == SoilLayer.BEDROCK:
+        state.messages.append("Can't dig further - hit bedrock!")
+        return
+    if exposed == SoilLayer.REGOLITH:
+        state.messages.append("Can't dig further - regolith too hard!")
+        return
+    if terrain.get_layer_depth(exposed) <= MIN_LAYER_THICKNESS:
+        state.messages.append("Layer too thin to dig more.")
+        return
+    removed = terrain.remove_material_from_layer(exposed, 2)
+    material_name = terrain.get_layer_material(exposed)
+    new_elev = units_to_meters(terrain.get_surface_elevation()) + subsquare.elevation_offset
+    state.messages.append(f"Removed {units_to_meters(removed):.2f}m {material_name}. Elev: {new_elev:.2f}m")
 
 
 def raise_ground(state: GameState) -> None:
     if state.inventory.scrap < 1:
         state.messages.append("Need 1 scrap to raise ground.")
         return
-    tx, ty = state.get_action_target_tile()
-    tile = state.tiles[tx][ty]
+    tile, subsquare, _ = state.get_target_tile_and_subsquare()
+    # Get or create terrain override for this sub-square
+    terrain = ensure_terrain_override(subsquare, tile.terrain)
     state.inventory.scrap -= 1
-    tile.terrain.add_material_to_layer(SoilLayer.TOPSOIL, 2)
-    state.messages.append(f"Added topsoil (cost 1 scrap). Elev: {tile.elevation:.2f}m")
+    # Add to exposed layer (which becomes the new surface)
+    exposed = terrain.get_exposed_layer()
+    terrain.add_material_to_layer(exposed, 2)
+    material_name = terrain.get_layer_material(exposed)
+    new_elev = units_to_meters(terrain.get_surface_elevation()) + subsquare.elevation_offset
+    state.messages.append(f"Added {material_name} (cost 1 scrap). Elev: {new_elev:.2f}m")
 
 
 def collect_water(state: GameState) -> None:
@@ -319,9 +356,10 @@ def show_status(state: GameState) -> None:
 
 
 def survey_tile(state: GameState) -> None:
+    tile, subsquare, _ = state.get_target_tile_and_subsquare()
     x, y = state.get_action_target_tile()
-    tile = state.tiles[x][y]
-    structure = state.structures.get((x, y))
+    sub_pos = state.get_action_target_subsquare()
+    structure = state.structures.get(sub_pos)
 
     # Get total surface water from sub-squares
     surface_water = get_tile_surface_water(tile)
@@ -334,7 +372,7 @@ def survey_tile(state: GameState) -> None:
     desc.append(f"organics={units_to_meters(tile.terrain.organics_depth):.1f}m")
     if tile.wellspring_output > 0:
         desc.append(f"wellspring={tile.wellspring_output / 10:.2f}L/t")
-    if tile.surface.has_trench:
+    if subsquare.has_trench:
         desc.append("trench")
     if structure:
         desc.append(f"struct={structure.kind}")

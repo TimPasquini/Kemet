@@ -70,6 +70,7 @@ from config import (
     FONT_SIZE,
     SUBGRID_SIZE,
 )
+from subgrid import subgrid_to_tile, get_subsquare_index
 from render import (
     calculate_elevation_range,
     render_map_viewport,
@@ -175,11 +176,15 @@ def render_to_virtual_screen(
     # HUD
     render_hud(virtual_screen, font, state, sidebar_x, y_offset)
 
-    # Soil profile (show tile at cursor target, or player position if no target)
+    # Soil profile (show sub-square at cursor target, or player position if no target)
     soil_x = ui_state.sidebar_rect.x + PROFILE_MARGIN
     soil_y = 180  # Below HUD
-    profile_tile_pos = state.target_tile if state.target_tile else state.player_state.tile_position
-    render_soil_profile(virtual_screen, font, state.tiles[profile_tile_pos[0]][profile_tile_pos[1]], (soil_x, soil_y), PROFILE_WIDTH, PROFILE_HEIGHT - 22)
+    profile_sub_pos = state.target_subsquare if state.target_subsquare else state.player_state.position
+    profile_tile_pos = subgrid_to_tile(profile_sub_pos[0], profile_sub_pos[1])
+    profile_tile = state.tiles[profile_tile_pos[0]][profile_tile_pos[1]]
+    local_x, local_y = get_subsquare_index(profile_sub_pos[0], profile_sub_pos[1])
+    profile_subsquare = profile_tile.subgrid[local_x][local_y]
+    render_soil_profile(virtual_screen, font, profile_tile, profile_subsquare, (soil_x, soil_y), PROFILE_WIDTH, PROFILE_HEIGHT - 22)
 
     # Inventory
     inv_w, inv_h = 180, 140
@@ -437,11 +442,15 @@ def run(tile_size: int = TILE_SIZE) -> None:
                 vx += move_speed_subsquares
 
             def is_blocked(tx: int, ty: int) -> bool:
-                # Block on rock tiles and structures
+                # Block on rock tiles
                 if state.tiles[tx][ty].kind == "rock":
                     return True
-                if (tx, ty) in state.structures:
-                    return True
+                # Check if any sub-square in this tile has a structure
+                tile = state.tiles[tx][ty]
+                for row in tile.subgrid:
+                    for subsquare in row:
+                        if subsquare.structure_id is not None:
+                            return True
                 return False
 
             update_player_movement(

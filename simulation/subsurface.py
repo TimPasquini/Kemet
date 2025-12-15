@@ -50,6 +50,7 @@ def simulate_subsurface_tick(state: "GameState") -> None:
         state: Game state with tiles and structures
     """
     # 1. Add water from wellsprings and simulate vertical seepage
+    capillary_rises: dict[tuple[int, int], int] = {}
     for x in range(state.width):
         for y in range(state.height):
             tile = state.tiles[x][y]
@@ -61,7 +62,11 @@ def simulate_subsurface_tick(state: "GameState") -> None:
                 tile.water.add_layer_water(SoilLayer.REGOLITH, gain)
 
             # Vertical seepage within the tile
-            simulate_vertical_seepage(tile.terrain, tile.water)
+            # Pass current surface water total for capillary rise check
+            surface_water = get_tile_surface_water(tile)
+            capillary = simulate_vertical_seepage(tile.terrain, tile.water, surface_water)
+            if capillary > 0:
+                capillary_rises[(x, y)] = capillary
 
     # 2. Create snapshot for horizontal flow calculations
     tiles_data = [
@@ -92,12 +97,16 @@ def simulate_subsurface_tick(state: "GameState") -> None:
         if amount > 0:
             distribute_upward_seepage(state.tiles[x][y], amount)
 
+    # 7. Apply capillary rise to surface (distribute to sub-squares)
+    for (x, y), amount in capillary_rises.items():
+        distribute_upward_seepage(state.tiles[x][y], amount)
+
 
 def apply_tile_evaporation(state: "GameState") -> None:
     """Apply evaporation to surface water on sub-squares.
 
     Evaporation is calculated at tile level but applied to sub-squares
-    proportionally based on their current water content.
+    with per-sub-square modifiers (trenches reduce evaporation).
 
     Args:
         state: Game state with tiles and structures
@@ -106,37 +115,48 @@ def apply_tile_evaporation(state: "GameState") -> None:
         for y in range(state.height):
             tile = state.tiles[x][y]
 
-            # Calculate tile-level evaporation rate
+            # Calculate tile-level base evaporation rate
             base_evap = (TILE_TYPES[tile.kind].evap * state.heat) // 100
 
-            # Modifiers
-            if tile.surface.has_trench:
-                base_evap = (base_evap * TRENCH_EVAP_REDUCTION) // 100
+            # Check for cisterns in any sub-square of this tile
+            # Structures are now keyed by sub-square coords
+            has_cistern = False
+            for row in tile.subgrid:
+                for subsquare in row:
+                    if subsquare.structure_id is not None:
+                        # Find structure by checking all structures (could optimize later)
+                        for sub_pos, struct in state.structures.items():
+                            from subgrid import subgrid_to_tile
+                            if subgrid_to_tile(sub_pos[0], sub_pos[1]) == (x, y):
+                                if struct.kind == "cistern":
+                                    has_cistern = True
+                                    break
+                    if has_cistern:
+                        break
+                if has_cistern:
+                    break
 
-            if (x, y) in state.structures:
-                if state.structures[(x, y)].kind == "cistern":
-                    base_evap = (base_evap * CISTERN_EVAP_REDUCTION) // 100
+            if has_cistern:
+                base_evap = (base_evap * CISTERN_EVAP_REDUCTION) // 100
 
             # Apply retention
             retention = TILE_TYPES[tile.kind].retention
-            net_evap = base_evap - ((retention * base_evap) // 100)
+            tile_evap = base_evap - ((retention * base_evap) // 100)
 
-            if net_evap <= 0:
+            if tile_evap <= 0:
                 continue
 
-            # Get total surface water in tile's sub-squares
-            total_water = get_tile_surface_water(tile)
-            if total_water <= 0:
-                continue
-
-            # Distribute evaporation proportionally across sub-squares
-            remaining_evap = min(net_evap, total_water)
-
+            # Apply evaporation per sub-square with individual trench modifiers
             for row in tile.subgrid:
                 for subsquare in row:
-                    if subsquare.surface_water > 0 and remaining_evap > 0:
-                        # Proportion of tile's water in this sub-square
-                        proportion = subsquare.surface_water / total_water
-                        sub_evap = int(remaining_evap * proportion)
-                        sub_evap = min(sub_evap, subsquare.surface_water)
-                        subsquare.surface_water -= sub_evap
+                    if subsquare.surface_water <= 0:
+                        continue
+
+                    # Per-sub-square evaporation with trench modifier
+                    sub_evap = tile_evap
+                    if subsquare.has_trench:
+                        sub_evap = (sub_evap * TRENCH_EVAP_REDUCTION) // 100
+
+                    # Apply evaporation capped at available water
+                    sub_evap = min(sub_evap, subsquare.surface_water)
+                    subsquare.surface_water -= sub_evap

@@ -42,18 +42,24 @@ class Structure:
 
 
 def build_structure(state: "GameState", kind: str) -> None:
-    """Build a structure at target tile."""
+    """Build a structure at target sub-square."""
+    from subgrid import subgrid_to_tile, get_subsquare_index
+
     kind = kind.lower()
     if kind not in STRUCTURE_COSTS:
         state.messages.append("Cannot build that.")
         return
 
-    pos = state.get_action_target_tile()
-    tile = state.tiles[pos[0]][pos[1]]
+    # Get sub-square position for structure placement
+    sub_pos = state.get_action_target_subsquare()
+    tile_pos = subgrid_to_tile(sub_pos[0], sub_pos[1])
+    tile = state.tiles[tile_pos[0]][tile_pos[1]]
+    local_x, local_y = get_subsquare_index(sub_pos[0], sub_pos[1])
+    subsquare = tile.subgrid[local_x][local_y]
 
     # Validate build location
-    if pos in state.structures:
-        state.messages.append("Tile already has a structure.")
+    if sub_pos in state.structures:
+        state.messages.append("Already has a structure here.")
         return
     if tile.kind == "rock":
         state.messages.append("Cannot build on rock.")
@@ -73,15 +79,25 @@ def build_structure(state: "GameState", kind: str) -> None:
     state.inventory.scrap -= cost.get("scrap", 0)
     state.inventory.seeds -= cost.get("seeds", 0)
 
-    state.structures[pos] = Structure(kind=kind)
-    state.tiles[pos[0]][pos[1]].surface.has_structure = True
-    state.messages.append(f"Built {kind} at {pos}.")
+    state.structures[sub_pos] = Structure(kind=kind)
+    subsquare.structure_id = len(state.structures)  # Mark sub-square as having structure
+    state.messages.append(f"Built {kind} at sub-square {sub_pos}.")
 
 
 def tick_structures(state: "GameState", heat: int) -> None:
-    """Update all structures for one simulation tick."""
-    for pos, structure in list(state.structures.items()):
-        tile = state.tiles[pos[0]][pos[1]]
+    """Update all structures for one simulation tick.
+
+    Structures are keyed by sub-square coords but their effects
+    (water collection, growth) operate on the parent tile.
+    """
+    from subgrid import subgrid_to_tile, get_subsquare_index, ensure_terrain_override
+
+    for sub_pos, structure in list(state.structures.items()):
+        # Get parent tile for this structure's sub-square
+        tile_pos = subgrid_to_tile(sub_pos[0], sub_pos[1])
+        tile = state.tiles[tile_pos[0]][tile_pos[1]]
+        local_x, local_y = get_subsquare_index(sub_pos[0], sub_pos[1])
+        subsquare = tile.subgrid[local_x][local_y]
 
         if structure.kind == "condenser":
             # Add water to sub-squares (distributed by elevation)
@@ -129,12 +145,13 @@ def tick_structures(state: "GameState", heat: int) -> None:
                 # Remove water cost from sub-squares
                 _remove_water_from_subgrid(tile, PLANTER_WATER_COST)
 
-                # Add organics layer on harvest, with a cap
-                if tile.terrain.get_layer_depth(SoilLayer.ORGANICS) < MAX_ORGANICS_DEPTH:
-                    tile.terrain.add_material_to_layer(SoilLayer.ORGANICS, 1)
+                # Add organics to this sub-square's terrain (create override if needed)
+                terrain = ensure_terrain_override(subsquare, tile.terrain)
+                if terrain.get_layer_depth(SoilLayer.ORGANICS) < MAX_ORGANICS_DEPTH:
+                    terrain.add_material_to_layer(SoilLayer.ORGANICS, 1)
 
                 state.messages.append(
-                    f"Biomass harvested at {pos}! (Total {state.inventory.biomass})"
+                    f"Biomass harvested at {sub_pos}! (Total {state.inventory.biomass})"
                 )
 
 

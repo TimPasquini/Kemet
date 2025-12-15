@@ -4,9 +4,14 @@ Each simulation tile is divided into a 3x3 grid of sub-squares.
 Sub-squares are independent units - water flows freely across tile boundaries.
 The 3x3 grouping is purely organizational (storage + relation to subsurface simulation).
 """
+from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Tuple, Optional, List
+from copy import deepcopy
+from dataclasses import dataclass, field
+from typing import Tuple, Optional, List, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ground import TerrainColumn
 
 SUBGRID_SIZE = 3  # 3x3 sub-squares per tile
 
@@ -20,6 +25,10 @@ class SubSquare:
         elevation_offset: Height relative to tile base elevation (enables slopes within tile)
         surface_water: Water pooled on this sub-square (in same units as tile water)
         structure_id: Reference to structure occupying this sub-square, if any
+        has_trench: Whether this sub-square has a trench dug (reduces evaporation)
+        terrain_override: Optional independent terrain column for this sub-square.
+            When None, the sub-square inherits terrain from its parent tile.
+            When set, this sub-square has been modified independently.
 
     Biome is a surface trait influenced by but independent from the underlying
     simulation tile. This allows terrain features to vary within a tile.
@@ -28,6 +37,8 @@ class SubSquare:
     elevation_offset: float = 0.0
     surface_water: int = 0
     structure_id: Optional[int] = None
+    has_trench: bool = False
+    terrain_override: Optional["TerrainColumn"] = None
 
 
 # =============================================================================
@@ -199,3 +210,44 @@ def is_on_range_edge(pos: Tuple[int, int], center: Tuple[int, int],
     """
     dist = chebyshev_distance(pos, center)
     return dist == interaction_range
+
+
+# =============================================================================
+# Terrain Access Utilities
+# =============================================================================
+
+def get_subsquare_terrain(subsquare: SubSquare, tile_terrain: "TerrainColumn") -> "TerrainColumn":
+    """Get the effective terrain for a sub-square.
+
+    Returns the sub-square's terrain_override if it has one,
+    otherwise returns the parent tile's terrain.
+
+    Args:
+        subsquare: The sub-square to get terrain for
+        tile_terrain: The parent tile's terrain (fallback)
+
+    Returns:
+        The effective TerrainColumn for this sub-square
+    """
+    if subsquare.terrain_override is not None:
+        return subsquare.terrain_override
+    return tile_terrain
+
+
+def ensure_terrain_override(subsquare: SubSquare, tile_terrain: "TerrainColumn") -> "TerrainColumn":
+    """Ensure a sub-square has its own terrain override, creating one if needed.
+
+    This is called before modifying terrain at sub-square level.
+    If the sub-square doesn't have an override, a deep copy of the
+    tile terrain is created and assigned.
+
+    Args:
+        subsquare: The sub-square to ensure has terrain
+        tile_terrain: The parent tile's terrain to copy from
+
+    Returns:
+        The sub-square's terrain_override (newly created or existing)
+    """
+    if subsquare.terrain_override is None:
+        subsquare.terrain_override = deepcopy(tile_terrain)
+    return subsquare.terrain_override

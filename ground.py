@@ -279,6 +279,22 @@ class TerrainColumn:
         # porosity is percentage (0-100), depth is in units
         return (depth * props.porosity) // 100
 
+    def get_exposed_layer(self) -> SoilLayer:
+        """Get the topmost layer with non-zero depth.
+
+        Returns the layer that would be visible/accessible at the surface.
+        This is what the shovel operates on, what erosion affects, etc.
+        """
+        for layer in [SoilLayer.ORGANICS, SoilLayer.TOPSOIL, SoilLayer.ELUVIATION,
+                      SoilLayer.SUBSOIL, SoilLayer.REGOLITH]:
+            if self.get_layer_depth(layer) > 0:
+                return layer
+        return SoilLayer.BEDROCK
+
+    def get_exposed_material(self) -> str:
+        """Get the material type of the exposed (topmost) layer."""
+        return self.get_layer_material(self.get_exposed_layer())
+
 
 @dataclass
 class SurfaceTraits:

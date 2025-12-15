@@ -23,12 +23,9 @@ from ground import (
 )
 from utils import get_neighbors
 from config import (
-    SURFACE_FLOW_RATE,
     SUBSURFACE_FLOW_RATE,
-    OVERFLOW_FLOW_RATE,
     VERTICAL_SEEPAGE_RATE,
     CAPILLARY_RISE_RATE,
-    SURFACE_FLOW_THRESHOLD,
     SUBSURFACE_FLOW_THRESHOLD,
 )
 
@@ -38,15 +35,16 @@ Point = Tuple[int, int]
 @dataclass
 class WaterColumn:
     """
-    Water storage for a tile using a dictionary of soil layers.
+    Water storage for a tile's subsurface soil layers.
 
     Each layer stores water as integer units (1 unit = 100mm).
     Water fills based on layer porosity and material properties.
+
+    Note: Surface water is stored per-SubSquare in subgrid.py, not here.
     """
     layer_water: Dict[SoilLayer, int] = field(
         default_factory=lambda: defaultdict(int)
     )
-    surface_water: int = 0
 
     def get_layer_water(self, layer: SoilLayer) -> int:
         """Get water amount in a specific layer."""
@@ -70,10 +68,6 @@ class WaterColumn:
         actual = min(amount, current)
         self.set_layer_water(layer, current - actual)
         return actual
-
-    def total_water(self) -> int:
-        """Total water in entire column (surface + all layers)."""
-        return self.surface_water + sum(self.layer_water.values())
 
     def total_subsurface_water(self) -> int:
         """Total water in all subsurface layers."""
@@ -111,34 +105,23 @@ def _calculate_hydraulic_head(terrain: TerrainColumn, water: WaterColumn, layer:
     return bottom  # Empty layer has minimum head
 
 
-def simulate_vertical_seepage(terrain: TerrainColumn, water: WaterColumn) -> None:
+def simulate_vertical_seepage(terrain: TerrainColumn, water: WaterColumn, surface_water_total: int = 0) -> int:
     """
     Simulate water seeping vertically through soil layers, one layer at a time.
     This version prevents the "waterfall" bug.
+
+    Args:
+        terrain: Terrain column for layer properties
+        water: Water column for subsurface water storage
+        surface_water_total: Total surface water on this tile's sub-squares (for capillary check)
+
+    Returns:
+        Amount of water to distribute to surface via capillary rise
     """
-    # --- Downward Seepage ---
-    # 1. Seep from Surface into the topmost soil layer
-    if water.surface_water > 0:
-        # Find the first valid soil layer from the top
-        for layer in reversed(SoilLayer):
-            if layer == SoilLayer.BEDROCK: continue
-            if terrain.get_layer_depth(layer) > 0:
-                available_capacity = terrain.get_max_water_storage(layer) - water.get_layer_water(layer)
-                props = MATERIAL_LIBRARY.get(terrain.get_layer_material(layer))
+    # --- Downward Seepage between soil layers ---
+    # Note: Surface-to-soil seepage is handled per-sub-square in simulation/surface.py
 
-                if props and available_capacity > 0:
-                    seep_amount = _calculate_seep(
-                        water.surface_water,
-                        props.permeability_vertical,
-                        VERTICAL_SEEPAGE_RATE,
-                        available_capacity
-                    )
-                    if seep_amount > 0:
-                        water.surface_water -= seep_amount
-                        water.add_layer_water(layer, seep_amount)
-                break  # IMPORTANT: Stop after seeping into only the first layer
-
-    # 2. Seep between adjacent soil layers (one step at a time)
+    # 1. Seep between adjacent soil layers (one step at a time)
     # Create a list of transfers to apply atomically, preventing the waterfall effect.
     transfers: Dict[SoilLayer, int] = defaultdict(int)
     soil_layers = list(reversed(SoilLayer))  # [Organics, Topsoil, ..., Bedrock]
@@ -168,16 +151,18 @@ def simulate_vertical_seepage(terrain: TerrainColumn, water: WaterColumn) -> Non
     for layer, delta in transfers.items():
         water.add_layer_water(layer, delta)
 
-    # 3. Bedrock pressure: push water up from oversaturated Regolith
+    # 2. Bedrock pressure: push water up from oversaturated Regolith
     regolith_capacity = terrain.get_max_water_storage(SoilLayer.REGOLITH)
     regolith_water = water.get_layer_water(SoilLayer.REGOLITH)
     if regolith_water > regolith_capacity:
         excess = regolith_water - regolith_capacity
         water.set_layer_water(SoilLayer.REGOLITH, regolith_capacity)
-        water.add_layer_water(SoilLayer.SUBSOIL, excess) # Push up to subsoil
+        water.add_layer_water(SoilLayer.SUBSOIL, excess)  # Push up to subsoil
 
     # --- Upward Movement (Capillary Action) ---
-    if water.surface_water < 10:  # Less than 1cm of surface water
+    # Only rise if surface is relatively dry (less than 1cm equivalent)
+    capillary_rise = 0
+    if surface_water_total < 10:
         # Find topmost layer with water
         for layer in [SoilLayer.ORGANICS, SoilLayer.TOPSOIL, SoilLayer.ELUVIATION]:
             if terrain.get_layer_depth(layer) > 0 and water.get_layer_water(layer) > 0:
@@ -193,70 +178,10 @@ def simulate_vertical_seepage(terrain: TerrainColumn, water: WaterColumn) -> Non
                     )
                     if rise_amount > 0:
                         water.remove_layer_water(layer, rise_amount)
-                        water.surface_water += rise_amount
+                        capillary_rise = rise_amount
                 break  # Only rise from the single topmost wet layer
 
-
-def calculate_surface_flow(
-        tiles: List[List[Tuple[TerrainColumn, WaterColumn]]],
-        width: int,
-        height: int,
-        trench_map: Dict[Point, bool],
-) -> Dict[Point, int]:
-    """
-    Calculate surface water flow based on surface elevation + water depth.
-    Returns a dictionary of deltas (positive for gain, negative for loss).
-    """
-    deltas: Dict[Point, int] = defaultdict(int)
-
-    for x in range(width):
-        for y in range(height):
-            terrain, water = tiles[x][y]
-
-            if water.surface_water == 0:
-                continue
-
-            # Surface height = terrain surface + water depth
-            my_surface = terrain.get_surface_elevation() + water.surface_water
-
-            # Find lower neighbors
-            flow_targets = []
-            total_diff = 0
-
-            for nx, ny in get_neighbors(x, y, width, height):
-                n_terrain, n_water = tiles[nx][ny]
-                n_surface = n_terrain.get_surface_elevation() + n_water.surface_water
-                diff = my_surface - n_surface
-
-                if diff > SURFACE_FLOW_THRESHOLD:
-                    flow_targets.append(((nx, ny), diff))
-                    total_diff += diff
-
-            if not flow_targets:
-                continue
-
-            # Calculate flow rate (percentage of available water)
-            flow_pct = SURFACE_FLOW_RATE
-
-            # Trenches increase surface flow
-            if trench_map.get((x, y), False):
-                flow_pct = (flow_pct * 150) // 100  # 1.5x multiplier
-
-            transferable = (water.surface_water * flow_pct) // 100
-
-            # Distribute proportionally to elevation differences
-            total_transferred = 0
-            for (nx, ny), diff in flow_targets:
-                portion = (transferable * diff) // total_diff if total_diff > 0 else 0
-                if portion > 0:
-                    deltas[(nx, ny)] += portion
-                    total_transferred += portion
-
-            # Record the loss for the source tile
-            if total_transferred > 0:
-                deltas[(x, y)] -= total_transferred
-
-    return deltas
+    return capillary_rise
 
 
 def calculate_subsurface_flow(
@@ -393,22 +318,3 @@ def calculate_overflows(
                     sub_deltas[((x, y), layer)] -= total_transferred
 
     return sub_deltas, surf_deltas
-
-
-def apply_flows(
-        tiles: List[List[Tuple[TerrainColumn, WaterColumn]]],
-        surface_deltas: Dict[Point, int],
-        subsurface_deltas: Dict[Tuple[Point, SoilLayer | str], int],
-) -> None:
-    """Apply accumulated water flows to tiles."""
-    # Apply surface flows (now deltas)
-    for (x, y), amount in surface_deltas.items():
-        _, water = tiles[x][y]
-        # Ensure water doesn't go below zero from rounding
-        water.surface_water = max(0, water.surface_water + amount)
-
-    # Apply subsurface flows
-    for ((x, y), layer), amount in subsurface_deltas.items():
-        _, water = tiles[x][y]
-        current_water = water.get_layer_water(layer)
-        water.set_layer_water(layer, max(0, current_water + amount))

@@ -9,6 +9,7 @@ import pygame
 from ground import SoilLayer, MATERIAL_LIBRARY, units_to_meters
 from render.primitives import draw_text, draw_section_header
 from config import LINE_HEIGHT, SECTION_SPACING
+from simulation.surface import get_tile_surface_water
 
 if TYPE_CHECKING:
     from main import GameState
@@ -38,7 +39,9 @@ def render_hud(
     # Current tile section
     x, y = state.player
     tile = state.tiles[x][y]
-    structure = state.structures.get((x, y))
+    # Check for structure at player's sub-square position
+    player_sub = state.player_subsquare
+    structure = state.structures.get(player_sub)
 
     y_offset = draw_section_header(screen, font, "CURRENT TILE", (hud_x, y_offset)) + 4
     draw_text(screen, font, f"Position: ({x}, {y})", (hud_x, y_offset))
@@ -47,9 +50,12 @@ def render_hud(
     y_offset += LINE_HEIGHT
     draw_text(screen, font, f"Elevation: {tile.elevation:.2f}m", (hud_x, y_offset))
     y_offset += LINE_HEIGHT
-    draw_text(screen, font, f"Water: {tile.water.total_water() / 10:.1f}L total", (hud_x, y_offset))
+    # Get surface water from sub-squares (not tile.water which is subsurface only)
+    surface_water = get_tile_surface_water(tile)
+    total_water = surface_water + tile.water.total_subsurface_water()
+    draw_text(screen, font, f"Water: {total_water / 10:.1f}L total", (hud_x, y_offset))
     y_offset += LINE_HEIGHT
-    draw_text(screen, font, f"  Surface: {tile.water.surface_water / 10:.1f}L", (hud_x + 10, y_offset), (180, 180, 180))
+    draw_text(screen, font, f"  Surface: {surface_water / 10:.1f}L", (hud_x + 10, y_offset), (180, 180, 180))
     y_offset += LINE_HEIGHT
 
     if tile.water.total_subsurface_water() > 0:
@@ -107,13 +113,21 @@ def render_soil_profile(
     screen,
     font,
     tile,
+    subsquare,
     pos: Tuple[int, int],
     width: int,
     height: int,
 ) -> None:
-    """Render the soil profile visualization."""
+    """Render the soil profile visualization for a sub-square.
+
+    Shows terrain from the sub-square's override if present, otherwise from tile.
+    Also shows sub-square-specific data like surface water and elevation offset.
+    """
+    from subgrid import get_subsquare_terrain
     x, y = pos
-    terrain, water = tile.terrain, tile.water
+    # Use sub-square terrain if it has an override, otherwise tile terrain
+    terrain = get_subsquare_terrain(subsquare, tile.terrain)
+    water = tile.water
 
     # Draw header and border
     header_y = y - 22
@@ -161,14 +175,15 @@ def render_soil_profile(
 
         current_y += layer_height
 
-    # Draw surface water first, if any
-    if water.surface_water > 0:
-        surf_height = min(30, int(water.surface_water * scale * 0.5))
+    # Draw surface water first, if any (from sub-square, not tile)
+    surface_water = subsquare.surface_water
+    if surface_water > 0:
+        surf_height = min(30, int(surface_water * scale * 0.5))
         if surf_height > 0:
             surf_rect = pygame.Rect(x + 1, current_y, width - 2, surf_height)
             pygame.draw.rect(screen, (100, 150, 255), surf_rect)
             if surf_height >= 16:
-                draw_text(screen, font, f"Water {water.surface_water / 10:.1f}L", (x + 5, current_y + 2), color=(255, 255, 255))
+                draw_text(screen, font, f"Water {surface_water / 10:.1f}L", (x + 5, current_y + 2), color=(255, 255, 255))
             current_y += surf_height
 
     # Iterate from top (Organics) to bottom (Bedrock)
