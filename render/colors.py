@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Tuple, cast
 
 from ground import MATERIAL_LIBRARY
+from surface_state import compute_surface_appearance
 from config import (
     BIOME_COLORS,
     ELEVATION_BRIGHTNESS_MIN,
@@ -15,6 +16,7 @@ from config import (
 
 if TYPE_CHECKING:
     from main import GameState
+    from subgrid import SubSquare
 
 Color = Tuple[int, int, int]
 
@@ -82,27 +84,27 @@ def color_for_tile(state_tile, tile_type, elevation_range: Tuple[float, float]) 
 
 
 def color_for_subsquare(
-    biome: str,
+    subsquare: "SubSquare",
     subsquare_elevation: float,
     tile,
     elevation_range: Tuple[float, float]
 ) -> Color:
-    """Calculate the display color for a sub-square based on its biome.
+    """Calculate the display color for a sub-square from computed appearance.
+
+    The appearance is computed from environmental factors (exposed material,
+    water state, organics) rather than a stored biome string.
 
     Args:
-        biome: The sub-square's biome type
+        subsquare: The sub-square to render
         subsquare_elevation: Absolute elevation of the sub-square
-        tile: Parent tile (for material blending)
+        tile: Parent tile (for terrain data if no override)
         elevation_range: (min, max) elevation for brightness scaling
     """
-    # Start with biome base color
-    base_color = BIOME_COLORS.get(biome, (200, 200, 200))
+    # Compute appearance from environmental factors
+    appearance = compute_surface_appearance(subsquare, tile)
 
-    # Blend with surface material color from parent tile
-    material_color = get_surface_material_color(tile)
-    if material_color:
-        weight = ORGANICS_BLEND_WEIGHT if tile.terrain.organics_depth > 0 else MATERIAL_BLEND_WEIGHT
-        base_color = blend_colors(base_color, material_color, weight)
+    # Start with computed base color
+    base_color = appearance.display_color
 
     # Apply elevation-based brightness
     min_elev, max_elev = elevation_range

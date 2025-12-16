@@ -86,9 +86,9 @@ def render_map_viewport(
             tile = state.tiles[tile_x][tile_y]
             subsquare = tile.subgrid[local_x][local_y]
 
-            # Get color based on sub-square's biome
+            # Get color from computed appearance (based on material, water, organics)
             sub_elevation = tile.get_subsquare_elevation(local_x, local_y)
-            color = color_for_subsquare(subsquare.biome, sub_elevation, tile, elevation_range)
+            color = color_for_subsquare(subsquare, sub_elevation, tile, elevation_range)
 
             # Convert sub-square position to viewport position
             world_x, world_y = camera.subsquare_to_world(sub_x, sub_y)

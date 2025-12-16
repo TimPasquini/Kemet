@@ -37,9 +37,14 @@ Point = Tuple[int, int]
 
 @dataclass
 class TileType:
-    """Definition of a biome/tile type with its properties."""
+    """Simulation properties for a tile type.
+
+    Tile types define how tiles behave in simulation (evaporation, water
+    capacity). Visual rendering is handled separately via surface_state.py
+    based on terrain materials and environmental factors.
+    """
     name: str
-    char: str       # ASCII character for text rendering
+    char: str       # ASCII character for text rendering (debug)
     evap: int       # Base evaporation rate
     capacity: int   # Water holding capacity
     retention: int  # Water retention percentage
@@ -60,12 +65,8 @@ TILE_TYPES: Dict[str, TileType] = {
 # Tile Class
 # =============================================================================
 
-def _create_default_subgrid(biome: str = "flat") -> List[List[SubSquare]]:
-    """Create a 3x3 subgrid with slight elevation variation.
-
-    Args:
-        biome: Initial biome for all sub-squares (inherited from tile during generation)
-    """
+def _create_default_subgrid() -> List[List[SubSquare]]:
+    """Create a 3x3 subgrid with slight elevation variation."""
     subgrid = []
     for sx in range(SUBGRID_SIZE):
         row = []
@@ -73,7 +74,7 @@ def _create_default_subgrid(biome: str = "flat") -> List[List[SubSquare]]:
             # Small random elevation offset to create micro-terrain
             # Range: -0.05 to +0.05 meters
             offset = random.uniform(-0.05, 0.05)
-            row.append(SubSquare(biome=biome, elevation_offset=offset))
+            row.append(SubSquare(elevation_offset=offset))
         subgrid.append(row)
     return subgrid
 
@@ -87,11 +88,11 @@ class Tile:
     The subgrid allows water to flow at higher resolution and enables
     buildings to span partial tiles.
 
-    Note: `kind` is kept for backwards compatibility and represents the
-    "dominant" biome for simulation purposes. Individual sub-squares have
-    their own biome which can vary within the tile.
+    The `kind` field determines simulation properties (evaporation rate,
+    water capacity) via TILE_TYPES lookup. Visual rendering is computed
+    from terrain materials and environmental state via surface_state.py.
     """
-    kind: str                           # Dominant biome (for simulation compatibility)
+    kind: str                           # Tile type for simulation (evap, capacity, etc.)
     terrain: TerrainColumn              # Soil layers and elevation
     water: WaterColumn                  # Water storage
     surface: SurfaceTraits              # Surface features (trench, etc.)
@@ -99,13 +100,6 @@ class Tile:
     depot: bool = False                 # Is this the player's depot?
     moisture_history: List[int] = field(default_factory=list)
     subgrid: List[List[SubSquare]] = field(default_factory=_create_default_subgrid)
-
-    def __post_init__(self):
-        """Initialize sub-square biomes to match tile's dominant biome."""
-        for row in self.subgrid:
-            for subsquare in row:
-                if subsquare.biome == "flat":  # Only if still default
-                    subsquare.biome = self.kind
 
     @property
     def elevation(self) -> float:
@@ -134,13 +128,6 @@ class Tile:
     def get_subsquare_elevation(self, local_x: int, local_y: int) -> float:
         """Get absolute elevation of a subsquare in meters."""
         return self.elevation + self.subgrid[local_x][local_y].elevation_offset
-
-    def set_all_biomes(self, biome: str) -> None:
-        """Set the biome for all sub-squares in this tile."""
-        self.kind = biome
-        for row in self.subgrid:
-            for subsquare in row:
-                subsquare.biome = biome
 
 
 # =============================================================================

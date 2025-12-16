@@ -26,17 +26,32 @@ With the surface, subterranean, and planned atmospheric layers now functional, w
 - Use meta-group tags ("surface", "underground") as labels only, not containers
 - Allow any layer to serve as the exposed top layer and render appropriately
 
-### Planned Approach (3 Phases)
+### Progress
 
-**Phase 1: Consolidate Existing**
-- Remove `SubSquare.biome` redundancy - derive from exposed material
-- Unify water access patterns across surface/subsurface
+**Phase 1: Consolidate Existing - COMPLETE**
+- Created `surface_state.py` with computed appearance system
+- Removed `SubSquare.biome` - visuals now computed from terrain/water/organics
+- Created unified water access helpers (`get_tile_total_water()`, etc.)
+- `Tile.kind` retained for simulation properties (evap rates, capacity)
 
 **Phase 2: Abstract Layer Interface** (if needed)
 - Adapter pattern to wrap existing classes with unified interface
 
 **Phase 3: Atmosphere Layer**
 - Add humidity/wind following same layer pattern
+
+### Appearance System (NEW)
+
+Visual rendering is now computed from environmental factors in `surface_state.py`:
+
+```python
+appearance = compute_surface_appearance(subsquare, tile)
+# Factors considered:
+# - Exposed material (from terrain column)
+# - Surface water amount
+# - Organics layer depth
+# Future: humidity, neighbors, structures
+```
 
 ---
 
@@ -84,10 +99,10 @@ Each simulation tile contains 9 **sub-squares**:
 **Sub-square data:**
 - `elevation_offset: float` - Height relative to tile base
 - `surface_water: int` - Water pooled on this sub-square
-- `biome: str` - Visual biome type
 - `structure_id: Optional[int]` - Structure occupying this sub-square
 - `has_trench: bool` - Reduces evaporation
 - `terrain_override: Optional[TerrainColumn]` - Per-sub-square terrain modifications
+- Visual appearance computed via `surface_state.compute_surface_appearance()`
 
 **Coordinate system:**
 - World sub-coords: `(tile_x * 3 + sub_x, tile_y * 3 + sub_y)`
@@ -126,6 +141,12 @@ Player moves on 180x135 grid, interaction range highlights work, cursor targetin
 - Surface-to-soil seepage implemented
 - Elevation-weighted upward seepage (capillary rise, overflow)
 - Water system reaches equilibrium with visible pooling near wellsprings
+
+### Phase 2.5: Unified Layer System Phase 1 - COMPLETE
+- Created `surface_state.py` with computed appearance system
+- Removed stored `SubSquare.biome` - now computed from terrain/water state
+- Visual appearance factors: exposed material, water amount, organics depth
+- Unified water access helpers in `surface_state.py`
 
 ### Phase 3: Erosion System - PLANNED
 Water and wind move surface material. Rivers carve channels.
@@ -186,9 +207,10 @@ kemet/
 ├── config.py              # Constants including water rates
 ├── main.py                # GameState, tick orchestration
 ├── subgrid.py             # SubSquare, coordinate utils, terrain override
+├── surface_state.py       # NEW: Computed appearance, unified water access
 ├── player.py              # Player state (sub-grid position)
 ├── camera.py              # Viewport transforms
-├── mapgen.py              # Map generation, biome types
+├── mapgen.py              # Map generation, tile types (simulation props)
 ├── water.py               # WaterColumn (subsurface only)
 ├── ground.py              # TerrainColumn, SoilLayer, materials
 ├── simulation/
@@ -196,6 +218,7 @@ kemet/
 │   └── subsurface.py      # Underground flow + evaporation
 ├── render/
 │   ├── map.py             # Map + water visualization
+│   ├── colors.py          # Color computation (uses surface_state)
 │   └── hud.py             # HUD panels + soil profile
 ├── structures.py          # Cistern, condenser, planter
 └── ui_state.py            # UI state + cursor tracking
