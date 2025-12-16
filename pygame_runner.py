@@ -74,6 +74,7 @@ from subgrid import subgrid_to_tile, get_subsquare_index
 from render import (
     calculate_elevation_range,
     render_map_viewport,
+    render_static_background,
     render_player,
     render_night_overlay,
     render_hud,
@@ -133,6 +134,30 @@ def virtual_to_world(
     return world_x, world_y
 
 
+def update_dirty_background(
+    background_surface: pygame.Surface,
+    state: GameState,
+    font
+) -> pygame.Surface:
+    """Redraw dirty portions of the background surface.
+
+    Args:
+        background_surface: The cached background surface to update
+        state: Game state with dirty_subsquares list
+        font: Font for rendering
+
+    Returns:
+        Updated background surface
+    """
+    if not state.dirty_subsquares:
+        return background_surface
+
+    # For now, regenerate the whole background if anything is dirty.
+    # A true dirty-rect implementation would re-render just the dirty sub-squares.
+    background_surface = render_static_background(state, font)
+    state.dirty_subsquares.clear()
+    return background_surface
+
 def render_to_virtual_screen(
     virtual_screen: pygame.Surface,
     font,
@@ -144,13 +169,14 @@ def render_to_virtual_screen(
     toolbar: Toolbar,
     ui_state: UIState,
     show_help: bool,
+    background_surface: pygame.Surface = None,
 ) -> None:
     """Render everything to the virtual screen at fixed resolution."""
     virtual_screen.fill((20, 20, 25))
 
     # 1. Render map viewport (tiles, structures, features)
     map_surface = pygame.Surface((camera.viewport_width, camera.viewport_height))
-    render_map_viewport(map_surface, font, state, camera, tile_size, elevation_range)
+    render_map_viewport(map_surface, font, state, camera, tile_size, elevation_range, background_surface)
 
     # Render interaction highlights (before player, after tiles)
     render_interaction_highlights(
@@ -274,6 +300,9 @@ def run(tile_size: int = TILE_SIZE) -> None:
     map_w, map_h = MAP_SIZE
     state = build_initial_state(width=map_w, height=map_h)
     state.messages.append("Welcome to Kemet. Press H for help.")
+
+    # Generate the static background surface for the first time
+    background_surface = render_static_background(state, font)
 
     # UI state (includes fixed layout regions)
     toolbar = get_toolbar()
@@ -482,6 +511,9 @@ def run(tile_size: int = TILE_SIZE) -> None:
             tick_timer -= TICK_INTERVAL
         state._tick_timer = tick_timer
 
+        # Update dirty rects on the background surface
+        background_surface = update_dirty_background(background_surface, state, font)
+
         # Update visible messages count
         if ui_state.log_panel_rect:
             visible_messages = (ui_state.log_panel_rect.height - 40) // 18
@@ -490,7 +522,7 @@ def run(tile_size: int = TILE_SIZE) -> None:
         render_to_virtual_screen(
             virtual_screen, font, state, camera, tile_size, elevation_range,
             state.player_state.world_pixel_pos,
-            toolbar, ui_state, show_help
+            toolbar, ui_state, show_help, background_surface
         )
 
         # Scale and blit to actual screen

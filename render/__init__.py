@@ -14,10 +14,10 @@ from render.colors import (
     color_for_tile,
 )
 from render.primitives import draw_text, draw_section_header
-from render.map import render_map_viewport, render_player, render_night_overlay
+from render.map import render_map_viewport, render_static_background, redraw_background_rect, render_interaction_highlights
 from render.hud import render_hud, render_inventory, render_soil_profile
 from render.toolbar import render_toolbar
-from render.overlays import render_help_overlay, render_event_log
+from render.overlays import render_help_overlay, render_event_log, render_player, render_night_overlay
 
 __all__ = [
     # Colors
@@ -29,12 +29,9 @@ __all__ = [
     "get_surface_material_color",
     "color_for_tile",
     # Primitives
-    "draw_text",
-    "draw_section_header",
+    "draw_text", "draw_section_header",
     # Map
-    "render_map_viewport",
-    "render_player",
-    "render_night_overlay",
+    "render_map_viewport", "render_static_background", "redraw_background_rect", "render_interaction_highlights",
     # HUD
     "render_hud",
     "render_inventory",
@@ -42,6 +39,5 @@ __all__ = [
     # Toolbar
     "render_toolbar",
     # Overlays
-    "render_help_overlay",
-    "render_event_log",
+    "render_help_overlay", "render_event_log", "render_player", "render_night_overlay",
 ]

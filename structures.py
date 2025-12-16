@@ -8,9 +8,9 @@ Defines structure types, costs, and behavior:
 - Planter: Grows biomass when watered
 """
 from __future__ import annotations
-
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, Optional
 
 from ground import SoilLayer
 from config import (
@@ -29,16 +29,108 @@ from config import (
 from simulation.surface import get_tile_surface_water, distribute_upward_seepage
 
 if TYPE_CHECKING:
-    from main import GameState
+    from main import GameState, Inventory
+    from mapgen import Tile
+    from subgrid import SubSquare
 
 
 @dataclass
-class Structure:
+class Structure(ABC):
     """Represents a player-built structure on a tile."""
     kind: str
     hp: int = 3
-    stored: int = 0  # Water storage in units (cistern)
-    growth: int = 0  # Growth progress 0-100 (planter)
+
+    @abstractmethod
+    def tick(self, state: "GameState", tile: "Tile", subsquare: "SubSquare") -> None:
+        """Update the structure for one simulation tick."""
+        pass
+
+    @abstractmethod
+    def get_survey_string(self) -> str:
+        """Return a string with the structure's status for the survey command."""
+        pass
+
+    def get_status_summary(self) -> Optional[Dict[str, int]]:
+        """Return a dict of values for the global status report, or None."""
+        return None
+
+
+@dataclass
+class Condenser(Structure):
+    """Generates water from the air."""
+    kind: str = "condenser"
+
+    def tick(self, state: "GameState", tile: "Tile", subsquare: "SubSquare") -> None:
+        # Add water to sub-squares (distributed by elevation)
+        distribute_upward_seepage(tile, CONDENSER_OUTPUT)
+
+    def get_survey_string(self) -> str:
+        return f"struct={self.kind}"
+
+
+@dataclass
+class Cistern(Structure):
+    """Stores surface water."""
+    kind: str = "cistern"
+    stored: int = 0  # Water storage in units
+
+    def tick(self, state: "GameState", tile: "Tile", subsquare: "SubSquare") -> None:
+        # Get total surface water from sub-squares
+        surface_water = get_tile_surface_water(tile)
+
+        # Transfer surface water into cistern storage
+        if surface_water > CISTERN_TRANSFER_RATE and self.stored < CISTERN_CAPACITY:
+            transfer = min(CISTERN_TRANSFER_RATE, surface_water, CISTERN_CAPACITY - self.stored)
+            # Remove water proportionally from sub-squares
+            _remove_water_from_subgrid(tile, transfer)
+            self.stored += transfer
+
+        # Cistern slowly leaks (scales with heat)
+        loss = (CISTERN_LOSS_RATE * state.heat) // 100
+        drained = min(self.stored, loss)
+        self.stored -= drained
+        recovered = (drained * CISTERN_LOSS_RECOVERY) // 100
+        distribute_upward_seepage(tile, recovered)
+
+    def get_survey_string(self) -> str:
+        return f"struct={self.kind} | stored={self.stored / 10:.1f}L"
+
+    def get_status_summary(self) -> Dict[str, int]:
+        return {"stored_water": self.stored}
+
+
+@dataclass
+class Planter(Structure):
+    """Grows biomass when watered."""
+    kind: str = "planter"
+    growth: int = 0  # Growth progress 0-100
+
+    def tick(self, state: "GameState", tile: "Tile", subsquare: "SubSquare") -> None:
+        from subgrid import ensure_terrain_override  # Local import
+
+        # Total water includes sub-square surface water + subsurface
+        surface_water = get_tile_surface_water(tile)
+        total_water = surface_water + tile.water.total_subsurface_water()
+
+        if total_water >= PLANTER_WATER_REQUIREMENT:
+            self.growth += PLANTER_GROWTH_RATE
+            if self.growth > PLANTER_GROWTH_THRESHOLD:
+                self.growth = PLANTER_GROWTH_THRESHOLD
+        else:
+            self.growth = max(self.growth - 10, 0)
+
+        if self.growth >= PLANTER_GROWTH_THRESHOLD:
+            self.growth = 0
+            state.inventory.biomass += 1
+            state.inventory.seeds += 1
+            _remove_water_from_subgrid(tile, PLANTER_WATER_COST)
+            terrain = ensure_terrain_override(subsquare, tile.terrain)
+            if terrain.get_layer_depth(SoilLayer.ORGANICS) < MAX_ORGANICS_DEPTH:
+                terrain.add_material_to_layer(SoilLayer.ORGANICS, 1)
+            state.messages.append(f"Biomass harvested! (Total {state.inventory.biomass})")
+
+    def get_survey_string(self) -> str:
+        return f"struct={self.kind} | growth={self.growth}%"
 
 
 def build_structure(state: "GameState", kind: str) -> None:
@@ -79,7 +171,12 @@ def build_structure(state: "GameState", kind: str) -> None:
     state.inventory.scrap -= cost.get("scrap", 0)
     state.inventory.seeds -= cost.get("seeds", 0)
 
-    state.structures[sub_pos] = Structure(kind=kind)
+    structure_class_map = {
+        "condenser": Condenser,
+        "cistern": Cistern,
+        "planter": Planter,
+    }
+    state.structures[sub_pos] = structure_class_map[kind]()
     subsquare.structure_id = len(state.structures)  # Mark sub-square as having structure
     state.messages.append(f"Built {kind} at sub-square {sub_pos}.")
 
@@ -99,60 +196,7 @@ def tick_structures(state: "GameState", heat: int) -> None:
         local_x, local_y = get_subsquare_index(sub_pos[0], sub_pos[1])
         subsquare = tile.subgrid[local_x][local_y]
 
-        if structure.kind == "condenser":
-            # Add water to sub-squares (distributed by elevation)
-            distribute_upward_seepage(tile, CONDENSER_OUTPUT)
-
-        elif structure.kind == "cistern":
-            # Get total surface water from sub-squares
-            surface_water = get_tile_surface_water(tile)
-
-            # Transfer surface water into cistern storage
-            if surface_water > CISTERN_TRANSFER_RATE and structure.stored < CISTERN_CAPACITY:
-                transfer = min(
-                    CISTERN_TRANSFER_RATE,
-                    surface_water,
-                    CISTERN_CAPACITY - structure.stored
-                )
-                # Remove water proportionally from sub-squares
-                _remove_water_from_subgrid(tile, transfer)
-                structure.stored += transfer
-
-            # Cistern slowly leaks (scales with heat)
-            loss = (CISTERN_LOSS_RATE * heat) // 100
-            drained = min(structure.stored, loss)
-            structure.stored -= drained
-            recovered = (drained * CISTERN_LOSS_RECOVERY) // 100
-            distribute_upward_seepage(tile, recovered)
-
-        elif structure.kind == "planter":
-            # Total water includes sub-square surface water + subsurface
-            surface_water = get_tile_surface_water(tile)
-            total_water = surface_water + tile.water.total_subsurface_water()
-
-            if total_water >= PLANTER_WATER_REQUIREMENT:
-                structure.growth += PLANTER_GROWTH_RATE
-                if structure.growth > PLANTER_GROWTH_THRESHOLD:
-                    structure.growth = PLANTER_GROWTH_THRESHOLD
-            else:
-                structure.growth = max(structure.growth - 10, 0)
-
-            if structure.growth >= PLANTER_GROWTH_THRESHOLD:
-                structure.growth = 0
-                state.inventory.biomass += 1
-                state.inventory.seeds += 1
-
-                # Remove water cost from sub-squares
-                _remove_water_from_subgrid(tile, PLANTER_WATER_COST)
-
-                # Add organics to this sub-square's terrain (create override if needed)
-                terrain = ensure_terrain_override(subsquare, tile.terrain)
-                if terrain.get_layer_depth(SoilLayer.ORGANICS) < MAX_ORGANICS_DEPTH:
-                    terrain.add_material_to_layer(SoilLayer.ORGANICS, 1)
-
-                state.messages.append(
-                    f"Biomass harvested at {sub_pos}! (Total {state.inventory.biomass})"
-                )
+        structure.tick(state, tile, subsquare)
 
 
 def _remove_water_from_subgrid(tile, amount: int) -> int:

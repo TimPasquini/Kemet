@@ -20,8 +20,8 @@ The appearance drives:
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Tuple, Optional
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Tuple, Optional, Set
 
 from ground import MATERIAL_LIBRARY, SoilLayer
 
@@ -70,6 +70,7 @@ class SurfaceAppearance:
     base_color: Color             # RGB color for rendering
     pattern: Optional[str]        # Future: texture pattern hint
     water_tint: float = 0.0       # 0-1, amount of water color blending
+    features: Set[str] = field(default_factory=set) # Renderable features like 'trench'
     brightness_mod: float = 1.0   # Multiplier for elevation-based lighting
 
     @property
@@ -117,6 +118,11 @@ def compute_surface_appearance(
     pattern = appearance_data.get("pattern")
     appearance_type = material_name
 
+    # --- Populate features set ---
+    features = set()
+    if subsquare.has_trench:
+        features.add("trench")
+
     # Modify based on surface water
     water_tint = 0.0
     if subsquare.surface_water > 0:
@@ -151,6 +157,7 @@ def compute_surface_appearance(
         appearance_type=appearance_type,
         base_color=base_color,
         pattern=pattern,
+        features=features,
         water_tint=water_tint,
     )
 

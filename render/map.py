@@ -13,7 +13,8 @@ from typing import TYPE_CHECKING, Tuple, Optional, List
 import pygame
 
 from mapgen import TILE_TYPES
-from render.colors import color_for_tile, color_for_subsquare
+from surface_state import compute_surface_appearance
+from render.colors import color_for_tile, color_for_subsquare, calculate_elevation_range
 from render.primitives import draw_text
 from config import (
     STRUCTURE_INSET,
@@ -56,6 +57,7 @@ def render_map_viewport(
     camera: "Camera",
     tile_size: int,
     elevation_range: Tuple[float, float],
+    background_surface: pygame.Surface = None,
 ) -> None:
     """Render the visible portion of the world to the map viewport surface.
 
@@ -68,45 +70,24 @@ def render_map_viewport(
         camera: Camera defining visible region
         tile_size: Size of each simulation tile in pixels
         elevation_range: (min, max) elevation for color scaling
+        background_surface: Pre-rendered static terrain (optional, falls back to per-frame render)
     """
     surface.fill((20, 20, 25))
 
-    # Get visible sub-square range from camera
-    start_x, start_y, end_x, end_y = camera.get_visible_subsquare_range()
+    if background_surface is not None:
+        # --- 1. Blit the pre-rendered static background ---
+        # Get the portion of the background surface that is visible to the camera
+        cam_x = -camera.world_to_viewport(0, 0)[0]
+        cam_y = -camera.world_to_viewport(0, 0)[1]
+        visible_world_rect = pygame.Rect(cam_x, cam_y, camera.viewport_width, camera.viewport_height)
+        surface.blit(background_surface, (0, 0), visible_world_rect)
+    else:
+        # Fallback: render terrain per-frame (slower but works without background cache)
+        _render_terrain_per_frame(surface, state, camera, tile_size, elevation_range)
 
-    # Draw visible sub-squares (each with its own biome)
-    for sub_y in range(start_y, end_y):
-        for sub_x in range(start_x, end_x):
-            # Get tile and local coords
-            tile_x = sub_x // SUBGRID_SIZE
-            tile_y = sub_y // SUBGRID_SIZE
-            local_x = sub_x % SUBGRID_SIZE
-            local_y = sub_y % SUBGRID_SIZE
-
-            tile = state.tiles[tile_x][tile_y]
-            subsquare = tile.subgrid[local_x][local_y]
-
-            # Get color from computed appearance (based on material, water, organics)
-            sub_elevation = tile.get_subsquare_elevation(local_x, local_y)
-            color = color_for_subsquare(subsquare, sub_elevation, tile, elevation_range)
-
-            # Convert sub-square position to viewport position
-            world_x, world_y = camera.subsquare_to_world(sub_x, sub_y)
-            vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
-
-            rect = pygame.Rect(int(vp_x), int(vp_y), SUB_TILE_SIZE, SUB_TILE_SIZE)
-            pygame.draw.rect(surface, color, rect)
-
-    # Draw tile-level features (trenches) - over sub-squares
+    # --- 2. Draw dynamic elements on top of the background ---
+    # Get visible tile range for structures and special features
     start_tx, start_ty, end_tx, end_ty = camera.get_visible_tile_range()
-    for ty in range(start_ty, end_ty):
-        for tx in range(start_tx, end_tx):
-            tile = state.tiles[tx][ty]
-            if tile.trench:
-                world_x, world_y = camera.tile_to_world(tx, ty)
-                vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
-                rect = pygame.Rect(int(vp_x), int(vp_y), tile_size - 1, tile_size - 1)
-                pygame.draw.rect(surface, (80, 80, 60), rect.inflate(-TRENCH_INSET, -TRENCH_INSET))
 
     # Draw structures (keyed by sub-square coords, rendered at sub-square position)
     sub_size = tile_size // SUBGRID_SIZE
@@ -139,8 +120,38 @@ def render_map_viewport(
                 pygame.draw.rect(surface, (200, 200, 60), rect.inflate(-TRENCH_INSET, -TRENCH_INSET), border_radius=3)
                 draw_text(surface, font, "D", (rect.x + 18, rect.y + 12), color=(40, 40, 20))
 
-    # Render sub-grid water overlay
+    # Render sub-grid water overlay (dynamic, so drawn on top of static background)
     render_subgrid_water(surface, state, camera, tile_size)
+
+
+def _render_terrain_per_frame(
+    surface: pygame.Surface,
+    state: "GameState",
+    camera: "Camera",
+    tile_size: int,
+    elevation_range: Tuple[float, float],
+) -> None:
+    """Fallback terrain rendering - renders each visible sub-square per frame."""
+    start_x, start_y, end_x, end_y = camera.get_visible_subsquare_range()
+
+    for sub_y in range(start_y, end_y):
+        for sub_x in range(start_x, end_x):
+            tile_x = sub_x // SUBGRID_SIZE
+            tile_y = sub_y // SUBGRID_SIZE
+            local_x = sub_x % SUBGRID_SIZE
+            local_y = sub_y % SUBGRID_SIZE
+
+            tile = state.tiles[tile_x][tile_y]
+            subsquare = tile.subgrid[local_x][local_y]
+
+            sub_elevation = tile.get_subsquare_elevation(local_x, local_y)
+            color = color_for_subsquare(subsquare, sub_elevation, tile, elevation_range)
+
+            world_x, world_y = camera.subsquare_to_world(sub_x, sub_y)
+            vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
+
+            rect = pygame.Rect(int(vp_x), int(vp_y), SUB_TILE_SIZE, SUB_TILE_SIZE)
+            pygame.draw.rect(surface, color, rect)
 
 
 def render_subgrid_water(
@@ -196,104 +207,100 @@ def render_subgrid_water(
             surface.blit(water_surface, (int(vp_x), int(vp_y)))
 
 
-def render_player(
-    surface: pygame.Surface,
-    state: "GameState",
-    camera: "Camera",
-    player_world_pos: Tuple[float, float],
-    tile_size: int,
-) -> None:
-    """Render the player circle and action progress bar.
-
-    Args:
-        surface: Surface to render to
-        state: Game state (for action timer)
-        camera: Camera for coordinate transform
-        player_world_pos: Player position in world coordinates
-        tile_size: Size of each tile in pixels
+def render_static_background(state: "GameState", font) -> pygame.Surface:
     """
-    # Transform player world position to viewport position
-    vp_x, vp_y = camera.world_to_viewport(player_world_pos[0], player_world_pos[1])
-    player_x, player_y = int(vp_x), int(vp_y)
-
-    # Draw player circle (sized relative to sub-tile, not simulation tile)
-    pygame.draw.circle(
-        surface,
-        (240, 240, 90),
-        (player_x, player_y),
-        PLAYER_RADIUS,
-    )
-
-    # Draw action timer bar if busy
-    if state.is_busy():
-        bar_width = SUB_TILE_SIZE
-        bar_height = 4
-        bar_x = player_x - bar_width // 2
-        bar_y = player_y - SUB_TILE_SIZE // 2 - bar_height - 2
-        progress = state.get_action_progress()
-        pygame.draw.rect(surface, (50, 50, 50), (bar_x, bar_y, bar_width, bar_height))
-        pygame.draw.rect(surface, (200, 200, 80), (bar_x, bar_y, int(bar_width * progress), bar_height))
-
-
-def render_night_overlay(
-    surface: pygame.Surface,
-    heat: int,
-) -> None:
-    """Render the night darkness overlay based on heat level.
-
-    Args:
-        surface: Surface to render overlay to
-        heat: Current heat value (lower = darker night)
+    Render the entire static world (terrain) to a single surface.
+    This is a one-time operation, and the surface is cached for performance.
     """
-    night_alpha = max(0, min(200, int((140 - heat) * 180 // 80)))
-    if night_alpha > 0:
-        overlay = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
-        overlay.fill((10, 20, 40, night_alpha))
-        surface.blit(overlay, (0, 0))
+    world_pixel_width = state.width * TILE_SIZE
+    world_pixel_height = state.height * TILE_SIZE
+    background_surface = pygame.Surface((world_pixel_width, world_pixel_height))
+    background_surface.fill((20, 20, 25))
+
+    # Calculate elevation range for brightness scaling
+    elevation_range = calculate_elevation_range(state)
+
+    world_sub_width = state.width * SUBGRID_SIZE
+    world_sub_height = state.height * SUBGRID_SIZE
+
+    for sub_y in range(world_sub_height):
+        for sub_x in range(world_sub_width):
+            tile_x, tile_y = subgrid_to_tile(sub_x, sub_y)
+            local_x, local_y = get_subsquare_index(sub_x, sub_y)
+
+            tile = state.tiles[tile_x][tile_y]
+            subsquare = tile.subgrid[local_x][local_y]
+
+            # Get elevation for this sub-square
+            sub_elevation = tile.get_subsquare_elevation(local_x, local_y)
+
+            # Use same color logic as per-frame rendering (includes elevation brightness)
+            color = color_for_subsquare(subsquare, sub_elevation, tile, elevation_range)
+
+            # Position on the large background surface
+            px = sub_x * SUB_TILE_SIZE
+            py = sub_y * SUB_TILE_SIZE
+            rect = pygame.Rect(px, py, SUB_TILE_SIZE, SUB_TILE_SIZE)
+            pygame.draw.rect(background_surface, color, rect)
+
+            # Draw static features directly onto the background
+            appearance = subsquare.get_appearance(tile)
+            if "trench" in appearance.features:
+                draw_text(background_surface, font, "~", (rect.x + 2, rect.y), color=(60, 100, 120))
+
+    return background_surface
 
 
-# =============================================================================
-# Interaction Highlighting
-# =============================================================================
+def redraw_background_rect(background_surface: pygame.Surface, state: "GameState", font, rect: pygame.Rect) -> None:
+    """Redraw a single sub-square onto the cached background surface."""
+    sub_x = rect.x // SUB_TILE_SIZE
+    sub_y = rect.y // SUB_TILE_SIZE
+
+    # Bounds check
+    world_sub_width = state.width * SUBGRID_SIZE
+    world_sub_height = state.height * SUBGRID_SIZE
+    if not (0 <= sub_x < world_sub_width and 0 <= sub_y < world_sub_height):
+        return
+
+    tile_x, tile_y = subgrid_to_tile(sub_x, sub_y)
+    local_x, local_y = get_subsquare_index(sub_x, sub_y)
+    tile = state.tiles[tile_x][tile_y]
+    subsquare = tile.subgrid[local_x][local_y]
+
+    # Calculate elevation and color with brightness
+    elevation_range = calculate_elevation_range(state)
+    sub_elevation = tile.get_subsquare_elevation(local_x, local_y)
+    color = color_for_subsquare(subsquare, sub_elevation, tile, elevation_range)
+
+    # Draw the updated sub-square directly onto the background surface
+    pygame.draw.rect(background_surface, color, rect)
+
+    # Draw trench indicator if present
+    appearance = subsquare.get_appearance(tile)
+    if "trench" in appearance.features:
+        draw_text(background_surface, font, "~", (rect.x + 2, rect.y), color=(60, 100, 120))
+
 
 def get_tool_highlight_color(
     tool: Optional["Tool"],
     state: "GameState",
     target_subsquare: Tuple[int, int],
 ) -> Tuple[int, int, int]:
-    """Get the highlight color for a tool at a given target position.
-
-    Args:
-        tool: Currently selected tool (or None)
-        state: Game state for validation
-        target_subsquare: Target position in sub-grid coords
-
-    Returns:
-        RGB color tuple for the highlight
-    """
+    """Get the highlight color for a tool at a given target position."""
     if tool is None:
         return HIGHLIGHT_COLORS["default"]
 
     tool_id = tool.id.lower()
 
     if tool_id == "build":
-        # Check if target sub-square is valid for building
         tile_x, tile_y = subgrid_to_tile(*target_subsquare)
         if 0 <= tile_x < state.width and 0 <= tile_y < state.height:
             tile = state.tiles[tile_x][tile_y]
-            # Invalid if: sub-square has structure, tile is rock, or tile is depot
             if target_subsquare in state.structures or tile.kind == "rock" or tile.depot:
                 return HIGHLIGHT_COLORS["build_invalid"]
         return HIGHLIGHT_COLORS["build"]
-
-    elif tool_id == "shovel":
-        return HIGHLIGHT_COLORS["shovel"]
-
-    elif tool_id == "bucket":
-        return HIGHLIGHT_COLORS["bucket"]
-
-    elif tool_id == "survey":
-        return HIGHLIGHT_COLORS["survey"]
+    elif tool_id in HIGHLIGHT_COLORS:
+        return HIGHLIGHT_COLORS[tool_id]
 
     return HIGHLIGHT_COLORS["default"]
 
@@ -306,61 +313,17 @@ def render_interaction_highlights(
     tool: Optional["Tool"],
     state: "GameState",
 ) -> None:
-    """Render interaction range indicator and target highlight.
+    """Render interaction range indicator and target highlight."""
+    if target_subsquare is None:
+        return
 
-    Args:
-        surface: Surface to render to
-        camera: Camera for coordinate transforms
-        player_pos: Player position in sub-grid coordinates
-        target_subsquare: Currently targeted sub-square (or None)
-        tool: Currently selected tool
-        state: Game state for validation
-    """
     sub_size = int(camera.sub_tile_size)
-    tile_size = camera.tile_size
+    color = get_tool_highlight_color(tool, state, target_subsquare)
+    world_x, world_y = camera.subsquare_to_world(target_subsquare[0], target_subsquare[1])
+    vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
+    rect = pygame.Rect(int(vp_x), int(vp_y), sub_size, sub_size)
 
-    # Get visible range for culling
-    vis_start_x, vis_start_y, vis_end_x, vis_end_y = camera.get_visible_subsquare_range()
-
-    # Calculate world dimensions in sub-squares
-    world_sub_width = state.width * SUBGRID_SIZE
-    world_sub_height = state.height * SUBGRID_SIZE
-
-    # Draw target highlight (cursor snaps to valid squares, no range outline needed)
-    if target_subsquare is not None:
-        sub_x, sub_y = target_subsquare
-
-        # Bounds and visibility check
-        if (0 <= sub_x < world_sub_width and 0 <= sub_y < world_sub_height and
-            vis_start_x <= sub_x < vis_end_x and vis_start_y <= sub_y < vis_end_y):
-
-            color = get_tool_highlight_color(tool, state, target_subsquare)
-            tool_id = tool.id.lower() if tool else ""
-
-            # For build tool, show tile-sized preview
-            if tool_id == "build":
-                tile_x, tile_y = subgrid_to_tile(sub_x, sub_y)
-                tile_world_x, tile_world_y = camera.tile_to_world(tile_x, tile_y)
-                tile_vp_x, tile_vp_y = camera.world_to_viewport(tile_world_x, tile_world_y)
-                tile_rect = pygame.Rect(int(tile_vp_x), int(tile_vp_y), tile_size, tile_size)
-
-                # Draw tile-sized semi-transparent preview
-                preview_surface = pygame.Surface((tile_size, tile_size), pygame.SRCALPHA)
-                preview_surface.fill((*color, 40))  # More transparent for tile preview
-                surface.blit(preview_surface, (int(tile_vp_x), int(tile_vp_y)))
-
-                # Draw tile border
-                pygame.draw.rect(surface, color, tile_rect, 2)
-            else:
-                # Standard sub-square highlight for other tools
-                world_x, world_y = camera.subsquare_to_world(sub_x, sub_y)
-                vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
-                rect = pygame.Rect(int(vp_x), int(vp_y), sub_size, sub_size)
-
-                # Draw filled semi-transparent highlight
-                highlight_surface = pygame.Surface((sub_size, sub_size), pygame.SRCALPHA)
-                highlight_surface.fill((*color, 60))  # Semi-transparent fill
-                surface.blit(highlight_surface, (int(vp_x), int(vp_y)))
-
-                # Draw solid border
-                pygame.draw.rect(surface, color, rect, 2)
+    highlight_surface = pygame.Surface((sub_size, sub_size), pygame.SRCALPHA)
+    highlight_surface.fill((*color, 60))
+    surface.blit(highlight_surface, (int(vp_x), int(vp_y)))
+    pygame.draw.rect(surface, color, rect, 2)

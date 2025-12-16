@@ -1,14 +1,28 @@
 # Claude Work-in-Progress
 
-Last updated: 2025-12-15
+Last updated: 2025-12-16
+
+---
+
+## Recently Completed
+
+### Render Caching System
+- ✅ Static terrain pre-rendered to background surface
+- ✅ Dirty subsquare tracking via coordinate tuples (pygame-agnostic)
+- ✅ Background regenerated when terrain changes
+- ✅ Elevation-based brightness applied correctly to cached terrain
+
+### Structure Refactoring
+- ✅ `Structure` is now an abstract base class
+- ✅ `Condenser`, `Cistern`, `Planter` are concrete subclasses
+- ✅ Each structure implements `tick()`, `get_survey_string()`, `get_status_summary()`
+- ✅ Polymorphic dispatch in `tick_structures()` and status display
 
 ---
 
 ## Current Goals
 
 ### 1. Unified Layer System (Architecture)
-
-Consolidate surface and subsurface systems into a unified layer framework.
 
 **Phase 1: COMPLETE**
 - ✅ Created `surface_state.py` with computed appearance system
@@ -30,61 +44,28 @@ Stuttery movement at tile boundaries needs runtime profiling.
 - `pygame.Surface()` allocations per sub-square in `render_subgrid_water()`
 - `pygame.transform.scale()` called every frame
 
-Note: Appearance computation is now cached (not recalculated every frame).
+Note: Static terrain is now cached. Appearance computation is cached per-subsquare.
 
 ---
 
-## Relevant Research
+## Architecture Notes
 
-### Current Layer Architecture (Post-Phase 1)
+### Render Pipeline
 
 ```
-Surface Layer (SubSquare)
-├── elevation_offset: float
-├── surface_water: int      <- CANONICAL surface water storage
-├── terrain_override: Optional[TerrainColumn]
-├── has_trench, structure_id
-└── [Visual computed via surface_state.compute_surface_appearance()]
-
-Subsurface Layer (TerrainColumn + WaterColumn)
-├── 6 soil layers: BEDROCK → ORGANICS
-├── Each layer: material + depth
-└── WaterColumn.layer_water: Dict[SoilLayer, int]
-
-Appearance System (surface_state.py)
-├── compute_surface_appearance() - computes visual from factors
-├── SurfaceAppearance - dataclass with type, color, pattern
-├── Cached on SubSquare._cached_appearance
-├── Invalidated: terrain change, day end, water threshold crossing
-└── Factors: exposed material, water state, organics depth
-    (Future: humidity, neighbors, structures)
+1. render_static_background() - One-time terrain render (cached)
+2. update_dirty_background() - Regenerate if dirty_subsquares non-empty
+3. render_map_viewport() - Blit background + draw dynamic elements
+4. render_subgrid_water() - Semi-transparent water overlay
+5. render_player(), render_night_overlay() - Top-level overlays
 ```
 
-### Key Patterns
+### Key Design: Pygame Isolation
 
-- `get_exposed_layer()` - Returns topmost layer with non-zero depth
-- `ensure_terrain_override()` - Copy-on-write for per-sub-square terrain
-- `get_subsquare_terrain()` - Falls back to tile terrain if no override
-- `compute_surface_appearance()` - Derives visual state from factors
-
-### Water Transfer Methods (All Working)
-
-| Transfer | Function | Location |
-|----------|----------|----------|
-| Surface → Surface | `simulate_surface_flow()` | simulation/surface.py |
-| Surface → Subsurface | `simulate_surface_seepage()` | simulation/surface.py |
-| Subsurface → Surface | `distribute_upward_seepage()` | simulation/surface.py |
-| Subsurface → Subsurface | `calculate_subsurface_flow()` | water.py |
-| Vertical seepage | `simulate_vertical_seepage()` | water.py |
-| Capillary rise | Returns from `simulate_vertical_seepage()` | water.py |
-
----
-
-## Immediate Next Steps
-
-1. **Playtest** - Verify visual appearance looks correct with new system
-2. **Consider caching** - If performance is an issue, cache computed appearances
-3. **Atmosphere Layer** - When ready to proceed with Phase 3
+Pygame-specific code stays in `pygame_runner.py` and `render/`.
+`main.py` and `GameState` use pygame-agnostic types:
+- `dirty_subsquares: List[Point]` not `List[pygame.Rect]`
+- Background surface stored in pygame_runner.py, not GameState
 
 ---
 
@@ -92,12 +73,8 @@ Appearance System (surface_state.py)
 
 | File | Key Contents |
 |------|--------------|
-| `surface_state.py` | **NEW**: `SurfaceAppearance`, `compute_surface_appearance()`, water helpers |
+| `surface_state.py` | `SurfaceAppearance`, `compute_surface_appearance()`, water helpers |
 | `subgrid.py` | `SubSquare`, `ensure_terrain_override()`, `get_subsquare_terrain()` |
-| `ground.py` | `TerrainColumn`, `SoilLayer`, `MATERIAL_LIBRARY`, `get_exposed_layer()` |
-| `water.py` | `WaterColumn`, `simulate_vertical_seepage()` |
-| `render/colors.py` | `color_for_subsquare()` - uses computed appearance |
-| `simulation/surface.py` | `simulate_surface_flow()`, `simulate_surface_seepage()` |
-| `simulation/subsurface.py` | `simulate_subsurface_tick()`, `apply_tile_evaporation()` |
-| `mapgen.py` | `Tile`, `TILE_TYPES` (simulation props), wellspring generation |
-| `config.py` | Water rate constants |
+| `structures.py` | `Structure` ABC, `Condenser`, `Cistern`, `Planter` subclasses |
+| `render/map.py` | `render_static_background()`, `render_map_viewport()` |
+| `pygame_runner.py` | `update_dirty_background()`, background surface management |

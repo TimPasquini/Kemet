@@ -40,9 +40,9 @@ With the surface, subterranean, and planned atmospheric layers now functional, w
 **Phase 3: Atmosphere Layer**
 - Add humidity/wind following same layer pattern
 
-### Appearance System (NEW)
+### Appearance System
 
-Visual rendering is now computed from environmental factors in `surface_state.py`:
+Visual rendering is computed from environmental factors in `surface_state.py`:
 
 ```python
 appearance = compute_surface_appearance(subsquare, tile)
@@ -53,6 +53,24 @@ appearance = compute_surface_appearance(subsquare, tile)
 # Future: humidity, neighbors, structures
 ```
 
+### Render Caching System
+
+Static terrain is pre-rendered to a background surface for performance:
+
+```python
+# In pygame_runner.py (not main.py - keeps pygame out of game logic)
+background_surface = render_static_background(state, font)
+
+# Dirty tracking uses coordinate tuples (pygame-agnostic)
+state.dirty_subsquares: List[Point]  # In GameState
+
+# When terrain changes, mark dirty and regenerate
+state.dirty_subsquares.append((sub_x, sub_y))
+background_surface = update_dirty_background(background_surface, state, font)
+```
+
+Dynamic elements (water, player, structures) render on top each frame.
+
 ---
 
 ## Project Vision
@@ -62,6 +80,18 @@ Kemet is a terraforming simulation where:
 - Fertile topsoil is a resource to protect and build
 - Wind and humidity affect evaporation
 - Player builds structures to manage water and cultivate land
+
+---
+
+## Visual Design Philosophy
+
+The rendering style should intuitively communicate the nature of game elements.
+
+1.  **Objects (e.g., Structures):** Rendered as distinct items *on top of* the terrain (e.g., a black square with a letter). This communicates they are interactable, have their own state (like HP), and occupy the space.
+
+2.  **Terrain Features (e.g., Trenches):** Rendered as modifications *of* the terrain itself (e.g., a border, texture change, or icon). This communicates they are a passive alteration of the ground, not a separate entity.
+
+This distinction helps players subconsciously categorize elements into "things I built" vs. "ways I've shaped the land."
 
 ---
 
@@ -220,7 +250,7 @@ kemet/
 │   ├── map.py             # Map + water visualization
 │   ├── colors.py          # Color computation (uses surface_state)
 │   └── hud.py             # HUD panels + soil profile
-├── structures.py          # Cistern, condenser, planter
+├── structures.py          # Structure ABC + Cistern, Condenser, Planter subclasses
 └── ui_state.py            # UI state + cursor tracking
 ```
 

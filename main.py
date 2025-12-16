@@ -7,9 +7,10 @@ Uses fixed-layer terrain and integer-based water systems.
 """
 from __future__ import annotations
 
+import collections
 import random
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple
+from typing import Deque, Dict, List, Tuple
 
 from config import (
     MAX_POUR_AMOUNT,
@@ -39,7 +40,7 @@ from mapgen import (
 )
 from player import PlayerState
 from structures import (
-    Structure,
+    Structure, # Only the base class is needed
     build_structure,
     tick_structures,
 )
@@ -69,11 +70,14 @@ class GameState:
     player_state: PlayerState = field(default_factory=PlayerState)
     inventory: Inventory = field(default_factory=Inventory)
     weather: WeatherSystem = field(default_factory=WeatherSystem)
-    messages: List[str] = field(default_factory=list)
+    messages: Deque[str] = field(default_factory=lambda: collections.deque(maxlen=100))
 
     # Target for actions (set by UI cursor tracking)
     target_subsquare: Point | None = None  # Sub-grid coords
     target_tile: Point | None = None       # Tile coords (derived from target_subsquare)
+
+    # Render cache: list of (sub_x, sub_y) coordinates that need redrawing
+    dirty_subsquares: List[Point] = field(default_factory=list)
 
     # === Player convenience properties for backwards compatibility ===
     @property
@@ -196,7 +200,10 @@ def dig_trench(state: GameState) -> None:
     if subsquare.has_trench:
         state.messages.append("Already trenched.")
         return
+    sub_pos = state.get_action_target_subsquare()
     subsquare.has_trench = True
+    subsquare.invalidate_appearance()
+    state.dirty_subsquares.append(sub_pos)
     # Remove some surface water from this sub-square when digging
     subsquare.surface_water = max(subsquare.surface_water - 10, 0)
     state.messages.append("Dug a trench; flow improves, evap drops here.")
@@ -229,6 +236,9 @@ def lower_ground(state: GameState) -> None:
     if terrain.get_layer_depth(exposed) <= MIN_LAYER_THICKNESS:
         state.messages.append("Layer too thin to dig more.")
         return
+    sub_pos = state.get_action_target_subsquare()
+    subsquare.invalidate_appearance()
+    state.dirty_subsquares.append(sub_pos)
     removed = terrain.remove_material_from_layer(exposed, 2)
     material_name = terrain.get_layer_material(exposed)
     new_elev = units_to_meters(terrain.get_surface_elevation()) + subsquare.elevation_offset
@@ -240,9 +250,12 @@ def raise_ground(state: GameState) -> None:
         state.messages.append("Need 1 scrap to raise ground.")
         return
     tile, subsquare, _ = state.get_target_tile_and_subsquare()
+    sub_pos = state.get_action_target_subsquare()
     # Get or create terrain override for this sub-square
     terrain = ensure_terrain_override(subsquare, tile.terrain)
     state.inventory.scrap -= 1
+    subsquare.invalidate_appearance()
+    state.dirty_subsquares.append(sub_pos)
     # Add to exposed layer (which becomes the new surface)
     exposed = terrain.get_exposed_layer()
     terrain.add_material_to_layer(exposed, 2)
@@ -346,17 +359,33 @@ def end_day(state: GameState) -> None:
     # Only recalculate biomes if day actually changed
     if messages and "begins" in messages[-1]:
         biome_messages = recalculate_biomes(state.tiles, state.width, state.height)
+        # Invalidate all appearances since lighting/environment may have changed
+        for row in state.tiles:
+            for tile in row:
+                for sub_row in tile.subgrid:
+                    for subsquare in sub_row:
+                        subsquare.invalidate_appearance()
         state.messages.extend(biome_messages)
 
 
 def show_status(state: GameState) -> None:
     inv = state.inventory
-    cisterns = [s for s in state.structures.values() if s.kind == "cistern"]
-    stored = sum(s.stored for s in cisterns)
     state.messages.append(
         f"Inv: water {inv.water / 10:.1f}L, scrap {inv.scrap}, seeds {inv.seeds}, biomass {inv.biomass}")
-    state.messages.append(f"Cisterns: {stored / 10:.1f}L stored across {len(cisterns)} cistern(s)")
 
+    # Aggregate status summaries from all structures
+    summaries = collections.defaultdict(int)
+    structure_counts = collections.defaultdict(int)
+    for s in state.structures.values():
+        summary = s.get_status_summary()
+        if summary:
+            structure_counts[s.kind] += 1
+            for key, value in summary.items():
+                summaries[key] += value
+
+    if "stored_water" in summaries:
+        num_cisterns = structure_counts.get("cistern", 0)
+        state.messages.append(f"Cisterns: {summaries['stored_water'] / 10:.1f}L stored across {num_cisterns} cistern(s)")
 
 def survey_tile(state: GameState) -> None:
     tile, subsquare, _ = state.get_target_tile_and_subsquare()
@@ -378,24 +407,17 @@ def survey_tile(state: GameState) -> None:
     if subsquare.has_trench:
         desc.append("trench")
     if structure:
-        desc.append(f"struct={structure.kind}")
-        if structure.kind == "cistern":
-            desc.append(f"stored={structure.stored / 10:.1f}L")
-        elif structure.kind == "planter":
-            desc.append(f"growth={structure.growth}%")
+        desc.append(structure.get_survey_string())
     state.messages.append("Survey: " + " | ".join(desc))
 
 
 def handle_command(state: GameState, cmd: str, args: List[str]) -> bool:
     """Process a player command. Returns True if the game should quit."""
     command_map = {
-        "dig": lambda s, a: dig_trench(s),
-        "lower": lambda s, a: lower_ground(s),
-        "raise": lambda s, a: raise_ground(s),
         "terrain": lambda s, a: terrain_action(s, a[0] if a else ""),
-        "build": lambda s, a: build_structure(s, a[0] if a else ""),
+        "build": lambda s, a: build_structure(s, a[0]) if a else s.messages.append("Usage: build <type>"),
         "collect": lambda s, a: collect_water(s),
-        "pour": lambda s, a: pour_water(s, float(a[0])) if a else state.messages.append("Usage: pour <liters>"),
+        "pour": lambda s, a: pour_water(s, float(a[0])) if a else s.messages.append("Usage: pour <liters>"),
         "status": lambda s, a: show_status(s),
         "survey": lambda s, a: survey_tile(s),
         "end": lambda s, a: end_day(s),
