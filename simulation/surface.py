@@ -128,7 +128,7 @@ def simulate_surface_flow(
             if total_transferred > 0:
                 deltas[(sub_x, sub_y)] -= total_transferred
 
-    # Apply all deltas
+    # Apply all deltas and check for visual threshold changes
     for (sub_x, sub_y), delta in deltas.items():
         tile_x = sub_x // SUBGRID_SIZE
         tile_y = sub_y // SUBGRID_SIZE
@@ -138,6 +138,8 @@ def simulate_surface_flow(
         tile = tiles[tile_x][tile_y]
         subsquare = tile.subgrid[local_x][local_y]
         subsquare.surface_water = max(0, subsquare.surface_water + delta)
+        # Check if water crossed a visual threshold (dry/wet/flooded)
+        subsquare.check_water_threshold()
 
 
 def simulate_surface_seepage(
@@ -283,7 +285,7 @@ def distribute_upward_seepage(tile: "Tile", water_amount: int) -> None:
             weights.append((lx, ly, weight))
             total_weight += weight
 
-    # Distribute water
+    # Distribute water and check thresholds
     distributed = 0
     for i, (lx, ly, weight) in enumerate(weights):
         if i == len(weights) - 1:
@@ -291,5 +293,7 @@ def distribute_upward_seepage(tile: "Tile", water_amount: int) -> None:
         else:
             portion = int((water_amount * weight) / total_weight)
 
-        tile.subgrid[lx][ly].surface_water += max(0, portion)
+        subsquare = tile.subgrid[lx][ly]
+        subsquare.surface_water += max(0, portion)
+        subsquare.check_water_threshold()
         distributed += portion

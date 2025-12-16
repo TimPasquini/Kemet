@@ -12,6 +12,7 @@ from typing import Tuple, Optional, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ground import TerrainColumn
+    from mapgen import Tile
 
 SUBGRID_SIZE = 3  # 3x3 sub-squares per tile
 
@@ -29,14 +30,57 @@ class SubSquare:
             When None, the sub-square inherits terrain from its parent tile.
             When set, this sub-square has been modified independently.
 
-    Visual appearance is computed from environmental factors (exposed material,
-    water state, organics) via surface_state.compute_surface_appearance().
+    Visual appearance is cached and computed from environmental factors
+    (exposed material, water state, organics). Call invalidate_appearance()
+    when these factors change, or it will be recalculated at day end.
     """
     elevation_offset: float = 0.0
     surface_water: int = 0
     structure_id: Optional[int] = None
     has_trench: bool = False
     terrain_override: Optional["TerrainColumn"] = None
+    # Cached appearance (computed lazily, invalidated on changes)
+    _cached_appearance: Optional[object] = field(default=None, repr=False)
+    # Track water level for threshold-based invalidation
+    _last_water_state: int = field(default=0, repr=False)  # 0=dry, 1=wet, 2=flooded
+
+    def get_appearance(self, tile: "Tile") -> object:
+        """Get cached appearance, computing if needed.
+
+        Args:
+            tile: Parent tile (for terrain data if no override)
+
+        Returns:
+            SurfaceAppearance instance
+        """
+        if self._cached_appearance is None:
+            from surface_state import compute_surface_appearance
+            self._cached_appearance = compute_surface_appearance(self, tile)
+        return self._cached_appearance
+
+    def invalidate_appearance(self) -> None:
+        """Mark appearance cache as stale. Will be recomputed on next access."""
+        self._cached_appearance = None
+
+    def check_water_threshold(self) -> bool:
+        """Check if water crossed a visual threshold, invalidating if so.
+
+        Returns:
+            True if appearance was invalidated
+        """
+        # Determine current water state
+        if self.surface_water > 50:
+            new_state = 2  # flooded
+        elif self.surface_water > 5:
+            new_state = 1  # wet
+        else:
+            new_state = 0  # dry
+
+        if new_state != self._last_water_state:
+            self._last_water_state = new_state
+            self.invalidate_appearance()
+            return True
+        return False
 
 
 # =============================================================================
@@ -239,6 +283,8 @@ def ensure_terrain_override(subsquare: SubSquare, tile_terrain: "TerrainColumn")
     If the sub-square doesn't have an override, a deep copy of the
     tile terrain is created and assigned.
 
+    Also invalidates the appearance cache since terrain affects visuals.
+
     Args:
         subsquare: The sub-square to ensure has terrain
         tile_terrain: The parent tile's terrain to copy from
@@ -248,4 +294,6 @@ def ensure_terrain_override(subsquare: SubSquare, tile_terrain: "TerrainColumn")
     """
     if subsquare.terrain_override is None:
         subsquare.terrain_override = deepcopy(tile_terrain)
+    # Terrain change affects appearance
+    subsquare.invalidate_appearance()
     return subsquare.terrain_override

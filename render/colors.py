@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Tuple, cast
 
 from ground import MATERIAL_LIBRARY
-from surface_state import compute_surface_appearance
 from config import (
     BIOME_COLORS,
     ELEVATION_BRIGHTNESS_MIN,
@@ -89,10 +88,10 @@ def color_for_subsquare(
     tile,
     elevation_range: Tuple[float, float]
 ) -> Color:
-    """Calculate the display color for a sub-square from computed appearance.
+    """Calculate the display color for a sub-square from cached appearance.
 
-    The appearance is computed from environmental factors (exposed material,
-    water state, organics) rather than a stored biome string.
+    The appearance is cached on the sub-square and computed from environmental
+    factors (exposed material, water state, organics) when invalidated.
 
     Args:
         subsquare: The sub-square to render
@@ -100,8 +99,8 @@ def color_for_subsquare(
         tile: Parent tile (for terrain data if no override)
         elevation_range: (min, max) elevation for brightness scaling
     """
-    # Compute appearance from environmental factors
-    appearance = compute_surface_appearance(subsquare, tile)
+    # Get cached appearance (computes if needed)
+    appearance = subsquare.get_appearance(tile)
 
     # Start with computed base color
     base_color = appearance.display_color

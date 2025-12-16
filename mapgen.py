@@ -220,6 +220,18 @@ def calculate_elevation_percentiles(
     return percentiles
 
 
+def invalidate_all_appearances(tiles: List[List[Tile]], width: int, height: int) -> None:
+    """Invalidate cached appearance for all sub-squares.
+
+    Called at day end to refresh visuals based on accumulated changes.
+    """
+    for x in range(width):
+        for y in range(height):
+            for row in tiles[x][y].subgrid:
+                for subsquare in row:
+                    subsquare.invalidate_appearance()
+
+
 def recalculate_biomes(
     tiles: List[List[Tile]], width: int, height: int
 ) -> List[str]:
@@ -227,6 +239,7 @@ def recalculate_biomes(
     Recalculate biomes for all tiles based on current conditions.
 
     Called daily to allow landscape evolution based on moisture, etc.
+    Also invalidates all appearance caches to refresh visuals.
 
     Returns:
         List of messages to display to player
@@ -251,6 +264,9 @@ def recalculate_biomes(
             if new_biome != tile.kind:
                 tile.kind = new_biome
                 changes += 1
+
+    # Refresh all appearance caches at day end
+    invalidate_all_appearances(tiles, width, height)
 
     if changes > 0:
         messages.append(f"Landscape shifted: {changes} tiles changed biome.")

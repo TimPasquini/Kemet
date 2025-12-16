@@ -29,7 +29,8 @@ Stuttery movement at tile boundaries needs runtime profiling.
 **Suspected causes:**
 - `pygame.Surface()` allocations per sub-square in `render_subgrid_water()`
 - `pygame.transform.scale()` called every frame
-- `compute_surface_appearance()` called per sub-square per frame (potential caching opportunity)
+
+Note: Appearance computation is now cached (not recalculated every frame).
 
 ---
 
@@ -50,9 +51,11 @@ Subsurface Layer (TerrainColumn + WaterColumn)
 ├── Each layer: material + depth
 └── WaterColumn.layer_water: Dict[SoilLayer, int]
 
-Appearance System (NEW: surface_state.py)
+Appearance System (surface_state.py)
 ├── compute_surface_appearance() - computes visual from factors
 ├── SurfaceAppearance - dataclass with type, color, pattern
+├── Cached on SubSquare._cached_appearance
+├── Invalidated: terrain change, day end, water threshold crossing
 └── Factors: exposed material, water state, organics depth
     (Future: humidity, neighbors, structures)
 ```
