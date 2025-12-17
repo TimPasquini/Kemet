@@ -6,6 +6,19 @@ Last updated: 2025-12-16
 
 ## Recently Completed
 
+### Phase 2: Atmosphere Layer (2025-12-16)
+- ✅ Created `atmosphere.py` with `AtmosphereRegion` and `AtmosphereLayer`
+  - Regions cover 4x4 tiles with humidity, wind direction/speed
+  - Humidity affects evaporation rate (high humidity = less evap)
+  - Wind speed increases evaporation
+- ✅ Integrated atmosphere into simulation pipeline
+  - `atmosphere` field on GameState, initialized in `build_initial_state()`
+  - `apply_tile_evaporation()` uses `atmosphere.get_evaporation_modifier()`
+  - `simulate_atmosphere_tick()` evolves humidity/wind over time
+- ✅ Fixed structure collision detection
+  - Changed from tile-level to subsquare-level collision
+  - Structures only block the specific subsquare they occupy
+
 ### Phase 1 Technical Debt (2025-12-16)
 - ✅ Extracted `remove_water_proportionally()` to `simulation/surface.py`
   - Eliminated duplicate water distribution logic in main.py and structures.py
@@ -38,12 +51,14 @@ Last updated: 2025-12-16
 - ✅ Removed `SubSquare.biome` - now computed from terrain/water state
 - ✅ Created unified water access helpers
 
-**Phase 2 tasks (if needed):**
-- Abstract layer interface with adapter pattern
-- Consider if TerrainColumn/WaterColumn need unified interface
+**Phase 2: Atmosphere Layer - COMPLETE**
+- ✅ Created `atmosphere.py` with regional humidity/wind
+- ✅ Integrated into evaporation calculation
+- ✅ Atmosphere evolves over time based on heat
 
-**Phase 3: Atmosphere Layer (future)**
-- Add humidity/wind following same layer pattern
+**Phase 3: Erosion System (next)**
+- Water velocity moves surface material
+- Wind affects exposed terrain
 
 ### 2. Performance Investigation (Low Priority)
 
@@ -82,9 +97,11 @@ Pygame-specific code stays in `pygame_runner.py` and `render/`.
 
 | File | Key Contents |
 |------|--------------|
+| `atmosphere.py` | `AtmosphereLayer`, `AtmosphereRegion`, `simulate_atmosphere_tick()` |
 | `surface_state.py` | `SurfaceAppearance`, `compute_surface_appearance()`, water helpers |
 | `simulation/surface.py` | `simulate_surface_flow()`, `remove_water_proportionally()` |
+| `simulation/subsurface.py` | `apply_tile_evaporation()` (uses atmosphere humidity) |
 | `subgrid.py` | `SubSquare`, `ensure_terrain_override()`, `get_subsquare_terrain()` |
 | `structures.py` | `Structure` ABC, `Condenser`, `Cistern`, `Planter` subclasses |
 | `render/map.py` | `render_static_background()`, `redraw_background_rect()` |
-| `pygame_runner.py` | `update_dirty_background()`, background surface management |
+| `pygame_runner.py` | `update_dirty_background()`, subsquare-level collision |

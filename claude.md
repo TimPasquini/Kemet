@@ -105,13 +105,14 @@ This distinction helps players subconsciously categorize elements into "things I
 | **Surface** | Sub-grid (3x3 per tile) | Every tick | Player, structures, surface water, erosion |
 | **Subsurface** | Tile (current) | Every tick | Soil layers, water table, vertical seepage |
 
-### Water Simulation Pipeline
+### Simulation Pipeline
 
 Each tick runs these phases in order:
 1. **Surface flow** - 8-neighbor flow between sub-squares based on elevation
 2. **Surface seepage** - Water infiltrates topmost soil layer (permeability-based)
 3. **Subsurface tick** - Wellspring output, vertical seepage, horizontal flow, capillary rise
-4. **Evaporation** - Per-sub-square with biome and trench modifiers
+4. **Evaporation** - Per-sub-square with biome, trench, and atmosphere humidity modifiers
+5. **Atmosphere tick** - Humidity and wind drift based on heat
 
 ### Sub-Grid Model (3x3)
 
@@ -236,16 +237,17 @@ System reaches equilibrium with ~2500 units surface water on a 20x20 map.
 kemet/
 ├── config.py              # Constants including water rates
 ├── main.py                # GameState, tick orchestration
+├── atmosphere.py          # AtmosphereLayer, regional humidity/wind
 ├── subgrid.py             # SubSquare, coordinate utils, terrain override
-├── surface_state.py       # NEW: Computed appearance, unified water access
-├── player.py              # Player state (sub-grid position)
+├── surface_state.py       # Computed appearance, unified water access
+├── player.py              # Player state (sub-grid position), collision
 ├── camera.py              # Viewport transforms
 ├── mapgen.py              # Map generation, tile types (simulation props)
 ├── water.py               # WaterColumn (subsurface only)
 ├── ground.py              # TerrainColumn, SoilLayer, materials
 ├── simulation/
 │   ├── surface.py         # Surface flow + seepage
-│   └── subsurface.py      # Underground flow + evaporation
+│   └── subsurface.py      # Underground flow + evaporation (uses atmosphere)
 ├── render/
 │   ├── map.py             # Map + water visualization
 │   ├── colors.py          # Color computation (uses surface_state)
@@ -266,4 +268,4 @@ kemet/
 6. [x] Surface water flows at sub-grid level, pools in low spots
 7. [x] Water system reaches stable equilibrium
 8. [ ] Erosion moves material based on water velocity
-9. [ ] Atmosphere affects regional evaporation
+9. [x] Atmosphere affects regional evaporation
