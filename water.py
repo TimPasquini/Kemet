@@ -20,6 +20,7 @@ from ground import (
     TerrainColumn,
     SoilLayer,
     MATERIAL_LIBRARY,
+    layers_can_connect,
 )
 from utils import get_neighbors
 from config import (
@@ -228,6 +229,10 @@ def calculate_subsurface_flow(
                     if n_terrain.get_layer_depth(layer) == 0:
                         continue
 
+                    # Skip if layers don't overlap in elevation (bedrock blocks flow)
+                    if not layers_can_connect(terrain, layer, n_terrain, layer):
+                        continue
+
                     n_head = _calculate_hydraulic_head(n_terrain, n_water, layer)
                     diff = my_head - n_head
 
@@ -293,6 +298,10 @@ def calculate_overflows(
                 for nx, ny in get_neighbors(x, y, width, height):
                     n_terrain, n_water = tiles[nx][ny]
                     if n_terrain.get_layer_depth(layer) == 0: continue
+
+                    # Skip if layers don't overlap in elevation (bedrock blocks flow)
+                    if not layers_can_connect(terrain, layer, n_terrain, layer):
+                        continue
 
                     n_head = _calculate_hydraulic_head(n_terrain, n_water, layer)
                     diff = my_head - n_head
