@@ -246,7 +246,8 @@ def render_static_background(state: "GameState", font) -> pygame.Surface:
             # Draw static features directly onto the background
             appearance = subsquare.get_appearance(tile)
             if "trench" in appearance.features:
-                draw_text(background_surface, font, "~", (rect.x + 2, rect.y), color=(60, 100, 120))
+                # Draw a visible border around trenched subsquares
+                pygame.draw.rect(background_surface, (60, 100, 120), rect, 2)
 
     return background_surface
 
@@ -278,7 +279,7 @@ def redraw_background_rect(background_surface: pygame.Surface, state: "GameState
     # Draw trench indicator if present
     appearance = subsquare.get_appearance(tile)
     if "trench" in appearance.features:
-        draw_text(background_surface, font, "~", (rect.x + 2, rect.y), color=(60, 100, 120))
+        pygame.draw.rect(background_surface, (60, 100, 120), rect, 2)
 
 
 def get_tool_highlight_color(

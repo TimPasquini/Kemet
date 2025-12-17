@@ -84,7 +84,7 @@ from render import (
     render_help_overlay,
     render_event_log,
 )
-from render.map import render_interaction_highlights
+from render.map import render_interaction_highlights, redraw_background_rect
 
 
 def screen_to_virtual(
@@ -152,9 +152,16 @@ def update_dirty_background(
     if not state.dirty_subsquares:
         return background_surface
 
-    # For now, regenerate the whole background if anything is dirty.
-    # A true dirty-rect implementation would re-render just the dirty sub-squares.
-    background_surface = render_static_background(state, font)
+    # Redraw only the dirty sub-squares
+    for sub_x, sub_y in state.dirty_subsquares:
+        rect = pygame.Rect(
+            sub_x * SUB_TILE_SIZE,
+            sub_y * SUB_TILE_SIZE,
+            SUB_TILE_SIZE,
+            SUB_TILE_SIZE
+        )
+        redraw_background_rect(background_surface, state, font, rect)
+
     state.dirty_subsquares.clear()
     return background_surface
 
@@ -505,11 +512,10 @@ def run(tile_size: int = TILE_SIZE) -> None:
         state.set_target(ui_state.target_subsquare)
 
         # Simulation tick
-        tick_timer = getattr(state, '_tick_timer', 0.0) + dt
-        if tick_timer >= TICK_INTERVAL:
+        state._tick_timer += dt
+        if state._tick_timer >= TICK_INTERVAL:
             simulate_tick(state)
-            tick_timer -= TICK_INTERVAL
-        state._tick_timer = tick_timer
+            state._tick_timer -= TICK_INTERVAL
 
         # Update dirty rects on the background surface
         background_surface = update_dirty_background(background_surface, state, font)

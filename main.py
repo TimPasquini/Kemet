@@ -44,7 +44,12 @@ from structures import (
     build_structure,
     tick_structures,
 )
-from simulation.surface import simulate_surface_flow, simulate_surface_seepage, get_tile_surface_water
+from simulation.surface import (
+    simulate_surface_flow,
+    simulate_surface_seepage,
+    get_tile_surface_water,
+    remove_water_proportionally,
+)
 from simulation.subsurface import simulate_subsurface_tick, apply_tile_evaporation
 from weather import WeatherSystem
 
@@ -78,6 +83,9 @@ class GameState:
 
     # Render cache: list of (sub_x, sub_y) coordinates that need redrawing
     dirty_subsquares: List[Point] = field(default_factory=list)
+
+    # Simulation timing (accumulated time for tick processing)
+    _tick_timer: float = 0.0
 
     # === Player convenience properties for backwards compatibility ===
     @property
@@ -281,19 +289,8 @@ def collect_water(state: GameState) -> None:
         state.messages.append("No water to collect here.")
         return
 
-    gathered = min(100, available)
-
-    # Remove water proportionally from sub-squares
-    remaining = gathered
-    total_water = available
-    for row in tile.subgrid:
-        for subsquare in row:
-            if subsquare.surface_water > 0 and remaining > 0:
-                proportion = subsquare.surface_water / total_water
-                take = min(int(gathered * proportion) + 1, subsquare.surface_water, remaining)
-                subsquare.surface_water -= take
-                remaining -= take
-
+    # Collect up to 100 units (10L) from this tile
+    gathered = remove_water_proportionally(tile, min(100, available))
     state.inventory.water += gathered
     state.messages.append(f"Collected {gathered / 10:.1f}L water.")
 

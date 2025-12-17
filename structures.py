@@ -26,7 +26,11 @@ from config import (
     CISTERN_LOSS_RECOVERY,
     STRUCTURE_COSTS,
 )
-from simulation.surface import get_tile_surface_water, distribute_upward_seepage
+from simulation.surface import (
+    get_tile_surface_water,
+    distribute_upward_seepage,
+    remove_water_proportionally,
+)
 
 if TYPE_CHECKING:
     from main import GameState, Inventory
@@ -82,7 +86,7 @@ class Cistern(Structure):
         if surface_water > CISTERN_TRANSFER_RATE and self.stored < CISTERN_CAPACITY:
             transfer = min(CISTERN_TRANSFER_RATE, surface_water, CISTERN_CAPACITY - self.stored)
             # Remove water proportionally from sub-squares
-            _remove_water_from_subgrid(tile, transfer)
+            remove_water_proportionally(tile, transfer)
             self.stored += transfer
 
         # Cistern slowly leaks (scales with heat)
@@ -123,7 +127,7 @@ class Planter(Structure):
             self.growth = 0
             state.inventory.biomass += 1
             state.inventory.seeds += 1
-            _remove_water_from_subgrid(tile, PLANTER_WATER_COST)
+            remove_water_proportionally(tile, PLANTER_WATER_COST)
             terrain = ensure_terrain_override(subsquare, tile.terrain)
             if terrain.get_layer_depth(SoilLayer.ORGANICS) < MAX_ORGANICS_DEPTH:
                 terrain.add_material_to_layer(SoilLayer.ORGANICS, 1)
@@ -197,31 +201,3 @@ def tick_structures(state: "GameState", heat: int) -> None:
         subsquare = tile.subgrid[local_x][local_y]
 
         structure.tick(state, tile, subsquare)
-
-
-def _remove_water_from_subgrid(tile, amount: int) -> int:
-    """Remove water proportionally from tile's sub-squares.
-
-    Args:
-        tile: Tile to remove water from
-        amount: Amount to remove
-
-    Returns:
-        Actual amount removed
-    """
-    total_water = get_tile_surface_water(tile)
-    if total_water <= 0:
-        return 0
-
-    to_remove = min(amount, total_water)
-    remaining = to_remove
-
-    for row in tile.subgrid:
-        for subsquare in row:
-            if subsquare.surface_water > 0 and remaining > 0:
-                proportion = subsquare.surface_water / total_water
-                take = min(int(to_remove * proportion) + 1, subsquare.surface_water, remaining)
-                subsquare.surface_water -= take
-                remaining -= take
-
-    return to_remove - remaining

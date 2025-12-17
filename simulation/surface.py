@@ -217,6 +217,42 @@ def get_tile_surface_water(tile: "Tile") -> int:
     return total
 
 
+def remove_water_proportionally(tile: "Tile", amount: int) -> int:
+    """Remove water proportionally from tile's sub-squares.
+
+    Each sub-square loses water in proportion to how much it has.
+    This ensures water is removed evenly rather than draining one sub-square first.
+
+    Args:
+        tile: Tile to remove water from
+        amount: Maximum amount to remove
+
+    Returns:
+        Actual amount removed (may be less if insufficient water)
+    """
+    total_water = get_tile_surface_water(tile)
+    if total_water <= 0:
+        return 0
+
+    to_remove = min(amount, total_water)
+    remaining = to_remove
+
+    for row in tile.subgrid:
+        for subsquare in row:
+            if subsquare.surface_water > 0 and remaining > 0:
+                proportion = subsquare.surface_water / total_water
+                # Round up to ensure we remove enough, but cap at available and remaining
+                take = min(
+                    int(to_remove * proportion) + 1,
+                    subsquare.surface_water,
+                    remaining
+                )
+                subsquare.surface_water -= take
+                remaining -= take
+
+    return to_remove - remaining
+
+
 def set_tile_surface_water(tile: "Tile", amount: int) -> None:
     """Distribute water amount across tile's sub-squares by elevation.
 
