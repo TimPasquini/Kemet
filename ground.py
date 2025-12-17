@@ -317,6 +317,34 @@ class SurfaceTraits:
     # surface_structures: List[Structure] = field(default_factory=list)
 
 
+def layers_can_connect(
+    src_terrain: TerrainColumn,
+    src_layer: SoilLayer,
+    dst_terrain: TerrainColumn,
+    dst_layer: SoilLayer
+) -> bool:
+    """Check if two layers have overlapping elevation ranges for horizontal flow.
+
+    For water to flow horizontally between two tiles at a given layer,
+    the layer elevation ranges must overlap. A bedrock ridge higher than
+    a neighbor's regolith top would block flow at that layer.
+
+    Args:
+        src_terrain: Source tile's terrain column
+        src_layer: Layer in source tile
+        dst_terrain: Destination tile's terrain column
+        dst_layer: Layer in destination tile
+
+    Returns:
+        True if layers can exchange water horizontally
+    """
+    src_bot, src_top = src_terrain.get_layer_elevation_range(src_layer)
+    dst_bot, dst_top = dst_terrain.get_layer_elevation_range(dst_layer)
+
+    # Ranges overlap if: src_bottom < dst_top AND dst_bottom < src_top
+    return src_bot < dst_top and dst_bot < src_top
+
+
 def create_default_terrain(bedrock_base: int, total_soil_depth: int) -> TerrainColumn:
     """
     Helper to create a simple terrain column with default layer distribution.

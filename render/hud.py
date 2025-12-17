@@ -122,6 +122,7 @@ def render_soil_profile(
 
     Shows terrain from the sub-square's override if present, otherwise from tile.
     Also shows sub-square-specific data like surface water and elevation offset.
+    Includes an elevation gauge on the left showing depth relative to sea level.
     """
     from subgrid import get_subsquare_terrain
     x, y = pos
@@ -129,11 +130,25 @@ def render_soil_profile(
     terrain = get_subsquare_terrain(subsquare, tile.terrain)
     water = tile.water
 
-    # Draw header and border
+    # Calculate elevations for the gauge
+    surface_elev = terrain.get_surface_elevation()
+    bedrock_base = terrain.bedrock_base
+    # Add subsquare offset (convert from meters to depth units)
+    surface_elev_with_offset = surface_elev + int(subsquare.elevation_offset * 10)
+
+    # Layout: gauge on left (40px), soil profile on right
+    gauge_width = 40
+    profile_x = x + gauge_width
+    profile_width = width - gauge_width
+
+    # Draw header and border (full width)
     header_y = y - 22
     pygame.draw.rect(screen, (40, 40, 45), (x, header_y, width, height + 22), 0, border_radius=3)
     pygame.draw.rect(screen, (80, 80, 85), (x, header_y, width, height + 22), 1, border_radius=3)
-    draw_section_header(screen, font, "Soil Profile", (x + 8, header_y + 5), width=width - 16)
+
+    # Header shows surface elevation
+    header_text = f"Elev: {units_to_meters(surface_elev_with_offset):.1f}m"
+    draw_section_header(screen, font, header_text, (x + 8, header_y + 5), width=width - 16)
 
     total_depth = terrain.get_total_soil_depth() + terrain.bedrock_depth
     if total_depth == 0:
@@ -141,6 +156,32 @@ def render_soil_profile(
 
     scale = height / total_depth
     current_y = y
+
+    # Draw elevation gauge on the left
+    gauge_x = x + 2
+    gauge_line_x = x + gauge_width - 8
+
+    # Calculate elevation range for gauge
+    elev_top = surface_elev_with_offset
+    elev_bottom = bedrock_base
+
+    # Draw gauge line
+    pygame.draw.line(screen, (120, 120, 130), (gauge_line_x, y), (gauge_line_x, y + height), 1)
+
+    # Draw tick marks and labels at key elevations
+    # Top tick (surface)
+    pygame.draw.line(screen, (150, 150, 160), (gauge_line_x - 4, y), (gauge_line_x, y), 1)
+    draw_text(screen, font, f"{units_to_meters(elev_top):.1f}", (gauge_x, y - 2), color=(150, 150, 160))
+
+    # Bottom tick (bedrock base)
+    pygame.draw.line(screen, (150, 150, 160), (gauge_line_x - 4, y + height - 1), (gauge_line_x, y + height - 1), 1)
+    draw_text(screen, font, f"{units_to_meters(elev_bottom):.1f}", (gauge_x, y + height - 12), color=(150, 150, 160))
+
+    # Sea level indicator if in range
+    if elev_bottom < 0 < elev_top:
+        sea_level_y = y + int((elev_top - 0) / (elev_top - elev_bottom) * height)
+        pygame.draw.line(screen, (100, 150, 200), (gauge_line_x - 6, sea_level_y), (gauge_line_x, sea_level_y), 2)
+        draw_text(screen, font, "0", (gauge_x + 8, sea_level_y - 6), color=(100, 150, 200))
 
     def draw_layer(soil_layer: SoilLayer, label: str):
         nonlocal current_y
@@ -154,7 +195,7 @@ def render_soil_profile(
 
         props = MATERIAL_LIBRARY.get(terrain.get_layer_material(soil_layer))
         color = props.display_color if props else (150, 150, 150)
-        layer_rect = pygame.Rect(x + 1, current_y, width - 2, layer_height)
+        layer_rect = pygame.Rect(profile_x + 1, current_y, profile_width - 2, layer_height)
         pygame.draw.rect(screen, color, layer_rect)
 
         # Draw water fill overlay
@@ -164,14 +205,14 @@ def render_soil_profile(
             fill_pct = min(100, (water_in_layer * 100) // max_storage)
             water_height = (layer_height * fill_pct) // 100
             if water_height > 0:
-                water_rect = pygame.Rect(x + 1, current_y + layer_height - water_height, width - 2, water_height)
+                water_rect = pygame.Rect(profile_x + 1, current_y + layer_height - water_height, profile_width - 2, water_height)
                 water_surf = pygame.Surface((water_rect.width, water_rect.height), pygame.SRCALPHA)
                 water_surf.fill((100, 150, 255, 100))
                 screen.blit(water_surf, water_rect.topleft)
 
         # Draw label if layer is tall enough
         if layer_height >= 16:
-            draw_text(screen, font, f"{label[:3]} {units_to_meters(depth):.1f}m", (x + 5, current_y + 2), color=(255, 255, 255))
+            draw_text(screen, font, f"{label[:3]} {units_to_meters(depth):.1f}m", (profile_x + 5, current_y + 2), color=(255, 255, 255))
 
         current_y += layer_height
 
@@ -180,10 +221,10 @@ def render_soil_profile(
     if surface_water > 0:
         surf_height = min(30, int(surface_water * scale * 0.5))
         if surf_height > 0:
-            surf_rect = pygame.Rect(x + 1, current_y, width - 2, surf_height)
+            surf_rect = pygame.Rect(profile_x + 1, current_y, profile_width - 2, surf_height)
             pygame.draw.rect(screen, (100, 150, 255), surf_rect)
             if surf_height >= 16:
-                draw_text(screen, font, f"Water {surface_water / 10:.1f}L", (x + 5, current_y + 2), color=(255, 255, 255))
+                draw_text(screen, font, f"Water {surface_water / 10:.1f}L", (profile_x + 5, current_y + 2), color=(255, 255, 255))
             current_y += surf_height
 
     # Iterate from top (Organics) to bottom (Bedrock)

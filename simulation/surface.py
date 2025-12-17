@@ -253,6 +253,33 @@ def remove_water_proportionally(tile: "Tile", amount: int) -> int:
     return to_remove - remaining
 
 
+def _calculate_elevation_weights(tile: "Tile") -> Tuple[List[Tuple[int, int, float]], float]:
+    """Calculate inverse elevation weights for water distribution.
+
+    Uses ABSOLUTE elevation (tile base + subsquare offset) for consistency.
+    Lower elevation = higher weight = receives more water.
+
+    Args:
+        tile: Tile to calculate weights for
+
+    Returns:
+        Tuple of (list of (local_x, local_y, weight), total_weight)
+    """
+    weights: List[Tuple[int, int, float]] = []
+    total_weight = 0.0
+
+    for lx in range(SUBGRID_SIZE):
+        for ly in range(SUBGRID_SIZE):
+            abs_elev = get_subsquare_elevation(tile, lx, ly)
+            # Inverse weight with offset to prevent division issues
+            # +100 ensures positive values even for negative elevations
+            weight = 1.0 / (abs_elev + 100.0)
+            weights.append((lx, ly, weight))
+            total_weight += weight
+
+    return weights, total_weight
+
+
 def set_tile_surface_water(tile: "Tile", amount: int) -> None:
     """Distribute water amount across tile's sub-squares by elevation.
 
@@ -262,24 +289,15 @@ def set_tile_surface_water(tile: "Tile", amount: int) -> None:
         tile: Tile to distribute water to
         amount: Total water amount to distribute
     """
+    # Clear existing water first
+    for row in tile.subgrid:
+        for subsquare in row:
+            subsquare.surface_water = 0
+
     if amount <= 0:
-        # Clear all water
-        for row in tile.subgrid:
-            for subsquare in row:
-                subsquare.surface_water = 0
         return
 
-    # Calculate inverse elevation weights (lower = higher weight)
-    weights: List[Tuple[int, int, float]] = []
-    total_weight = 0.0
-
-    for lx in range(SUBGRID_SIZE):
-        for ly in range(SUBGRID_SIZE):
-            elev = get_subsquare_elevation(tile, lx, ly)
-            # Inverse weight - add small offset to avoid division by zero
-            weight = 1.0 / (elev + 100.0)
-            weights.append((lx, ly, weight))
-            total_weight += weight
+    weights, total_weight = _calculate_elevation_weights(tile)
 
     # Distribute proportionally
     distributed = 0
@@ -297,8 +315,10 @@ def set_tile_surface_water(tile: "Tile", amount: int) -> None:
 def distribute_upward_seepage(tile: "Tile", water_amount: int) -> None:
     """Distribute water seeping up from subsurface to sub-squares.
 
-    Water emerges weighted by inverse elevation - lowest sub-squares
+    Water emerges weighted by inverse ABSOLUTE elevation - lowest sub-squares
     receive the most water (natural spring behavior).
+
+    Uses the same elevation weighting as set_tile_surface_water() for consistency.
 
     Args:
         tile: Tile receiving upward seepage
@@ -307,19 +327,7 @@ def distribute_upward_seepage(tile: "Tile", water_amount: int) -> None:
     if water_amount <= 0:
         return
 
-    # Calculate weights based on inverse elevation
-    weights: List[Tuple[int, int, float]] = []
-    total_weight = 0.0
-
-    for lx in range(SUBGRID_SIZE):
-        for ly in range(SUBGRID_SIZE):
-            offset = tile.subgrid[lx][ly].elevation_offset
-            # Lower elevation = higher weight
-            # Use 1.0 / (offset + 0.1) to give lowest spots most water
-            # but still give some to higher spots
-            weight = 1.0 / (offset + 0.15)
-            weights.append((lx, ly, weight))
-            total_weight += weight
+    weights, total_weight = _calculate_elevation_weights(tile)
 
     # Distribute water and check thresholds
     distributed = 0

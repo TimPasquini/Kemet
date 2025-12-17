@@ -11,6 +11,22 @@ from typing import Dict, Tuple
 # =============================================================================
 # UNITS & SCALE
 # =============================================================================
+# ELEVATION MODEL:
+# - All elevation/depth values stored in "depth units"
+# - 1 depth unit = 100mm = 0.1 meters
+# - SEA_LEVEL (0) is the reference point
+# - Typical bedrock_base: -25 to -20 units (2.0-2.5m below sea level)
+#
+# SUBSQUARE MICRO-TERRAIN:
+# - SubSquare.elevation_offset is stored in METERS (not depth units)
+# - Convert to depth units: offset_units = int(elevation_offset * 10)
+# - Typical range: -0.05 to +0.05 meters (-0.5 to +0.5 depth units)
+#
+# ELEVATION HIERARCHY:
+# - Tile surface elevation = bedrock_base + sum(all layer depths)
+# - Subsquare elevation = tile surface + offset_units
+# - Water surface height = subsquare elevation + surface_water amount
+
 DEPTH_UNIT_MM = 100  # 1 depth unit = 100mm (10cm)
 SEA_LEVEL = 0        # Reference elevation
 
