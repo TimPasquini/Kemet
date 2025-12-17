@@ -6,10 +6,19 @@ Last updated: 2025-12-16
 
 ## Recently Completed
 
+### Phase 1 Technical Debt (2025-12-16)
+- ✅ Extracted `remove_water_proportionally()` to `simulation/surface.py`
+  - Eliminated duplicate water distribution logic in main.py and structures.py
+- ✅ Added `_tick_timer: float` field to GameState dataclass
+  - Removed dynamic attribute usage with getattr() in pygame_runner.py
+- ✅ Implemented true dirty-rect updates in `update_dirty_background()`
+  - Now uses `redraw_background_rect()` per subsquare instead of full regeneration
+- ✅ Changed trench rendering from "~" text to visible 2px border
+
 ### Render Caching System
 - ✅ Static terrain pre-rendered to background surface
 - ✅ Dirty subsquare tracking via coordinate tuples (pygame-agnostic)
-- ✅ Background regenerated when terrain changes
+- ✅ True dirty-rect redraws (only changed subsquares)
 - ✅ Elevation-based brightness applied correctly to cached terrain
 
 ### Structure Refactoring
@@ -54,7 +63,7 @@ Note: Static terrain is now cached. Appearance computation is cached per-subsqua
 
 ```
 1. render_static_background() - One-time terrain render (cached)
-2. update_dirty_background() - Regenerate if dirty_subsquares non-empty
+2. update_dirty_background() - Redraw only dirty subsquares via redraw_background_rect()
 3. render_map_viewport() - Blit background + draw dynamic elements
 4. render_subgrid_water() - Semi-transparent water overlay
 5. render_player(), render_night_overlay() - Top-level overlays
@@ -74,7 +83,8 @@ Pygame-specific code stays in `pygame_runner.py` and `render/`.
 | File | Key Contents |
 |------|--------------|
 | `surface_state.py` | `SurfaceAppearance`, `compute_surface_appearance()`, water helpers |
+| `simulation/surface.py` | `simulate_surface_flow()`, `remove_water_proportionally()` |
 | `subgrid.py` | `SubSquare`, `ensure_terrain_override()`, `get_subsquare_terrain()` |
 | `structures.py` | `Structure` ABC, `Condenser`, `Cistern`, `Planter` subclasses |
-| `render/map.py` | `render_static_background()`, `render_map_viewport()` |
+| `render/map.py` | `render_static_background()`, `redraw_background_rect()` |
 | `pygame_runner.py` | `update_dirty_background()`, background surface management |
