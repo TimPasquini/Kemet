@@ -98,13 +98,13 @@ def update_player_movement(
     dt: float,
     world_width_subsquares: int,
     world_height_subsquares: int,
-    is_tile_blocked: Callable[[int, int], bool],
+    is_subsquare_blocked: Callable[[int, int], bool],
 ) -> None:
     """
     Update player position based on velocity and collision.
 
     Movement is in sub-grid space. Velocity is in sub-squares per second.
-    Collision checking occurs at tile level with axis-separated sliding.
+    Collision checking occurs at subsquare level with axis-separated sliding.
 
     Args:
         player_state: The player state to update
@@ -112,7 +112,7 @@ def update_player_movement(
         dt: Delta time in seconds
         world_width_subsquares: World width in sub-squares
         world_height_subsquares: World height in sub-squares
-        is_tile_blocked: Function(tile_x, tile_y) -> bool
+        is_subsquare_blocked: Function(sub_x, sub_y) -> bool
     """
     if player_state.is_busy():
         return
@@ -133,10 +133,10 @@ def update_player_movement(
     new_x = current_x + vx * dt
     new_x = clamp(new_x, 0.5, world_width_subsquares - 0.5)
 
-    # Check X collision
-    x_tile = subgrid_to_tile(int(new_x), int(current_y))
-    current_tile = player_state.tile_position
-    if x_tile != current_tile and is_tile_blocked(x_tile[0], x_tile[1]):
+    # Check X collision at subsquare level
+    new_sub_x = int(new_x)
+    current_sub_x = int(current_x)
+    if new_sub_x != current_sub_x and is_subsquare_blocked(new_sub_x, int(current_y)):
         new_x = current_x  # Block X movement
     else:
         current_x = new_x  # Accept X movement
@@ -145,10 +145,10 @@ def update_player_movement(
     new_y = current_y + vy * dt
     new_y = clamp(new_y, 0.5, world_height_subsquares - 0.5)
 
-    # Check Y collision
-    y_tile = subgrid_to_tile(int(current_x), int(new_y))
-    current_tile = subgrid_to_tile(int(current_x), int(current_y))
-    if y_tile != current_tile and is_tile_blocked(y_tile[0], y_tile[1]):
+    # Check Y collision at subsquare level
+    new_sub_y = int(new_y)
+    current_sub_y = int(current_y)
+    if new_sub_y != current_sub_y and is_subsquare_blocked(int(current_x), new_sub_y):
         new_y = current_y  # Block Y movement
 
     # Update smooth position

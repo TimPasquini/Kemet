@@ -52,6 +52,7 @@ from simulation.surface import (
 )
 from simulation.subsurface import simulate_subsurface_tick, apply_tile_evaporation
 from weather import WeatherSystem
+from atmosphere import AtmosphereLayer, simulate_atmosphere_tick
 
 Point = Tuple[int, int]
 
@@ -83,6 +84,9 @@ class GameState:
 
     # Render cache: list of (sub_x, sub_y) coordinates that need redrawing
     dirty_subsquares: List[Point] = field(default_factory=list)
+
+    # Atmosphere layer (regional humidity/wind)
+    atmosphere: AtmosphereLayer | None = None
 
     # Simulation timing (accumulated time for tick processing)
     _tick_timer: float = 0.0
@@ -195,11 +199,15 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
     player_state = PlayerState()
     player_state.position = start_subsquare  # Uses setter to center in sub-square
 
+    # Initialize atmosphere layer
+    atmosphere = AtmosphereLayer.create(width, height)
+
     return GameState(
         width=width,
         height=height,
         tiles=tiles,
         player_state=player_state,
+        atmosphere=atmosphere,
     )
 
 
@@ -348,6 +356,10 @@ def simulate_tick(state: GameState) -> None:
 
     # Phase 4: Evaporation (applied to sub-squares)
     apply_tile_evaporation(state)
+
+    # Phase 5: Atmosphere evolution (humidity, wind drift)
+    if state.atmosphere is not None:
+        simulate_atmosphere_tick(state.atmosphere, state.heat)
 
 
 def end_day(state: GameState) -> None:

@@ -106,7 +106,7 @@ def apply_tile_evaporation(state: "GameState") -> None:
     """Apply evaporation to surface water on sub-squares.
 
     Evaporation is calculated at tile level but applied to sub-squares
-    with per-sub-square modifiers (trenches reduce evaporation).
+    with per-sub-square modifiers (trenches, regional humidity).
 
     Args:
         state: Game state with tiles and structures
@@ -117,6 +117,11 @@ def apply_tile_evaporation(state: "GameState") -> None:
 
             # Calculate tile-level base evaporation rate
             base_evap = (TILE_TYPES[tile.kind].evap * state.heat) // 100
+
+            # Apply atmosphere humidity modifier if available
+            if state.atmosphere is not None:
+                atmo_mod = state.atmosphere.get_evaporation_modifier(x, y)
+                base_evap = int(base_evap * atmo_mod)
 
             # Check for cisterns in any sub-square of this tile
             # Structures are now keyed by sub-square coords

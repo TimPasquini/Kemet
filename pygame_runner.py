@@ -477,16 +477,23 @@ def run(tile_size: int = TILE_SIZE) -> None:
             if keys[pygame.K_d]:
                 vx += move_speed_subsquares
 
-            def is_blocked(tx: int, ty: int) -> bool:
+            def is_blocked(sub_x: int, sub_y: int) -> bool:
+                """Check if a subsquare is blocked for movement."""
+                from subgrid import subgrid_to_tile, get_subsquare_index
+
+                tile_x, tile_y = subgrid_to_tile(sub_x, sub_y)
+                tile = state.tiles[tile_x][tile_y]
+
                 # Block on rock tiles
-                if state.tiles[tx][ty].kind == "rock":
+                if tile.kind == "rock":
                     return True
-                # Check if any sub-square in this tile has a structure
-                tile = state.tiles[tx][ty]
-                for row in tile.subgrid:
-                    for subsquare in row:
-                        if subsquare.structure_id is not None:
-                            return True
+
+                # Check if this specific subsquare has a structure
+                local_x, local_y = get_subsquare_index(sub_x, sub_y)
+                subsquare = tile.subgrid[local_x][local_y]
+                if subsquare.structure_id is not None:
+                    return True
+
                 return False
 
             update_player_movement(
