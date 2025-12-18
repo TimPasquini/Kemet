@@ -1,97 +1,56 @@
 # Kemet - Project Context for Claude
 
-## Known Issues
-
-### Active Bugs
-
-1. **Stuttery movement** - Moving over simulation tile thresholds feels slightly slower than regular movement. Worse when camera also moves.
-   - *Potential causes*: per-frame Surface allocations in water rendering, `pygame.transform.scale()` every frame
-   - *Status*: Needs runtime profiling
-
-### UI/UX Issues
-
-2. **Navigation** - Hard to find the depot; needs a minimap
-3. **UI proportions** - Information displays not in clean columns
-4. **Dead space** - Map feels crowded; consider HUD overlay approach with floating windows
-5. **No clock** - Hard to tell time of day
-
----
-
-## Critical Architecture: Unified Layer System
-
-With the surface, subterranean, and planned atmospheric layers now functional, we should unify the layer architecture to avoid technical debt. A unified abstract layer system should:
-
-- Define all soil and environmental sub-layers in a single framework
-- Allow shared rules with custom behavior per layer
-- Use meta-group tags ("surface", "underground") as labels only, not containers
-- Allow any layer to serve as the exposed top layer and render appropriately
-
-### Progress
-
-**Phase 1: Consolidate Existing - COMPLETE**
-- Created `surface_state.py` with computed appearance system
-- Removed `SubSquare.biome` - visuals now computed from terrain/water/organics
-- Created unified water access helpers (`get_tile_total_water()`, etc.)
-- `Tile.kind` retained for simulation properties (evap rates, capacity)
-
-**Phase 2: Abstract Layer Interface** (if needed)
-- Adapter pattern to wrap existing classes with unified interface
-
-**Phase 3: Atmosphere Layer**
-- Add humidity/wind following same layer pattern
-
-### Appearance System
-
-Visual rendering is computed from environmental factors in `surface_state.py`:
-
-```python
-appearance = compute_surface_appearance(subsquare, tile)
-# Factors considered:
-# - Exposed material (from terrain column)
-# - Surface water amount
-# - Organics layer depth
-# Future: humidity, neighbors, structures
-```
-
-### Render Caching System
-
-Static terrain is pre-rendered to a background surface for performance:
-
-```python
-# In pygame_runner.py (not main.py - keeps pygame out of game logic)
-background_surface = render_static_background(state, font)
-
-# Dirty tracking uses coordinate tuples (pygame-agnostic)
-state.dirty_subsquares: List[Point]  # In GameState
-
-# When terrain changes, mark dirty and regenerate
-state.dirty_subsquares.append((sub_x, sub_y))
-background_surface = update_dirty_background(background_surface, state, font)
-```
-
-Dynamic elements (water, player, structures) render on top each frame.
-
----
-
 ## Project Vision
 
 Kemet is a terraforming simulation where:
-- Surface water flows based on terrain slope, causing erosion
-- Fertile topsoil is a resource to protect and build
-- Wind and humidity affect evaporation
-- Player builds structures to manage water and cultivate land
+- **Erosion sculpts terrain**: Starting from abundant material, water and wind carve hills, valleys, rivers, lakes
+- **Player moves dirt, doesn't create/destroy it**: Wheelbarrow → cart → bulldozer progression
+- **Conservation of mass/water**: Core mechanic - nothing vanishes, everything goes somewhere
+- **Topology matters**: Elevation affects movement and gameplay, not just visuals
+- **WFC for appearance**: Simulations provide constraints for wave function collapse to determine biome visuals
+
+### Design Philosophy: Systems Respond Naturally
+
+The player can place anything anywhere, but natural systems respond realistically:
+- Pile organics in a stream → they wash downstream and deposit elsewhere
+- Stack sand on an exposed hilltop → wind blows it away
+- Block water flow → it pools and finds another path
+
+This creates emergent gameplay where understanding the systems lets you work with nature rather than against it.
 
 ---
 
-## Visual Design Philosophy
+## Known Issues
 
-The rendering style should intuitively communicate the nature of game elements.
+### Performance (Under Investigation)
 
-1.  **Objects (e.g., Structures):** Rendered as distinct items *on top of* the terrain (e.g., a black square with a letter). This communicates they are interactable, have their own state (like HP), and occupy the space.
+**Symptom**: Stuttery movement, inconsistent tick rhythm even when standing still.
 
-2.  **Terrain Features (e.g., Trenches):** Rendered as modifications *of* the terrain itself (e.g., a border, texture change, or icon). This communicates they are a passive alteration of the ground, not a separate entity.
+**Current mitigation**: Staggered simulation schedule spreads load across ticks.
 
-This distinction helps players subconsciously categorize elements into "things I built" vs. "ways I've shaped the land."
+**Remaining suspects**:
+- Rendering overhead (not yet profiled with pygame)
+- GC pauses
+- Something else outside simulation
+
+**Unimplemented Potential Optimizations**
+  1. Spatial partitioning - Only process tiles with water above a threshold
+  2. Delta-based updates - Track which tiles changed and only recalculate neighbors
+  3. Chunked processing - Spread subsurface work across multiple frames instead of one spike
+  4. Use numpy arrays - Replace nested Python loops with vectorized operations
+
+### UI/UX Issues
+
+1. **Navigation** - Hard to find the depot; needs a minimap
+2. **UI proportions** - Information displays not in clean columns
+3. **Dead space** - Map feels crowded; consider HUD overlay with floating windows
+4. **No clock** - Hard to tell time of day
+
+### Gameplay Issues
+
+1. **Topology doesn't feel meaningful** - Player walks freely regardless of elevation
+2. **Layers too thin** - Current ~1m of soil erodes to bedrock too quickly
+3. **No pre-simulation** - Map shows raw generation, not eroded terrain
 
 ---
 
@@ -101,18 +60,35 @@ This distinction helps players subconsciously categorize elements into "things I
 
 | Layer | Grid Resolution | Update Frequency | Contents |
 |-------|-----------------|------------------|----------|
-| **Atmosphere** | Region (4x4 tiles) | Every 10+ ticks | Humidity, wind, evaporation pressure |
-| **Surface** | Sub-grid (3x3 per tile) | Every tick | Player, structures, surface water, erosion |
-| **Subsurface** | Tile (current) | Every tick | Soil layers, water table, vertical seepage |
+| **Atmosphere** | Region (4x4 tiles) | Every tick | Humidity, wind, evaporation pressure |
+| **Surface** | Sub-grid (3x3 per tile) | Every 2 ticks | Player, structures, surface water, erosion |
+| **Subsurface** | Tile | Every 4 ticks | Soil layers, water table, vertical seepage |
 
-### Simulation Pipeline
+### Simulation Pipeline (Staggered)
 
-Each tick runs these phases in order:
-1. **Surface flow** - 8-neighbor flow between sub-squares based on elevation
-2. **Surface seepage** - Water infiltrates topmost soil layer (permeability-based)
-3. **Subsurface tick** - Wellspring output, vertical seepage, horizontal flow, capillary rise
-4. **Evaporation** - Per-sub-square with biome, trench, and atmosphere humidity modifiers
-5. **Atmosphere tick** - Humidity and wind drift based on heat
+Tick operations are spread across a 4-tick cycle to avoid spikes:
+
+```
+tick % 4 == 0: Surface flow (~35ms) + evaporation (~5ms)
+tick % 4 == 1: Seepage + moisture (~15ms) + SUBSURFACE (~65ms) + evaporation
+tick % 4 == 2: Surface flow (~35ms) + evaporation (~5ms)
+tick % 4 == 3: Seepage + moisture (~15ms) + evaporation (~5ms)
+```
+
+### Water Conservation System
+
+Water flows in a closed cycle via `GlobalWaterPool`:
+
+```
+Wellsprings ←──── total_volume ←──── Edge Runoff
+    │                                      ↑
+    ↓                                      │
+Soil/Surface ──→ Evaporation ──→ atmospheric_reserve ──→ Rain
+```
+
+- **Wellsprings** draw from finite pool (not infinite)
+- **Edge runoff** returns water to pool (not lost)
+- **Evaporation** moves water to atmosphere (returns via rain)
 
 ### Sub-Grid Model (3x3)
 
@@ -128,22 +104,54 @@ Each simulation tile contains 9 **sub-squares**:
 ```
 
 **Sub-square data:**
-- `elevation_offset: float` - Height relative to tile base
+- `elevation_offset: float` - Height relative to tile base (meters)
 - `surface_water: int` - Water pooled on this sub-square
 - `structure_id: Optional[int]` - Structure occupying this sub-square
 - `has_trench: bool` - Reduces evaporation
 - `terrain_override: Optional[TerrainColumn]` - Per-sub-square terrain modifications
-- Visual appearance computed via `surface_state.compute_surface_appearance()`
+- `water_passage: float` - Daily accumulator for erosion calculations
+- `wind_exposure: float` - Daily accumulator for wind erosion
 
 **Coordinate system:**
 - World sub-coords: `(tile_x * 3 + sub_x, tile_y * 3 + sub_y)`
-- For 60x45 tile map -> 180x135 sub-square map
+- For 60x45 tile map → 180x135 sub-square map
 - Player position: sub-square coordinates
 
-**Key Design Principle: Sub-squares are independent units**
-- Each sub-square flows to all 8 neighbors (cardinal + diagonal)
-- Tile boundaries are invisible to surface flow
-- The 3x3 grouping is purely organizational
+---
+
+## Future Architecture: Geological Erosion
+
+### Two-Phase Terrain Model (Planned)
+
+**Phase 1: Proto-Terrain (Pre-Game)**
+- Start with ~100m of bulk material
+- Simplified single-layer model with hardness variation
+- Run 500-2000 erosion cycles during loading
+- Water from wellsprings carves terrain reductively
+
+**Phase 2: Game Terrain (Converted at Start)**
+- Convert eroded proto-terrain to detailed soil layers
+- Layer distribution based on remaining material depth
+- Thin material = exposed bedrock; thick = full soil profile
+
+### Key Concepts
+
+- **Game floor**: True immutable bottom beneath erodible bedrock
+- **Hardness variation**: Spatial noise creates ridges (hard) and valleys (soft)
+- **Sediment return**: Material eroded off edges returns via dust storms
+- **Open edges**: Water/material flows off map freely during pre-game erosion
+
+---
+
+## Visual Design Philosophy
+
+The rendering style should intuitively communicate the nature of game elements.
+
+1. **Objects (e.g., Structures):** Rendered as distinct items *on top of* the terrain. This communicates they are interactable and occupy space.
+
+2. **Terrain Features (e.g., Trenches):** Rendered as modifications *of* the terrain itself (e.g., a border). This communicates they are passive alterations.
+
+This helps players categorize "things I built" vs. "ways I've shaped the land."
 
 ---
 
@@ -158,6 +166,8 @@ Each simulation tile contains 9 **sub-squares**:
 - [x] Sub-squares: **Independent units** - tile boundaries invisible to flow
 - [x] Upward seepage: **Elevation-weighted** distribution
 - [x] Terrain modifications: **Per-sub-square** via `terrain_override`
+- [x] Water conservation: **Closed system** via GlobalWaterPool
+- [x] Simulation scheduling: **Staggered** to spread CPU load
 
 ---
 
@@ -171,19 +181,33 @@ Player moves on 180x135 grid, interaction range highlights work, cursor targetin
 - 8-directional flow based on elevation + water depth
 - Surface-to-soil seepage implemented
 - Elevation-weighted upward seepage (capillary rise, overflow)
-- Water system reaches equilibrium with visible pooling near wellsprings
 
-### Phase 2.5: Unified Layer System Phase 1 - COMPLETE
+### Phase 2.5: Unified Layer System - COMPLETE
 - Created `surface_state.py` with computed appearance system
 - Removed stored `SubSquare.biome` - now computed from terrain/water state
-- Visual appearance factors: exposed material, water amount, organics depth
-- Unified water access helpers in `surface_state.py`
+- Unified water access helpers
 
-### Phase 3: Erosion System - PLANNED
-Water and wind move surface material. Rivers carve channels.
+### Phase 3: Atmosphere Layer - COMPLETE
+- Created `atmosphere.py` with regional humidity/wind
+- Regions cover 4x4 tiles with humidity, wind direction/speed
+- Integrated into evaporation calculation
+- Atmosphere evolves over time based on heat
 
-### Phase 4: Atmosphere Layer - PLANNED
-Regional humidity grid affecting evaporation rates.
+### Phase 4: Water Conservation - COMPLETE
+- Created `world_state.py` with `GlobalWaterPool`
+- Wellsprings draw from finite pool
+- Edge runoff returns to pool
+- Evaporation routes to atmospheric reserve
+
+### Phase 5: Erosion System - IN PROGRESS
+- Overnight erosion using accumulated daily pressures
+- Water passage and wind exposure tracking
+- Real-time erosion moved to overnight processing
+
+### Phase 6: Geological Pre-Simulation - PLANNED
+- Proto-terrain with ~100m bulk material
+- Pre-game erosion cycles
+- Conversion to detailed layers at game start
 
 ---
 
@@ -213,21 +237,33 @@ terrain = get_subsquare_terrain(subsquare, tile.terrain)
 ensure_terrain_override(tile, local_x, local_y)
 ```
 
+### Render Caching System
+```python
+# Static terrain pre-rendered (in pygame_runner.py)
+background_surface = render_static_background(state, font)
+
+# Dirty tracking uses coordinate tuples (pygame-agnostic)
+state.dirty_subsquares: List[Point]
+
+# When terrain changes, mark dirty and regenerate
+state.dirty_subsquares.append((sub_x, sub_y))
+background_surface = update_dirty_background(background_surface, state, font)
+```
+
+Dynamic elements (water, player, structures) render on top each frame.
+
 ---
 
 ## Water Balance (Current Tuning)
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
-| Evaporation (dune/flat/rock) | 1 unit/tick | Reduced from 9-12 |
-| Evaporation (wadi) | 0 units/tick | Wadis retain water |
-| Evaporation (salt) | 2 units/tick | Salt flats dry fastest |
-| Primary wellspring | 40-60 units/tick | 4-6L/tick output |
-| Secondary wellspring | 15-30 units/tick | 1.5-3L/tick output |
+| Initial water pool | 100,000 units | 10,000L in global pool |
+| Primary wellspring | 40-60 units/tick | Draws from pool |
+| Secondary wellspring | 15-30 units/tick | Draws from pool |
+| Surface flow rate | 50% | Per tick transfer |
 | Surface seepage rate | 15% | Infiltration to soil |
 | Capillary rise rate | 5% | Slow upward movement |
-
-System reaches equilibrium with ~2500 units surface water on a 20x20 map.
 
 ---
 
@@ -235,8 +271,9 @@ System reaches equilibrium with ~2500 units surface water on a 20x20 map.
 
 ```
 kemet/
-├── config.py              # Constants including water rates
-├── main.py                # GameState, tick orchestration
+├── config.py              # Constants including water rates, tick intervals
+├── main.py                # GameState, tick orchestration, staggered schedule
+├── world_state.py         # GlobalWaterPool, SedimentPool (conservation)
 ├── atmosphere.py          # AtmosphereLayer, regional humidity/wind
 ├── subgrid.py             # SubSquare, coordinate utils, terrain override
 ├── surface_state.py       # Computed appearance, unified water access
@@ -246,13 +283,14 @@ kemet/
 ├── water.py               # WaterColumn (subsurface only)
 ├── ground.py              # TerrainColumn, SoilLayer, materials
 ├── simulation/
-│   ├── surface.py         # Surface flow + seepage
-│   └── subsurface.py      # Underground flow + evaporation (uses atmosphere)
+│   ├── surface.py         # Surface flow + seepage (with edge runoff)
+│   ├── subsurface.py      # Underground flow + evaporation
+│   └── erosion.py         # Overnight erosion, wind exposure accumulation
 ├── render/
-│   ├── map.py             # Map + water visualization
+│   ├── map.py             # Map + water visualization (cached surfaces)
 │   ├── colors.py          # Color computation (uses surface_state)
 │   └── hud.py             # HUD panels + soil profile
-├── structures.py          # Structure ABC + Cistern, Condenser, Planter subclasses
+├── structures.py          # Structure ABC + Cistern, Condenser, Planter
 └── ui_state.py            # UI state + cursor tracking
 ```
 
@@ -267,5 +305,8 @@ kemet/
 5. [x] Terrain modifications persist per-sub-square
 6. [x] Surface water flows at sub-grid level, pools in low spots
 7. [x] Water system reaches stable equilibrium
-8. [ ] Erosion moves material based on water velocity
-9. [x] Atmosphere affects regional evaporation
+8. [x] Atmosphere affects regional evaporation
+9. [x] Water conservation: pool + atmosphere + soil = closed system
+10. [ ] Erosion moves material based on water velocity
+11. [ ] Pre-game erosion creates interesting terrain
+12. [ ] Movement constrained by elevation differences

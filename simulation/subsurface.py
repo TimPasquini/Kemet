@@ -38,120 +38,115 @@ Point = Tuple[int, int]
 
 
 def simulate_subsurface_tick(state: "GameState") -> None:
-    """Run one tick of subsurface water simulation.
-
-    This handles:
-    1. Wellspring water injection
-    2. Vertical seepage through soil layers
-    3. Horizontal subsurface flow
-    4. Overflow to surface (distributed to sub-squares)
+    """Run one tick of subsurface water simulation using active tile sets.
 
     Args:
-        state: Game state with tiles and structures
+        state: Game state with tiles and active set caches.
     """
-    # 1. Add water from wellsprings and simulate vertical seepage
     capillary_rises: dict[tuple[int, int], int] = {}
-    for x in range(state.width):
-        for y in range(state.height):
-            tile = state.tiles[x][y]
+    wellspring_tiles = [(x, y) for x in range(state.width) for y in range(state.height) if state.tiles[x][y].wellspring_output > 0]
 
-            # Wellspring output (draws from finite global pool)
-            if tile.wellspring_output > 0:
-                multiplier = RAIN_WELLSPRING_MULTIPLIER if state.raining else 100
-                desired = (tile.wellspring_output * multiplier) // 100
-                # Draw from global pool instead of creating water from nothing
-                actual = state.water_pool.wellspring_draw(desired)
-                if actual > 0:
-                    tile.water.add_layer_water(SoilLayer.REGOLITH, actual)
+    # Process wellsprings separately
+    for x, y in wellspring_tiles:
+        tile = state.tiles[x][y]
+        multiplier = RAIN_WELLSPRING_MULTIPLIER if state.raining else 100
+        desired = (tile.wellspring_output * multiplier) // 100
+        actual = state.water_pool.wellspring_draw(desired)
+        if actual > 0:
+            tile.water.add_layer_water(SoilLayer.REGOLITH, actual)
+            state.active_water_tiles.add((x, y))
 
-            # Vertical seepage within the tile
-            # Pass current surface water total for capillary rise check
-            surface_water = get_tile_surface_water(tile)
-            capillary = simulate_vertical_seepage(tile.terrain, tile.water, surface_water)
-            if capillary > 0:
-                capillary_rises[(x, y)] = capillary
+    # Process vertical seepage only on active tiles
+    for x, y in list(state.active_water_tiles):
+        tile = state.tiles[x][y]
+        surface_water = get_tile_surface_water(tile)
+        capillary = simulate_vertical_seepage(tile.terrain, tile.water, surface_water)
+        if capillary > 0:
+            capillary_rises[(x, y)] = capillary
+        if tile.water.total_subsurface_water() <= 0:
+            state.active_water_tiles.discard((x,y))
 
-    # 2. Create snapshot for horizontal flow calculations
-    tiles_data = [
-        [(state.tiles[x][y].terrain, state.tiles[x][y].water) for y in range(state.height)]
-        for x in range(state.width)
-    ]
+    # --- Horizontal Flow ---
+    # Create snapshot only for active tiles and their neighbors
+    flow_candidate_coords = set(state.active_water_tiles)
+    for x, y in state.active_water_tiles:
+        for nx, ny in get_neighbors(x, y, state.width, state.height):
+            flow_candidate_coords.add((nx, ny))
 
-    # 3. Calculate horizontal subsurface flows
+    if not flow_candidate_coords:
+         # Apply capillary rise even if there's no horizontal flow
+        for (x, y), amount in capillary_rises.items():
+            distribute_upward_seepage(state.tiles[x][y], amount, state.active_water_subsquares, x, y)
+        return
+
+    tiles_data = {
+        (x, y): (state.tiles[x][y].terrain, state.tiles[x][y].water)
+        for x, y in flow_candidate_coords
+    }
+
     subsurface_deltas = calculate_subsurface_flow(tiles_data, state.width, state.height)
+    overflow_sub_deltas, overflow_surf_deltas = calculate_overflows(tiles_data, state.width, state.height)
 
-    # 4. Calculate overflow (water pushed to surface from saturated layers)
-    overflow_sub_deltas, overflow_surf_deltas = calculate_overflows(
-        tiles_data, state.width, state.height
-    )
-
-    # Combine subsurface deltas
     for key, value in overflow_sub_deltas.items():
         subsurface_deltas[key] = subsurface_deltas.get(key, 0) + value
 
-    # 5. Apply subsurface flows
+    # Apply deltas and update active sets
     for ((x, y), layer), amount in subsurface_deltas.items():
         tile = state.tiles[x][y]
         current = tile.water.get_layer_water(layer)
         tile.water.set_layer_water(layer, max(0, current + amount))
+        if tile.water.total_subsurface_water() > 0:
+            state.active_water_tiles.add((x, y))
+        else:
+            state.active_water_tiles.discard((x, y))
 
-    # 6. Apply overflow to surface (distribute to sub-squares)
     for (x, y), amount in overflow_surf_deltas.items():
         if amount > 0:
-            distribute_upward_seepage(state.tiles[x][y], amount)
+            distribute_upward_seepage(state.tiles[x][y], amount, state.active_water_subsquares, x, y)
 
-    # 7. Apply capillary rise to surface (distribute to sub-squares)
     for (x, y), amount in capillary_rises.items():
-        distribute_upward_seepage(state.tiles[x][y], amount)
+        distribute_upward_seepage(state.tiles[x][y], amount, state.active_water_subsquares, x, y)
 
 
 def apply_tile_evaporation(state: "GameState") -> None:
-    """Apply evaporation to surface water on sub-squares.
+    """Apply evaporation to active surface water sub-squares.
 
-    Evaporation is calculated at tile level but applied to sub-squares
-    with per-sub-square modifiers (trenches, regional humidity).
+    This is much faster than iterating the whole grid.
 
     Args:
-        state: Game state with tiles and structures
+        state: Game state with tiles and active_water_subsquares set.
     """
-    for x in range(state.width):
-        for y in range(state.height):
-            tile = state.tiles[x][y]
+    # Iterate over a copy as the set can be modified
+    for sub_x, sub_y in list(state.active_water_subsquares):
+        tile_x, tile_y = sub_x // 3, sub_y // 3
+        local_x, local_y = sub_x % 3, sub_y % 3
+        tile = state.tiles[tile_x][tile_y]
+        subsquare = tile.subgrid[local_x][local_y]
 
-            # Calculate tile-level base evaporation rate
-            base_evap = (TILE_TYPES[tile.kind].evap * state.heat) // 100
+        if subsquare.surface_water <= 0:
+            state.active_water_subsquares.discard((sub_x, sub_y))
+            continue
 
-            # Apply atmosphere humidity modifier if available
-            if state.atmosphere is not None:
-                atmo_mod = state.atmosphere.get_evaporation_modifier(x, y)
-                base_evap = int(base_evap * atmo_mod)
+        base_evap = (TILE_TYPES[tile.kind].evap * state.heat) // 100
+        if state.atmosphere is not None:
+            base_evap = int(base_evap * state.atmosphere.get_evaporation_modifier(tile_x, tile_y))
+        if state.tile_has_cistern(tile_x, tile_y):
+            base_evap = (base_evap * CISTERN_EVAP_REDUCTION) // 100
 
-            # Check for cisterns using O(1) cached lookup
-            if state.tile_has_cistern(x, y):
-                base_evap = (base_evap * CISTERN_EVAP_REDUCTION) // 100
+        retention = TILE_TYPES[tile.kind].retention
+        tile_evap = base_evap - ((retention * base_evap) // 100)
 
-            # Apply retention
-            retention = TILE_TYPES[tile.kind].retention
-            tile_evap = base_evap - ((retention * base_evap) // 100)
+        if tile_evap <= 0:
+            continue
 
-            if tile_evap <= 0:
-                continue
+        sub_evap = tile_evap
+        if subsquare.has_trench:
+            sub_evap = (sub_evap * TRENCH_EVAP_REDUCTION) // 100
 
-            # Apply evaporation per sub-square with individual trench modifiers
-            for row in tile.subgrid:
-                for subsquare in row:
-                    if subsquare.surface_water <= 0:
-                        continue
+        evaporated = min(sub_evap, subsquare.surface_water)
+        if evaporated > 0:
+            subsquare.surface_water -= evaporated
+            state.water_pool.evaporate(evaporated)
 
-                    # Per-sub-square evaporation with trench modifier
-                    sub_evap = tile_evap
-                    if subsquare.has_trench:
-                        sub_evap = (sub_evap * TRENCH_EVAP_REDUCTION) // 100
-
-                    # Apply evaporation capped at available water
-                    sub_evap = min(sub_evap, subsquare.surface_water)
-                    subsquare.surface_water -= sub_evap
-
-                    # Route evaporated water to atmospheric reserve (conservation)
-                    if sub_evap > 0:
-                        state.water_pool.evaporate(sub_evap)
+        if subsquare.surface_water <= 0:
+            state.active_water_subsquares.discard((sub_x, sub_y))

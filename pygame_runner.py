@@ -190,9 +190,8 @@ def render_to_virtual_screen(
         map_surface,
         camera,
         state.player_state.position,  # Sub-grid coordinates
-        ui_state.target_subsquare,
+        ui_state,
         toolbar.get_selected_tool(),
-        state,
     )
 
     render_player(map_surface, state, camera, player_world_pos, tile_size)
@@ -517,9 +516,8 @@ def run(tile_size: int = TILE_SIZE) -> None:
             ui_state.update_cursor(
                 virtual_pos,
                 camera,
-                state.player_state.position,
-                world_sub_width,
-                world_sub_height,
+                state,
+                toolbar.get_selected_tool(),
             )
             # Sync target to game state for rendering and commands
             state.set_target(ui_state.target_subsquare)

@@ -36,35 +36,13 @@ if TYPE_CHECKING:
     from main import GameState
     from camera import Camera
     from tools import Tool
+    from ui_state import UIState
 
 # =============================================================================
 # Surface Caches (performance optimization)
 # =============================================================================
-# Cache water surfaces by (size, color, alpha) to avoid per-frame surface creation
-_WATER_SURFACE_CACHE: dict = {}
-
 # Cache highlight surfaces by (size, color, alpha) to avoid per-frame surface creation
 _HIGHLIGHT_SURFACE_CACHE: dict = {}
-
-def _get_cached_water_surface(
-    sub_size: int,
-    color: Tuple[int, int, int],
-    alpha: int,
-) -> pygame.Surface:
-    """Get a cached water surface, creating if needed.
-
-    Alpha is quantized to steps of 10 to limit cache size.
-    """
-    # Quantize alpha to reduce cache entries (40, 50, 60, ... 200)
-    quant_alpha = (alpha // 10) * 10
-    key = (sub_size, color, quant_alpha)
-
-    if key not in _WATER_SURFACE_CACHE:
-        surf = pygame.Surface((sub_size, sub_size), pygame.SRCALPHA)
-        surf.fill((*color, quant_alpha))
-        _WATER_SURFACE_CACHE[key] = surf
-
-    return _WATER_SURFACE_CACHE[key]
 
 
 def _get_cached_highlight_surface(
@@ -206,50 +184,48 @@ def render_subgrid_water(
     camera: "Camera",
     tile_size: int,
 ) -> None:
-    """Render water levels at sub-grid resolution as semi-transparent overlay.
-
-    Water is shown as blue tint, more opaque = more water.
-    Only renders sub-squares with significant water (> 2 units).
+    """
+    Render water as a single semi-transparent overlay for performance.
+    This avoids thousands of small blit calls per frame.
     """
     sub_size = tile_size // SUBGRID_SIZE
-
-    # Get visible sub-square range
     start_x, start_y, end_x, end_y = camera.get_visible_subsquare_range()
+
+    # Create a single overlay surface for the entire viewport.
+    water_overlay = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
 
     for sub_y in range(start_y, end_y):
         for sub_x in range(start_x, end_x):
-            # Get tile and local coords
-            tile_x = sub_x // SUBGRID_SIZE
-            tile_y = sub_y // SUBGRID_SIZE
-            local_x = sub_x % SUBGRID_SIZE
-            local_y = sub_y % SUBGRID_SIZE
+            tile_x, tile_y = subgrid_to_tile(sub_x, sub_y)
+            local_x, local_y = get_subsquare_index(sub_x, sub_y)
 
             tile = state.tiles[tile_x][tile_y]
             water = tile.subgrid[local_x][local_y].surface_water
 
-            # Skip if negligible water
             if water <= 2:
                 continue
 
-            # Calculate water color/opacity based on amount
-            # Light water: 3-20 units, Medium: 21-50, Heavy: 51+
+            # Determine color and alpha based on water depth
             if water <= 20:
-                alpha = 40 + (water * 3)  # 40-100 alpha
-                color = (100, 180, 230)   # Light blue
+                alpha = 40 + (water * 3)
+                color = (100, 180, 230)
             elif water <= 50:
-                alpha = 100 + ((water - 20) * 2)  # 100-160 alpha
-                color = (60, 140, 210)    # Medium blue
+                alpha = 100 + ((water - 20) * 2)
+                color = (60, 140, 210)
             else:
-                alpha = min(200, 160 + (water - 50))  # 160-200 alpha
-                color = (40, 100, 180)    # Deep blue
+                alpha = min(200, 160 + (water - 50))
+                color = (40, 100, 180)
 
             # Get sub-square screen position
             world_x, world_y = camera.subsquare_to_world(sub_x, sub_y)
             vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
+            rect = pygame.Rect(int(vp_x), int(vp_y), sub_size, sub_size)
 
-            # Draw semi-transparent water rectangle (using cached surface)
-            water_surface = _get_cached_water_surface(sub_size, color, alpha)
-            surface.blit(water_surface, (int(vp_x), int(vp_y)))
+            # Draw the water rectangle directly onto the single overlay surface
+            pygame.draw.rect(water_overlay, (*color, alpha), rect)
+
+    # Blit the entire water overlay onto the main surface once.
+    surface.blit(water_overlay, (0, 0))
 
 
 def render_static_background(state: "GameState", font) -> pygame.Surface:
@@ -329,22 +305,16 @@ def redraw_background_rect(background_surface: pygame.Surface, state: "GameState
 
 def get_tool_highlight_color(
     tool: Optional["Tool"],
-    state: "GameState",
-    target_subsquare: Tuple[int, int],
+    is_valid: bool,
 ) -> Tuple[int, int, int]:
-    """Get the highlight color for a tool at a given target position."""
+    """Get the highlight color for a tool, using the pre-calculated validity."""
     if tool is None:
         return HIGHLIGHT_COLORS["default"]
 
     tool_id = tool.id.lower()
 
     if tool_id == "build":
-        tile_x, tile_y = subgrid_to_tile(*target_subsquare)
-        if 0 <= tile_x < state.width and 0 <= tile_y < state.height:
-            tile = state.tiles[tile_x][tile_y]
-            if target_subsquare in state.structures or tile.kind == "rock" or tile.depot:
-                return HIGHLIGHT_COLORS["build_invalid"]
-        return HIGHLIGHT_COLORS["build"]
+        return HIGHLIGHT_COLORS["build"] if is_valid else HIGHLIGHT_COLORS["build_invalid"]
     elif tool_id in HIGHLIGHT_COLORS:
         return HIGHLIGHT_COLORS[tool_id]
 
@@ -355,16 +325,17 @@ def render_interaction_highlights(
     surface: pygame.Surface,
     camera: "Camera",
     player_pos: Tuple[int, int],
-    target_subsquare: Optional[Tuple[int, int]],
+    ui_state: "UIState",
     tool: Optional["Tool"],
-    state: "GameState",
 ) -> None:
     """Render interaction range indicator and target highlight."""
+    target_subsquare = ui_state.target_subsquare
     if target_subsquare is None:
         return
 
     sub_size = int(camera.sub_tile_size)
-    color = get_tool_highlight_color(tool, state, target_subsquare)
+    # Use the validity flag from ui_state to determine the color
+    color = get_tool_highlight_color(tool, ui_state.is_valid_target)
     world_x, world_y = camera.subsquare_to_world(target_subsquare[0], target_subsquare[1])
     vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
     rect = pygame.Rect(int(vp_x), int(vp_y), sub_size, sub_size)

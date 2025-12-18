@@ -186,144 +186,125 @@ def simulate_vertical_seepage(terrain: TerrainColumn, water: WaterColumn, surfac
 
 
 def calculate_subsurface_flow(
-        tiles: List[List[Tuple[TerrainColumn, WaterColumn]]],
+        tiles_data: Dict[Point, Tuple[TerrainColumn, WaterColumn]],
         width: int,
         height: int,
 ) -> Dict[Tuple[Point, SoilLayer], int]:
     """
     Calculate subsurface water flow based on hydraulic pressure.
-    Returns a dictionary of deltas (positive for gain, negative for loss).
+    Now uses a dictionary of active tiles for performance.
     """
     deltas: Dict[Tuple[Point, SoilLayer], int] = defaultdict(int)
 
-    # Process each soil layer (skip bedrock)
     for layer in [SoilLayer.REGOLITH, SoilLayer.SUBSOIL, SoilLayer.ELUVIATION,
                   SoilLayer.TOPSOIL, SoilLayer.ORGANICS]:
 
-        for x in range(width):
-            for y in range(height):
-                terrain, water = tiles[x][y]
+        for (x, y), (terrain, water) in tiles_data.items():
+            if terrain.get_layer_depth(layer) == 0 or water.get_layer_water(layer) == 0:
+                continue
 
-                # Skip if layer doesn't exist or has no water
-                if terrain.get_layer_depth(layer) == 0:
+            material = terrain.get_layer_material(layer)
+            props = MATERIAL_LIBRARY.get(material)
+            if not props:
+                continue
+
+            my_head = _calculate_hydraulic_head(terrain, water, layer)
+            flow_targets = []
+            total_diff = 0
+
+            for nx, ny in get_neighbors(x, y, width, height):
+                neighbor_data = tiles_data.get((nx, ny))
+                if not neighbor_data:
                     continue
-                if water.get_layer_water(layer) == 0:
+                n_terrain, n_water = neighbor_data
+
+                if n_terrain.get_layer_depth(layer) == 0:
                     continue
-
-                material = terrain.get_layer_material(layer)
-                props = MATERIAL_LIBRARY.get(material)
-                if not props:
-                    continue
-
-                # Calculate my hydraulic head
-                my_head = _calculate_hydraulic_head(terrain, water, layer)
-
-                # Check neighbors
-                flow_targets = []
-                total_diff = 0
-
-                for nx, ny in get_neighbors(x, y, width, height):
-                    n_terrain, n_water = tiles[nx][ny]
-
-                    # Skip if neighbor doesn't have this layer
-                    if n_terrain.get_layer_depth(layer) == 0:
-                        continue
-
-                    # Skip if layers don't overlap in elevation (bedrock blocks flow)
-                    if not layers_can_connect(terrain, layer, n_terrain, layer):
-                        continue
-
-                    n_head = _calculate_hydraulic_head(n_terrain, n_water, layer)
-                    diff = my_head - n_head
-
-                    if diff > SUBSURFACE_FLOW_THRESHOLD:
-                        flow_targets.append(((nx, ny), diff))
-                        total_diff += diff
-
-                if not flow_targets:
+                if not layers_can_connect(terrain, layer, n_terrain, layer):
                     continue
 
-                # Subsurface flow is slow
-                water_available = water.get_layer_water(layer)
-                flow_pct = (props.permeability_horizontal * SUBSURFACE_FLOW_RATE) // 100
-                transferable = (water_available * flow_pct) // 100
+                n_head = _calculate_hydraulic_head(n_terrain, n_water, layer)
+                diff = my_head - n_head
 
-                # Distribute proportionally
-                total_transferred = 0
-                for (nx, ny), diff in flow_targets:
-                    portion = (transferable * diff) // total_diff if total_diff > 0 else 0
-                    if portion > 0:
-                        key = ((nx, ny), layer)
-                        deltas[key] += portion
-                        total_transferred += portion
+                if diff > SUBSURFACE_FLOW_THRESHOLD:
+                    flow_targets.append(((nx, ny), diff))
+                    total_diff += diff
 
-                if total_transferred > 0:
-                    source_key = ((x, y), layer)
-                    deltas[source_key] -= total_transferred
+            if not flow_targets:
+                continue
+
+            water_available = water.get_layer_water(layer)
+            flow_pct = (props.permeability_horizontal * SUBSURFACE_FLOW_RATE) // 100
+            transferable = (water_available * flow_pct) // 100
+
+            total_transferred = 0
+            for (nx, ny), diff in flow_targets:
+                portion = (transferable * diff) // total_diff if total_diff > 0 else 0
+                if portion > 0:
+                    deltas[((nx, ny), layer)] += portion
+                    total_transferred += portion
+
+            if total_transferred > 0:
+                deltas[((x, y), layer)] -= total_transferred
 
     return deltas
 
 
 def calculate_overflows(
-        tiles: List[List[Tuple[TerrainColumn, WaterColumn]]],
+        tiles_data: Dict[Point, Tuple[TerrainColumn, WaterColumn]],
         width: int,
         height: int,
 ) -> Tuple[Dict[Tuple[Point, SoilLayer], int], Dict[Point, int]]:
     """
     Calculates distribution of water in layers that are over capacity.
-    This is a high-pressure, rapid version of subsurface flow.
-    Returns (subsurface_deltas, surface_deltas).
+    Now uses a dictionary of active tiles for performance.
     """
     sub_deltas: Dict[Tuple[Point, SoilLayer], int] = defaultdict(int)
     surf_deltas: Dict[Point, int] = defaultdict(int)
 
-    for layer in reversed(SoilLayer): # Process from top down
+    for layer in reversed(SoilLayer):
         if layer == SoilLayer.BEDROCK: continue
 
-        for x in range(width):
-            for y in range(height):
-                terrain, water = tiles[x][y]
-                max_storage = terrain.get_max_water_storage(layer)
-                current_water = water.get_layer_water(layer)
+        for (x, y), (terrain, water) in tiles_data.items():
+            max_storage = terrain.get_max_water_storage(layer)
+            current_water = water.get_layer_water(layer)
 
-                if current_water <= max_storage:
+            if current_water <= max_storage:
+                continue
+
+            overflow_amount = current_water - max_storage
+            my_head = _calculate_hydraulic_head(terrain, water, layer)
+
+            flow_targets = []
+            total_diff = 0
+            for nx, ny in get_neighbors(x, y, width, height):
+                neighbor_data = tiles_data.get((nx, ny))
+                if not neighbor_data:
                     continue
+                n_terrain, n_water = neighbor_data
 
-                overflow_amount = current_water - max_storage
-                my_head = _calculate_hydraulic_head(terrain, water, layer)
+                if n_terrain.get_layer_depth(layer) == 0: continue
+                if not layers_can_connect(terrain, layer, n_terrain, layer): continue
 
-                # Find neighbors to overflow into
-                flow_targets = []
-                total_diff = 0
-                for nx, ny in get_neighbors(x, y, width, height):
-                    n_terrain, n_water = tiles[nx][ny]
-                    if n_terrain.get_layer_depth(layer) == 0: continue
+                n_head = _calculate_hydraulic_head(n_terrain, n_water, layer)
+                diff = my_head - n_head
+                if diff > 0:
+                    flow_targets.append(((nx, ny), diff))
+                    total_diff += diff
 
-                    # Skip if layers don't overlap in elevation (bedrock blocks flow)
-                    if not layers_can_connect(terrain, layer, n_terrain, layer):
-                        continue
+            if not flow_targets:
+                sub_deltas[((x, y), layer)] -= overflow_amount
+                surf_deltas[(x, y)] += overflow_amount
+                continue
 
-                    n_head = _calculate_hydraulic_head(n_terrain, n_water, layer)
-                    diff = my_head - n_head
-                    if diff > 0: # Flow to any lower pressure neighbor
-                        flow_targets.append(((nx, ny), diff))
-                        total_diff += diff
+            total_transferred = 0
+            for (nx, ny), diff in flow_targets:
+                portion = (overflow_amount * diff) // total_diff if total_diff > 0 else 0
+                if portion > 0:
+                    sub_deltas[((nx, ny), layer)] += portion
+                    total_transferred += portion
 
-                if not flow_targets:
-                    # If no neighbors, water is pushed to the surface
-                    sub_deltas[((x, y), layer)] -= overflow_amount
-                    surf_deltas[(x, y)] += overflow_amount
-                    continue
-
-                # Distribute overflow to neighbors
-                total_transferred = 0
-                for (nx, ny), diff in flow_targets:
-                    portion = (overflow_amount * diff) // total_diff if total_diff > 0 else 0
-                    if portion > 0:
-                        sub_deltas[((nx, ny), layer)] += portion
-                        total_transferred += portion
-
-                if total_transferred > 0:
-                    sub_deltas[((x, y), layer)] -= total_transferred
+            if total_transferred > 0:
+                sub_deltas[((x, y), layer)] -= total_transferred
 
     return sub_deltas, surf_deltas

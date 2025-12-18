@@ -14,10 +14,12 @@ from typing import Tuple, Optional, Callable, List, TYPE_CHECKING
 import pygame
 
 from config import TOOLBAR_HEIGHT, INTERACTION_RANGE
-from subgrid import clamp_to_range, clamp_to_bounds
+from subgrid import clamp_to_range, clamp_to_bounds, subgrid_to_tile
 
 if TYPE_CHECKING:
     from camera import Camera
+    from main import GameState
+    from tools import Tool
 
 # Virtual screen dimensions (fixed internal resolution)
 VIRTUAL_WIDTH = 1280
@@ -72,6 +74,7 @@ class UIState:
     # Cursor tracking for sub-grid interaction system
     hovered_subsquare: Optional[Tuple[int, int]] = None  # Raw sub-square under cursor
     target_subsquare: Optional[Tuple[int, int]] = None   # Clamped to interaction range
+    is_valid_target: bool = True                         # Is the target valid for the current tool?
 
     def clear_regions(self) -> None:
         """Clear all click regions (called at start of each frame)."""
@@ -162,27 +165,46 @@ class UIState:
         self.popup_rect = None
         self.popup_option_count = 0
 
+    def _check_target_validity(self, state: "GameState", tool: Optional["Tool"]) -> None:
+        """Check if the current target is valid for the selected tool."""
+        self.is_valid_target = True  # Default to true
+        if tool is None or self.target_subsquare is None:
+            return
+
+        if tool.id.lower() == "build":
+            tile_x, tile_y = subgrid_to_tile(*self.target_subsquare)
+            if not (0 <= tile_x < state.width and 0 <= tile_y < state.height):
+                self.is_valid_target = False
+                return
+
+            tile = state.tiles[tile_x][tile_y]
+            if self.target_subsquare in state.structures or tile.kind == "rock" or tile.depot:
+                self.is_valid_target = False
+
     def update_cursor(
         self,
         virtual_pos: Tuple[int, int],
         camera: "Camera",
-        player_pos: Tuple[int, int],
-        world_sub_width: int,
-        world_sub_height: int,
+        state: "GameState",
+        tool: Optional["Tool"],
     ) -> None:
-        """Update cursor tracking from mouse position.
+        """Update cursor tracking from mouse position and check target validity.
 
         Args:
             virtual_pos: Mouse position in virtual screen coordinates
             camera: Camera for coordinate transforms
-            player_pos: Player position in sub-grid coordinates
-            world_sub_width: World width in sub-squares
-            world_sub_height: World height in sub-squares
+            state: The main game state for checking validity
+            tool: The currently selected tool
         """
+        world_sub_width = state.width * 3
+        world_sub_height = state.height * 3
+        player_pos = state.player_state.position
+
         # Check if mouse is over the map viewport
         if not self.map_rect.collidepoint(virtual_pos):
             self.hovered_subsquare = None
             self.target_subsquare = None
+            self.is_valid_target = False
             return
 
         # Convert virtual screen position to viewport-local position
@@ -216,6 +238,9 @@ class UIState:
         self.target_subsquare = clamp_to_bounds(
             self.target_subsquare, world_sub_width, world_sub_height
         )
+
+        # Check if the determined target is valid for the current tool
+        self._check_target_validity(state, tool)
 
 
 # Global UI state instance

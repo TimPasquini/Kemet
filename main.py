@@ -49,8 +49,10 @@ from simulation.surface import (
     simulate_surface_seepage,
     get_tile_surface_water,
     remove_water_proportionally,
+    distribute_upward_seepage,
 )
 from simulation.subsurface import simulate_subsurface_tick, apply_tile_evaporation
+from simulation.erosion import apply_overnight_erosion, accumulate_wind_exposure
 from weather import WeatherSystem
 from atmosphere import AtmosphereLayer, simulate_atmosphere_tick
 from world_state import GlobalWaterPool
@@ -86,6 +88,11 @@ class GameState:
     # Render cache: set of (sub_x, sub_y) coordinates that need redrawing
     # Using set for O(1) add/check and automatic deduplication
     dirty_subsquares: Set[Point] = field(default_factory=set)
+
+    # Simulation active sets for performance optimization
+    active_water_subsquares: Set[Point] = field(default_factory=set)
+    active_water_tiles: Set[Point] = field(default_factory=set)
+    active_wind_tiles: Set[Point] = field(default_factory=set)
 
     # Atmosphere layer (regional humidity/wind)
     atmosphere: AtmosphereLayer | None = None
@@ -350,8 +357,6 @@ def collect_water(state: GameState) -> None:
 
 
 def pour_water(state: GameState, amount: float) -> None:
-    from simulation.surface import distribute_upward_seepage
-
     amount_units = int(amount * 10)
     if not (0 < amount_units <= MAX_POUR_AMOUNT):
         state.messages.append(f"Pour between 0.1L and {MAX_POUR_AMOUNT / 10}L.")
@@ -363,88 +368,53 @@ def pour_water(state: GameState, amount: float) -> None:
     tx, ty = state.get_action_target_tile()
     tile = state.tiles[tx][ty]
 
-    # Distribute water to sub-squares (lower elevation gets more)
-    distribute_upward_seepage(tile, amount_units)
+    # Distribute water and update active set
+    distribute_upward_seepage(tile, amount_units, state.active_water_subsquares, tx, ty)
 
     state.inventory.water -= amount_units
     state.messages.append(f"Poured {amount:.1f}L water into soil.")
 
 
 def simulate_tick(state: GameState) -> None:
-    """Run one simulation tick.
-
-    Water simulation is split into phases:
-    - Surface flow: Sub-grid level, runs every tick
-    - Subsurface flow: Tile level, runs every 2 ticks (slower flow, performance opt)
-    - Evaporation: Per sub-square, runs every tick
-    """
-    # Update weather system (day/night cycle, heat, rain)
+    """Run one simulation tick using active sets for performance."""
     weather_messages = state.weather.tick()
     state.messages.extend(weather_messages)
-
-    # Update structures (cisterns, planters, etc.)
     tick_structures(state, state.heat)
 
-    # --- Water Simulation (staggered for even CPU load) ---
-    # Heavy operations are spread across ticks to avoid stuttering
-    # Pattern over 4 ticks:
-    #   tick 0: surface flow (~35ms)
-    #   tick 1: seepage + moisture (~15ms) + subsurface (~65ms) = ~80ms
-    #   tick 2: surface flow (~35ms)
-    #   tick 3: seepage + moisture (~15ms)
     tick = state.weather.turn_in_day
 
-    # Surface flow: every 2 ticks, offset 0 (~35ms)
     if tick % 2 == 0:
-        simulate_surface_flow(state.tiles, state.width, state.height, state.water_pool)
+        simulate_surface_flow(state)
 
-    # Surface seepage + moisture history: every 2 ticks, offset 1 (~15ms combined)
     if tick % 2 == 1:
+        # Seepage still iterates all tiles, but is less frequent.
+        # Could be optimized further by tracking active surface water tiles.
         simulate_surface_seepage(state.tiles, state.width, state.height)
         for x in range(state.width):
             for y in range(state.height):
                 update_moisture_history(state.tiles[x][y])
 
-    # Subsurface flow: every 4 ticks, offset 1 (~65ms)
-    # Pairs with lighter seepage tick instead of heavier surface flow tick
     if tick % 4 == 1:
         simulate_subsurface_tick(state)
 
-    # Evaporation: every tick (cheap at ~5ms, provides consistent feedback)
     apply_tile_evaporation(state)
 
-    # Phase 5: Atmosphere evolution (humidity, wind drift)
     if state.atmosphere is not None:
         simulate_atmosphere_tick(state.atmosphere, state.heat)
-
-        # Phase 6: Accumulate wind exposure periodically (every 10 ticks)
-        # Water passage is tracked during flow; wind needs separate accumulation
         if state.weather.turn_in_day % 10 == 0:
-            from simulation.erosion import accumulate_wind_exposure
-            accumulate_wind_exposure(
-                state.tiles, state.width, state.height, state.atmosphere
-            )
+            accumulate_wind_exposure(state)
 
 
 def end_day(state: GameState) -> None:
     messages = state.weather.end_day()
     state.messages.extend(messages)
-    # Only process overnight changes if day actually changed
     if messages and "begins" in messages[-1]:
-        # Apply overnight erosion using accumulated daily pressures
-        from simulation.erosion import apply_overnight_erosion
-        erosion_messages = apply_overnight_erosion(
-            state.tiles, state.width, state.height,
-            state.atmosphere,
-            seasonal_modifier=1.0,  # Future: adjust based on season/weather
-        )
+        erosion_messages = apply_overnight_erosion(state)
         state.messages.extend(erosion_messages)
 
-        # Recalculate biomes after erosion
         biome_messages = recalculate_biomes(state.tiles, state.width, state.height)
         state.messages.extend(biome_messages)
 
-        # Invalidate all appearances since terrain may have changed
         for row in state.tiles:
             for tile in row:
                 for sub_row in tile.subgrid:
@@ -457,7 +427,6 @@ def show_status(state: GameState) -> None:
     state.messages.append(
         f"Inv: water {inv.water / 10:.1f}L, scrap {inv.scrap}, seeds {inv.seeds}, biomass {inv.biomass}")
 
-    # Aggregate status summaries from all structures
     summaries = collections.defaultdict(int)
     structure_counts = collections.defaultdict(int)
     for s in state.structures.values():
@@ -477,7 +446,6 @@ def survey_tile(state: GameState) -> None:
     sub_pos = state.get_action_target_subsquare()
     structure = state.structures.get(sub_pos)
 
-    # Get total surface water from sub-squares
     surface_water = get_tile_surface_water(tile)
 
     desc = [f"Tile {x},{y}", f"type={tile.kind}", f"elev={tile.elevation:.2f}m",

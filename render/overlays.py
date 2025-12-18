@@ -61,6 +61,8 @@ def render_event_log(
 ) -> int:
     """Render the event log messages with scroll support.
 
+    This is optimized to avoid converting the message deque to a list every frame.
+
     Args:
         surface: The pygame surface to draw on.
         font: The pygame font to use for rendering text.
@@ -73,9 +75,8 @@ def render_event_log(
         Number of visible message slots (for scroll calculations).
     """
     log_x, log_y = pos
-    # Convert deque to list to allow slicing for display
-    messages_list = list(state.messages)
-    total_messages = len(messages_list)
+    messages = state.messages  # messages is a deque
+    total_messages = len(messages)
 
     # Header with scroll indicator
     header = "EVENT LOG"
@@ -89,14 +90,14 @@ def render_event_log(
     if visible_count <= 0:
         return 0
 
-    # Calculate slice range with scroll offset
+    # Calculate index range with scroll offset
     end_idx = total_messages - scroll_offset
     start_idx = max(0, end_idx - visible_count)
     end_idx = max(start_idx, end_idx)  # Ensure end >= start
 
-    messages_to_show = messages_list[start_idx:end_idx]
-
-    for msg in messages_to_show:
+    # Iterate directly over the deque using indices to avoid creating a list
+    for i in range(start_idx, end_idx):
+        msg = messages[i]
         draw_text(surface, font, f"• {msg}", (log_x, log_y), color=(160, 200, 160))
         log_y += 18
 

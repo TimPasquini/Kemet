@@ -13,12 +13,13 @@ Key concepts:
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Set
 
 from config import SUBGRID_SIZE, SURFACE_FLOW_RATE, SURFACE_FLOW_THRESHOLD, SURFACE_SEEPAGE_RATE
-from subgrid import NEIGHBORS_8, get_subsquare_index, get_subsquare_terrain
+from subgrid import NEIGHBORS_8, get_subsquare_index, get_subsquare_terrain, tile_to_subgrid
 
 if TYPE_CHECKING:
+    from main import GameState
     from mapgen import Tile
     from world_state import GlobalWaterPool
 
@@ -41,134 +42,104 @@ def get_subsquare_water_height(tile: "Tile", local_x: int, local_y: int) -> floa
     return elev + water
 
 
-def simulate_surface_flow(
-    tiles: List[List["Tile"]],
-    width: int,
-    height: int,
-    water_pool: Optional["GlobalWaterPool"] = None,
-) -> int:
-    """Simulate one tick of surface water flow at sub-grid resolution.
+def simulate_surface_flow(state: "GameState") -> int:
+    """Simulate one tick of surface water flow using an active set for performance.
 
-    Water flows from each sub-square to lower neighbors based on the
-    difference in water surface height (elevation + water depth).
-
-    Edge runoff: Water at map edges can flow "off" into the global pool
-    (treating off-map as low elevation). This enables water conservation.
+    Water flows from each sub-square in the active set to lower neighbors.
+    This avoids iterating over the entire grid every tick.
 
     Args:
-        tiles: 2D list of tiles [x][y]
-        width: Map width in tiles
-        height: Map height in tiles
-        water_pool: Optional global water pool for edge runoff collection
+        state: The main game state, containing tiles and active_water_subsquares.
 
     Returns:
-        Total edge runoff amount (for tracking)
+        Total edge runoff amount (for tracking).
     """
-    # World dimensions in sub-squares
+    tiles = state.tiles
+    width = state.width
+    height = state.height
+    water_pool = state.water_pool
     sub_width = width * SUBGRID_SIZE
     sub_height = height * SUBGRID_SIZE
 
-    # Calculate all flow deltas first (don't modify during calculation)
     deltas: Dict[Point, int] = defaultdict(int)
-    edge_runoff_total = 0  # Track water flowing off map edges
-
-    # Special marker for edge flow targets
+    edge_runoff_total = 0
     EDGE_TARGET = (-1, -1)
 
-    for sub_x in range(sub_width):
-        for sub_y in range(sub_height):
-            # Get tile and local coords for this sub-square
-            tile_x = sub_x // SUBGRID_SIZE
-            tile_y = sub_y // SUBGRID_SIZE
-            local_x = sub_x % SUBGRID_SIZE
-            local_y = sub_y % SUBGRID_SIZE
-
-            tile = tiles[tile_x][tile_y]
-            subsquare = tile.subgrid[local_x][local_y]
-
-            # Skip if no water to flow
-            if subsquare.surface_water <= 0:
-                continue
-
-            # Calculate water surface height at this sub-square
-            my_height = get_subsquare_water_height(tile, local_x, local_y)
-
-            # Find all lower neighbors
-            flow_targets: List[Tuple[Point, float]] = []
-            total_diff = 0.0
-
-            for dx, dy in NEIGHBORS_8:
-                n_sub_x = sub_x + dx
-                n_sub_y = sub_y + dy
-
-                # Bounds check - edge flow goes to pool
-                if not (0 <= n_sub_x < sub_width and 0 <= n_sub_y < sub_height):
-                    # Edge of map: treat as very low elevation (water flows off freely)
-                    if water_pool is not None:
-                        edge_diff = my_height + 100  # Edge is always "lower"
-                        flow_targets.append((EDGE_TARGET, edge_diff))
-                        total_diff += edge_diff
-                    continue
-
-                # Get neighbor's tile and local coords
-                n_tile_x = n_sub_x // SUBGRID_SIZE
-                n_tile_y = n_sub_y // SUBGRID_SIZE
-                n_local_x = n_sub_x % SUBGRID_SIZE
-                n_local_y = n_sub_y % SUBGRID_SIZE
-
-                n_tile = tiles[n_tile_x][n_tile_y]
-                n_height = get_subsquare_water_height(n_tile, n_local_x, n_local_y)
-
-                # Check elevation difference
-                diff = my_height - n_height
-                if diff > SURFACE_FLOW_THRESHOLD:
-                    flow_targets.append(((n_sub_x, n_sub_y), diff))
-                    total_diff += diff
-
-            if not flow_targets:
-                continue
-
-            # Calculate how much water can flow this tick
-            transferable = (subsquare.surface_water * SURFACE_FLOW_RATE) // 100
-
-            if transferable <= 0:
-                continue
-
-            # Distribute water proportionally to elevation differences
-            total_transferred = 0
-            for target, diff in flow_targets:
-                portion = int((transferable * diff) / total_diff) if total_diff > 0 else 0
-                if portion > 0:
-                    if target == EDGE_TARGET:
-                        # Water flows off the edge of the map
-                        edge_runoff_total += portion
-                    else:
-                        deltas[target] += portion
-                    total_transferred += portion
-
-            # Record loss from source and accumulate water passage
-            if total_transferred > 0:
-                deltas[(sub_x, sub_y)] -= total_transferred
-                # Track water passage for overnight erosion calculations
-                subsquare.water_passage += total_transferred
-
-    # Apply all deltas and check for visual threshold changes
-    for (sub_x, sub_y), delta in deltas.items():
-        tile_x = sub_x // SUBGRID_SIZE
-        tile_y = sub_y // SUBGRID_SIZE
-        local_x = sub_x % SUBGRID_SIZE
-        local_y = sub_y % SUBGRID_SIZE
-
+    # Iterate over a copy of the active set, as it may be modified during the loop
+    for sub_x, sub_y in list(state.active_water_subsquares):
+        tile_x, tile_y = sub_x // SUBGRID_SIZE, sub_y // SUBGRID_SIZE
+        local_x, local_y = sub_x % SUBGRID_SIZE, sub_y % SUBGRID_SIZE
         tile = tiles[tile_x][tile_y]
         subsquare = tile.subgrid[local_x][local_y]
+
+        if subsquare.surface_water <= 0:
+            state.active_water_subsquares.discard((sub_x, sub_y))
+            continue
+
+        my_height = get_subsquare_water_height(tile, local_x, local_y)
+        flow_targets: List[Tuple[Point, float]] = []
+        total_diff = 0.0
+
+        for dx, dy in NEIGHBORS_8:
+            n_sub_x, n_sub_y = sub_x + dx, sub_y + dy
+
+            if not (0 <= n_sub_x < sub_width and 0 <= n_sub_y < sub_height):
+                if water_pool is not None:
+                    edge_diff = my_height + 100
+                    flow_targets.append((EDGE_TARGET, edge_diff))
+                    total_diff += edge_diff
+                continue
+
+            n_tile_x, n_tile_y = n_sub_x // SUBGRID_SIZE, n_sub_y // SUBGRID_SIZE
+            n_local_x, n_local_y = n_sub_x % SUBGRID_SIZE, n_sub_y % SUBGRID_SIZE
+            n_tile = tiles[n_tile_x][n_tile_y]
+            n_height = get_subsquare_water_height(n_tile, n_local_x, n_local_y)
+
+            diff = my_height - n_height
+            if diff > SURFACE_FLOW_THRESHOLD:
+                flow_targets.append(((n_sub_x, n_sub_y), diff))
+                total_diff += diff
+
+        if not flow_targets:
+            continue
+
+        transferable = (subsquare.surface_water * SURFACE_FLOW_RATE) // 100
+        if transferable <= 0:
+            continue
+
+        total_transferred = 0
+        for target, diff in flow_targets:
+            portion = int((transferable * diff) / total_diff) if total_diff > 0 else 0
+            if portion > 0:
+                if target == EDGE_TARGET:
+                    edge_runoff_total += portion
+                else:
+                    deltas[target] += portion
+                    state.active_water_subsquares.add(target)  # Activate neighbor
+                total_transferred += portion
+
+        if total_transferred > 0:
+            deltas[(sub_x, sub_y)] -= total_transferred
+            subsquare.water_passage += total_transferred
+
+    if not deltas:
+        if water_pool is not None and edge_runoff_total > 0:
+            water_pool.edge_runoff(edge_runoff_total)
+        return edge_runoff_total
+
+    for (sub_x, sub_y), delta in deltas.items():
+        tile_x, tile_y = sub_x // SUBGRID_SIZE, sub_y // SUBGRID_SIZE
+        local_x, local_y = sub_x % SUBGRID_SIZE, sub_y % SUBGRID_SIZE
+        subsquare = tiles[tile_x][tile_y].subgrid[local_x][local_y]
         subsquare.surface_water = max(0, subsquare.surface_water + delta)
-        # Track incoming water passage for overnight erosion
+
         if delta > 0:
             subsquare.water_passage += delta
-        # Check if water crossed a visual threshold (dry/wet/flooded)
         subsquare.check_water_threshold()
 
-    # Add edge runoff to the global pool (water conservation)
+        if subsquare.surface_water <= 0:
+            state.active_water_subsquares.discard((sub_x, sub_y))
+
     if water_pool is not None and edge_runoff_total > 0:
         water_pool.edge_runoff(edge_runoff_total)
 
@@ -345,24 +316,29 @@ def set_tile_surface_water(tile: "Tile", amount: int) -> None:
         distributed += portion
 
 
-def distribute_upward_seepage(tile: "Tile", water_amount: int) -> None:
+def distribute_upward_seepage(
+    tile: "Tile",
+    water_amount: int,
+    active_set: Optional[Set[Point]] = None,
+    tile_x: int = 0,
+    tile_y: int = 0,
+) -> None:
     """Distribute water seeping up from subsurface to sub-squares.
 
-    Water emerges weighted by inverse ABSOLUTE elevation - lowest sub-squares
-    receive the most water (natural spring behavior).
-
-    Uses the same elevation weighting as set_tile_surface_water() for consistency.
+    This now optionally updates the active_water_subsquares set for performance.
 
     Args:
         tile: Tile receiving upward seepage
         water_amount: Amount of water emerging from below
+        active_set: The global set of active water sub-squares to update
+        tile_x, tile_y: The tile's world coordinates (for updating active_set)
     """
     if water_amount <= 0:
         return
 
     weights, total_weight = _calculate_elevation_weights(tile)
+    base_sub_x, base_sub_y = tile_to_subgrid(tile_x, tile_y)
 
-    # Distribute water and check thresholds
     distributed = 0
     for i, (lx, ly, weight) in enumerate(weights):
         if i == len(weights) - 1:
@@ -370,7 +346,10 @@ def distribute_upward_seepage(tile: "Tile", water_amount: int) -> None:
         else:
             portion = int((water_amount * weight) / total_weight)
 
-        subsquare = tile.subgrid[lx][ly]
-        subsquare.surface_water += max(0, portion)
-        subsquare.check_water_threshold()
-        distributed += portion
+        if portion > 0:
+            subsquare = tile.subgrid[lx][ly]
+            subsquare.surface_water += portion
+            subsquare.check_water_threshold()
+            if active_set is not None:
+                active_set.add((base_sub_x + lx, base_sub_y + ly))
+            distributed += portion
