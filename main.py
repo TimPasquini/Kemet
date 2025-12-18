@@ -10,7 +10,7 @@ from __future__ import annotations
 import collections
 import random
 from dataclasses import dataclass, field
-from typing import Deque, Dict, List, Tuple
+from typing import Deque, Dict, List, Set, Tuple
 
 from config import (
     MAX_POUR_AMOUNT,
@@ -53,6 +53,7 @@ from simulation.surface import (
 from simulation.subsurface import simulate_subsurface_tick, apply_tile_evaporation
 from weather import WeatherSystem
 from atmosphere import AtmosphereLayer, simulate_atmosphere_tick
+from world_state import GlobalWaterPool
 
 Point = Tuple[int, int]
 
@@ -82,14 +83,24 @@ class GameState:
     target_subsquare: Point | None = None  # Sub-grid coords
     target_tile: Point | None = None       # Tile coords (derived from target_subsquare)
 
-    # Render cache: list of (sub_x, sub_y) coordinates that need redrawing
-    dirty_subsquares: List[Point] = field(default_factory=list)
+    # Render cache: set of (sub_x, sub_y) coordinates that need redrawing
+    # Using set for O(1) add/check and automatic deduplication
+    dirty_subsquares: Set[Point] = field(default_factory=set)
 
     # Atmosphere layer (regional humidity/wind)
     atmosphere: AtmosphereLayer | None = None
 
+    # Global water pool (conservation of water)
+    water_pool: GlobalWaterPool = field(default_factory=GlobalWaterPool)
+
     # Simulation timing (accumulated time for tick processing)
     _tick_timer: float = 0.0
+
+    # Structure lookup cache: tiles that contain cisterns (for evaporation optimization)
+    _tiles_with_cisterns: set = field(default_factory=set)
+
+    # Elevation range cache (invalidated on terrain changes)
+    _cached_elevation_range: Tuple[float, float] | None = None
 
     # === Player convenience properties for backwards compatibility ===
     @property
@@ -178,6 +189,34 @@ class GameState:
         """Get progress of current action (0.0 to 1.0)."""
         return self.player_state.get_action_progress()
 
+    # === Structure Cache Methods ===
+    def tile_has_cistern(self, tile_x: int, tile_y: int) -> bool:
+        """Check if a tile has a cistern (O(1) lookup)."""
+        return (tile_x, tile_y) in self._tiles_with_cisterns
+
+    def register_cistern(self, tile_x: int, tile_y: int) -> None:
+        """Register that a tile now has a cistern. Called when cistern is built."""
+        self._tiles_with_cisterns.add((tile_x, tile_y))
+
+    # === Elevation Range Cache ===
+    def get_elevation_range(self) -> Tuple[float, float]:
+        """Get cached elevation range, calculating if needed.
+
+        Returns (min_elevation, max_elevation) across all tiles.
+        """
+        if self._cached_elevation_range is None:
+            elevations = [
+                self.tiles[x][y].elevation
+                for x in range(self.width)
+                for y in range(self.height)
+            ]
+            self._cached_elevation_range = (min(elevations), max(elevations)) if elevations else (0.0, 0.0)
+        return self._cached_elevation_range
+
+    def invalidate_elevation_range(self) -> None:
+        """Mark elevation range cache as stale. Call when terrain is modified."""
+        self._cached_elevation_range = None
+
 
 def build_initial_state(width: int = 10, height: int = 10) -> GameState:
     """Create a new game state with generated map."""
@@ -202,12 +241,17 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
     # Initialize atmosphere layer
     atmosphere = AtmosphereLayer.create(width, height)
 
+    # Initialize global water pool
+    from config import INITIAL_WATER_POOL
+    water_pool = GlobalWaterPool(total_volume=INITIAL_WATER_POOL)
+
     return GameState(
         width=width,
         height=height,
         tiles=tiles,
         player_state=player_state,
         atmosphere=atmosphere,
+        water_pool=water_pool,
     )
 
 
@@ -219,7 +263,7 @@ def dig_trench(state: GameState) -> None:
     sub_pos = state.get_action_target_subsquare()
     subsquare.has_trench = True
     subsquare.invalidate_appearance()
-    state.dirty_subsquares.append(sub_pos)
+    state.dirty_subsquares.add(sub_pos)
     # Remove some surface water from this sub-square when digging
     subsquare.surface_water = max(subsquare.surface_water - 10, 0)
     state.messages.append("Dug a trench; flow improves, evap drops here.")
@@ -254,7 +298,8 @@ def lower_ground(state: GameState) -> None:
         return
     sub_pos = state.get_action_target_subsquare()
     subsquare.invalidate_appearance()
-    state.dirty_subsquares.append(sub_pos)
+    state.dirty_subsquares.add(sub_pos)
+    state.invalidate_elevation_range()  # Terrain changed
     removed = terrain.remove_material_from_layer(exposed, 2)
     material_name = terrain.get_layer_material(exposed)
     new_elev = units_to_meters(terrain.get_surface_elevation()) + subsquare.elevation_offset
@@ -271,7 +316,8 @@ def raise_ground(state: GameState) -> None:
     terrain = ensure_terrain_override(subsquare, tile.terrain)
     state.inventory.scrap -= 1
     subsquare.invalidate_appearance()
-    state.dirty_subsquares.append(sub_pos)
+    state.dirty_subsquares.add(sub_pos)
+    state.invalidate_elevation_range()  # Terrain changed
     # Add to exposed layer (which becomes the new surface)
     exposed = terrain.get_exposed_layer()
     terrain.add_material_to_layer(exposed, 2)
@@ -327,9 +373,10 @@ def pour_water(state: GameState, amount: float) -> None:
 def simulate_tick(state: GameState) -> None:
     """Run one simulation tick.
 
-    Water simulation is split into two phases:
+    Water simulation is split into phases:
     - Surface flow: Sub-grid level, runs every tick
-    - Subsurface flow: Tile level, runs every tick (could be reduced later)
+    - Subsurface flow: Tile level, runs every 2 ticks (slower flow, performance opt)
+    - Evaporation: Per sub-square, runs every tick
     """
     # Update weather system (day/night cycle, heat, rain)
     weather_messages = state.weather.tick()
@@ -338,43 +385,71 @@ def simulate_tick(state: GameState) -> None:
     # Update structures (cisterns, planters, etc.)
     tick_structures(state, state.heat)
 
-    # Track moisture history for biome calculations
-    for x in range(state.width):
-        for y in range(state.height):
-            update_moisture_history(state.tiles[x][y])
+    # --- Water Simulation (staggered for even CPU load) ---
+    # Heavy operations are spread across ticks to avoid stuttering
+    # Pattern over 4 ticks:
+    #   tick 0: surface flow (~35ms)
+    #   tick 1: seepage + moisture (~15ms) + subsurface (~65ms) = ~80ms
+    #   tick 2: surface flow (~35ms)
+    #   tick 3: seepage + moisture (~15ms)
+    tick = state.weather.turn_in_day
 
-    # --- Water Simulation ---
-    # Phase 1: Surface flow at sub-grid resolution
-    simulate_surface_flow(state.tiles, state.width, state.height)
+    # Surface flow: every 2 ticks, offset 0 (~35ms)
+    if tick % 2 == 0:
+        simulate_surface_flow(state.tiles, state.width, state.height, state.water_pool)
 
-    # Phase 2: Surface seepage into soil
-    simulate_surface_seepage(state.tiles, state.width, state.height)
+    # Surface seepage + moisture history: every 2 ticks, offset 1 (~15ms combined)
+    if tick % 2 == 1:
+        simulate_surface_seepage(state.tiles, state.width, state.height)
+        for x in range(state.width):
+            for y in range(state.height):
+                update_moisture_history(state.tiles[x][y])
 
-    # Phase 3: Subsurface flow at tile resolution
-    # (includes wellspring output, vertical seepage, horizontal subsurface flow)
-    simulate_subsurface_tick(state)
+    # Subsurface flow: every 4 ticks, offset 1 (~65ms)
+    # Pairs with lighter seepage tick instead of heavier surface flow tick
+    if tick % 4 == 1:
+        simulate_subsurface_tick(state)
 
-    # Phase 4: Evaporation (applied to sub-squares)
+    # Evaporation: every tick (cheap at ~5ms, provides consistent feedback)
     apply_tile_evaporation(state)
 
     # Phase 5: Atmosphere evolution (humidity, wind drift)
     if state.atmosphere is not None:
         simulate_atmosphere_tick(state.atmosphere, state.heat)
 
+        # Phase 6: Accumulate wind exposure periodically (every 10 ticks)
+        # Water passage is tracked during flow; wind needs separate accumulation
+        if state.weather.turn_in_day % 10 == 0:
+            from simulation.erosion import accumulate_wind_exposure
+            accumulate_wind_exposure(
+                state.tiles, state.width, state.height, state.atmosphere
+            )
+
 
 def end_day(state: GameState) -> None:
     messages = state.weather.end_day()
     state.messages.extend(messages)
-    # Only recalculate biomes if day actually changed
+    # Only process overnight changes if day actually changed
     if messages and "begins" in messages[-1]:
+        # Apply overnight erosion using accumulated daily pressures
+        from simulation.erosion import apply_overnight_erosion
+        erosion_messages = apply_overnight_erosion(
+            state.tiles, state.width, state.height,
+            state.atmosphere,
+            seasonal_modifier=1.0,  # Future: adjust based on season/weather
+        )
+        state.messages.extend(erosion_messages)
+
+        # Recalculate biomes after erosion
         biome_messages = recalculate_biomes(state.tiles, state.width, state.height)
-        # Invalidate all appearances since lighting/environment may have changed
+        state.messages.extend(biome_messages)
+
+        # Invalidate all appearances since terrain may have changed
         for row in state.tiles:
             for tile in row:
                 for sub_row in tile.subgrid:
                     for subsquare in sub_row:
                         subsquare.invalidate_appearance()
-        state.messages.extend(biome_messages)
 
 
 def show_status(state: GameState) -> None:

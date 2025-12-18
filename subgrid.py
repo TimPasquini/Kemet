@@ -39,6 +39,12 @@ class SubSquare:
     structure_id: Optional[int] = None
     has_trench: bool = False
     terrain_override: Optional["TerrainColumn"] = None
+    # Erosion system fields (sediment for immediate feedback)
+    sediment_load: int = 0                      # Carried sediment amount (depth units)
+    sediment_material: Optional[str] = None     # Material type of sediment
+    # Daily pressure accumulators (reset on overnight processing)
+    water_passage: float = 0.0                  # Sum of water that flowed through today
+    wind_exposure: float = 0.0                  # Sum of wind pressure experienced today
     # Cached appearance (computed lazily, invalidated on changes)
     _cached_appearance: Optional[object] = field(default=None, repr=False)
     # Track water level for threshold-based invalidation

@@ -182,6 +182,11 @@ def build_structure(state: "GameState", kind: str) -> None:
     }
     state.structures[sub_pos] = structure_class_map[kind]()
     subsquare.structure_id = len(state.structures)  # Mark sub-square as having structure
+
+    # Update cistern cache for evaporation optimization
+    if kind == "cistern":
+        state.register_cistern(tile_pos[0], tile_pos[1])
+
     state.messages.append(f"Built {kind} at sub-square {sub_pos}.")
 
 

@@ -14,7 +14,7 @@ import pygame
 
 from mapgen import TILE_TYPES
 from surface_state import compute_surface_appearance
-from render.colors import color_for_tile, color_for_subsquare, calculate_elevation_range
+from render.colors import color_for_tile, color_for_subsquare
 from render.primitives import draw_text
 from config import (
     STRUCTURE_INSET,
@@ -36,6 +36,52 @@ if TYPE_CHECKING:
     from main import GameState
     from camera import Camera
     from tools import Tool
+
+# =============================================================================
+# Surface Caches (performance optimization)
+# =============================================================================
+# Cache water surfaces by (size, color, alpha) to avoid per-frame surface creation
+_WATER_SURFACE_CACHE: dict = {}
+
+# Cache highlight surfaces by (size, color, alpha) to avoid per-frame surface creation
+_HIGHLIGHT_SURFACE_CACHE: dict = {}
+
+def _get_cached_water_surface(
+    sub_size: int,
+    color: Tuple[int, int, int],
+    alpha: int,
+) -> pygame.Surface:
+    """Get a cached water surface, creating if needed.
+
+    Alpha is quantized to steps of 10 to limit cache size.
+    """
+    # Quantize alpha to reduce cache entries (40, 50, 60, ... 200)
+    quant_alpha = (alpha // 10) * 10
+    key = (sub_size, color, quant_alpha)
+
+    if key not in _WATER_SURFACE_CACHE:
+        surf = pygame.Surface((sub_size, sub_size), pygame.SRCALPHA)
+        surf.fill((*color, quant_alpha))
+        _WATER_SURFACE_CACHE[key] = surf
+
+    return _WATER_SURFACE_CACHE[key]
+
+
+def _get_cached_highlight_surface(
+    size: int,
+    color: Tuple[int, int, int],
+    alpha: int,
+) -> pygame.Surface:
+    """Get a cached highlight surface, creating if needed."""
+    key = (size, color, alpha)
+
+    if key not in _HIGHLIGHT_SURFACE_CACHE:
+        surf = pygame.Surface((size, size), pygame.SRCALPHA)
+        surf.fill((*color, alpha))
+        _HIGHLIGHT_SURFACE_CACHE[key] = surf
+
+    return _HIGHLIGHT_SURFACE_CACHE[key]
+
 
 # =============================================================================
 # Highlight Colors by Tool Type
@@ -201,9 +247,8 @@ def render_subgrid_water(
             world_x, world_y = camera.subsquare_to_world(sub_x, sub_y)
             vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
 
-            # Draw semi-transparent water rectangle
-            water_surface = pygame.Surface((sub_size, sub_size), pygame.SRCALPHA)
-            water_surface.fill((*color, alpha))
+            # Draw semi-transparent water rectangle (using cached surface)
+            water_surface = _get_cached_water_surface(sub_size, color, alpha)
             surface.blit(water_surface, (int(vp_x), int(vp_y)))
 
 
@@ -217,8 +262,8 @@ def render_static_background(state: "GameState", font) -> pygame.Surface:
     background_surface = pygame.Surface((world_pixel_width, world_pixel_height))
     background_surface.fill((20, 20, 25))
 
-    # Calculate elevation range for brightness scaling
-    elevation_range = calculate_elevation_range(state)
+    # Get cached elevation range for brightness scaling
+    elevation_range = state.get_elevation_range()
 
     world_sub_width = state.width * SUBGRID_SIZE
     world_sub_height = state.height * SUBGRID_SIZE
@@ -268,8 +313,8 @@ def redraw_background_rect(background_surface: pygame.Surface, state: "GameState
     tile = state.tiles[tile_x][tile_y]
     subsquare = tile.subgrid[local_x][local_y]
 
-    # Calculate elevation and color with brightness
-    elevation_range = calculate_elevation_range(state)
+    # Get cached elevation range and calculate color with brightness
+    elevation_range = state.get_elevation_range()
     sub_elevation = tile.get_subsquare_elevation(local_x, local_y)
     color = color_for_subsquare(subsquare, sub_elevation, tile, elevation_range)
 
@@ -324,7 +369,7 @@ def render_interaction_highlights(
     vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
     rect = pygame.Rect(int(vp_x), int(vp_y), sub_size, sub_size)
 
-    highlight_surface = pygame.Surface((sub_size, sub_size), pygame.SRCALPHA)
-    highlight_surface.fill((*color, 60))
+    # Use cached highlight surface to avoid per-frame allocation
+    highlight_surface = _get_cached_highlight_surface(sub_size, color, 60)
     surface.blit(highlight_surface, (int(vp_x), int(vp_y)))
     pygame.draw.rect(surface, color, rect, 2)

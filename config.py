@@ -66,6 +66,14 @@ SURFACE_FLOW_THRESHOLD = 1     # Min elevation diff for surface flow (~1cm)
 SUBSURFACE_FLOW_THRESHOLD = 1  # Min pressure diff for subsurface flow
 
 # =============================================================================
+# WATER CONSERVATION
+# =============================================================================
+INITIAL_WATER_POOL = 100000    # Starting water in global pool (10,000L)
+MIN_GAMEPLAY_WATER = 10000     # Minimum water to ensure at game start
+
+# Note: Erosion configuration is in simulation/erosion.py (overnight processing)
+
+# =============================================================================
 # STRUCTURES
 # =============================================================================
 # Cistern

@@ -13,13 +13,14 @@ Key concepts:
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import TYPE_CHECKING, Dict, List, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 from config import SUBGRID_SIZE, SURFACE_FLOW_RATE, SURFACE_FLOW_THRESHOLD, SURFACE_SEEPAGE_RATE
 from subgrid import NEIGHBORS_8, get_subsquare_index, get_subsquare_terrain
 
 if TYPE_CHECKING:
     from mapgen import Tile
+    from world_state import GlobalWaterPool
 
 Point = Tuple[int, int]
 
@@ -44,16 +45,24 @@ def simulate_surface_flow(
     tiles: List[List["Tile"]],
     width: int,
     height: int,
-) -> None:
+    water_pool: Optional["GlobalWaterPool"] = None,
+) -> int:
     """Simulate one tick of surface water flow at sub-grid resolution.
 
     Water flows from each sub-square to lower neighbors based on the
     difference in water surface height (elevation + water depth).
 
+    Edge runoff: Water at map edges can flow "off" into the global pool
+    (treating off-map as low elevation). This enables water conservation.
+
     Args:
         tiles: 2D list of tiles [x][y]
         width: Map width in tiles
         height: Map height in tiles
+        water_pool: Optional global water pool for edge runoff collection
+
+    Returns:
+        Total edge runoff amount (for tracking)
     """
     # World dimensions in sub-squares
     sub_width = width * SUBGRID_SIZE
@@ -61,6 +70,10 @@ def simulate_surface_flow(
 
     # Calculate all flow deltas first (don't modify during calculation)
     deltas: Dict[Point, int] = defaultdict(int)
+    edge_runoff_total = 0  # Track water flowing off map edges
+
+    # Special marker for edge flow targets
+    EDGE_TARGET = (-1, -1)
 
     for sub_x in range(sub_width):
         for sub_y in range(sub_height):
@@ -88,8 +101,13 @@ def simulate_surface_flow(
                 n_sub_x = sub_x + dx
                 n_sub_y = sub_y + dy
 
-                # Bounds check
+                # Bounds check - edge flow goes to pool
                 if not (0 <= n_sub_x < sub_width and 0 <= n_sub_y < sub_height):
+                    # Edge of map: treat as very low elevation (water flows off freely)
+                    if water_pool is not None:
+                        edge_diff = my_height + 100  # Edge is always "lower"
+                        flow_targets.append((EDGE_TARGET, edge_diff))
+                        total_diff += edge_diff
                     continue
 
                 # Get neighbor's tile and local coords
@@ -118,15 +136,21 @@ def simulate_surface_flow(
 
             # Distribute water proportionally to elevation differences
             total_transferred = 0
-            for (n_sub_x, n_sub_y), diff in flow_targets:
+            for target, diff in flow_targets:
                 portion = int((transferable * diff) / total_diff) if total_diff > 0 else 0
                 if portion > 0:
-                    deltas[(n_sub_x, n_sub_y)] += portion
+                    if target == EDGE_TARGET:
+                        # Water flows off the edge of the map
+                        edge_runoff_total += portion
+                    else:
+                        deltas[target] += portion
                     total_transferred += portion
 
-            # Record loss from source
+            # Record loss from source and accumulate water passage
             if total_transferred > 0:
                 deltas[(sub_x, sub_y)] -= total_transferred
+                # Track water passage for overnight erosion calculations
+                subsquare.water_passage += total_transferred
 
     # Apply all deltas and check for visual threshold changes
     for (sub_x, sub_y), delta in deltas.items():
@@ -138,8 +162,17 @@ def simulate_surface_flow(
         tile = tiles[tile_x][tile_y]
         subsquare = tile.subgrid[local_x][local_y]
         subsquare.surface_water = max(0, subsquare.surface_water + delta)
+        # Track incoming water passage for overnight erosion
+        if delta > 0:
+            subsquare.water_passage += delta
         # Check if water crossed a visual threshold (dry/wet/flooded)
         subsquare.check_water_threshold()
+
+    # Add edge runoff to the global pool (water conservation)
+    if water_pool is not None and edge_runoff_total > 0:
+        water_pool.edge_runoff(edge_runoff_total)
+
+    return edge_runoff_total
 
 
 def simulate_surface_seepage(

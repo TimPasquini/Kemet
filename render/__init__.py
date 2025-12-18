@@ -6,7 +6,6 @@ Provides modular rendering functions for map, HUD, toolbar, and overlays.
 """
 from render.colors import (
     Color,
-    calculate_elevation_range,
     elevation_brightness,
     apply_brightness,
     blend_colors,
@@ -22,7 +21,6 @@ from render.overlays import render_help_overlay, render_event_log, render_player
 __all__ = [
     # Colors
     "Color",
-    "calculate_elevation_range",
     "elevation_brightness",
     "apply_brightness",
     "blend_colors",

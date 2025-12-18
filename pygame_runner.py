@@ -72,7 +72,6 @@ from config import (
 )
 from subgrid import subgrid_to_tile, get_subsquare_index
 from render import (
-    calculate_elevation_range,
     render_map_viewport,
     render_static_background,
     render_player,
@@ -143,7 +142,7 @@ def update_dirty_background(
 
     Args:
         background_surface: The cached background surface to update
-        state: Game state with dirty_subsquares list
+        state: Game state with dirty_subsquares set
         font: Font for rendering
 
     Returns:
@@ -177,12 +176,13 @@ def render_to_virtual_screen(
     ui_state: UIState,
     show_help: bool,
     background_surface: pygame.Surface = None,
+    map_surface: pygame.Surface = None,
 ) -> None:
     """Render everything to the virtual screen at fixed resolution."""
     virtual_screen.fill((20, 20, 25))
 
     # 1. Render map viewport (tiles, structures, features)
-    map_surface = pygame.Surface((camera.viewport_width, camera.viewport_height))
+    # map_surface is now passed in and reused to avoid per-frame allocation
     render_map_viewport(map_surface, font, state, camera, tile_size, elevation_range, background_surface)
 
     # Render interaction highlights (before player, after tiles)
@@ -320,6 +320,9 @@ def run(tile_size: int = TILE_SIZE) -> None:
     camera.set_world_bounds(state.width, state.height, tile_size)
     camera.set_viewport_size(ui_state.map_rect.width, ui_state.map_rect.height)
 
+    # Pre-allocate map surface to avoid per-frame allocation (~1-2MB saved per frame)
+    map_surface = pygame.Surface((camera.viewport_width, camera.viewport_height))
+
     # World dimensions in sub-squares (for movement bounds and cursor clamping)
     world_sub_width = state.width * SUBGRID_SIZE
     world_sub_height = state.height * SUBGRID_SIZE
@@ -331,10 +334,13 @@ def run(tile_size: int = TILE_SIZE) -> None:
     player_px, player_py = state.player_state.world_pixel_pos
     camera.center_on(player_px, player_py)
     show_help = False
-    elevation_range = calculate_elevation_range(state)
+    # elevation_range is now cached on state and retrieved via get_elevation_range()
 
     # Scroll state
     visible_messages = (LOG_PANEL_HEIGHT - 40) // 18
+
+    # Track last mouse position to avoid redundant cursor updates
+    last_mouse_pos: Tuple[int, int] = (-1, -1)
 
     running = True
     while running:
@@ -400,8 +406,7 @@ def run(tile_size: int = TILE_SIZE) -> None:
                         if tool:
                             action, args = tool.get_action()
                             issue(state, action, args, ui_state.target_subsquare)
-                            if action in ("terrain", "raise", "lower"):
-                                elevation_range = calculate_elevation_range(state)
+                            # Elevation range cache is invalidated automatically by terrain actions
 
                 # Right click
                 elif event.button == 3:
@@ -461,8 +466,7 @@ def run(tile_size: int = TILE_SIZE) -> None:
                     if tool:
                         action, args = tool.get_action()
                         issue(state, action, args, ui_state.target_subsquare)
-                        if action in ("terrain", "raise", "lower"):
-                            elevation_range = calculate_elevation_range(state)
+                        # Elevation range cache is invalidated automatically by terrain actions
 
         # Movement (when menu closed)
         if not toolbar.menu_open:
@@ -505,18 +509,20 @@ def run(tile_size: int = TILE_SIZE) -> None:
         player_px, player_py = state.player_state.world_pixel_pos
         camera.follow(player_px, player_py)
 
-        # Update cursor tracking for interaction highlights
+        # Update cursor tracking only when mouse has moved (avoids per-frame recalculation)
         mouse_screen_pos = pygame.mouse.get_pos()
-        virtual_pos = screen_to_virtual(mouse_screen_pos, screen.get_size())
-        ui_state.update_cursor(
-            virtual_pos,
-            camera,
-            state.player_state.position,
-            world_sub_width,
-            world_sub_height,
-        )
-        # Sync target to game state for rendering and commands
-        state.set_target(ui_state.target_subsquare)
+        if mouse_screen_pos != last_mouse_pos:
+            last_mouse_pos = mouse_screen_pos
+            virtual_pos = screen_to_virtual(mouse_screen_pos, screen.get_size())
+            ui_state.update_cursor(
+                virtual_pos,
+                camera,
+                state.player_state.position,
+                world_sub_width,
+                world_sub_height,
+            )
+            # Sync target to game state for rendering and commands
+            state.set_target(ui_state.target_subsquare)
 
         # Simulation tick
         state._tick_timer += dt
@@ -533,9 +539,9 @@ def run(tile_size: int = TILE_SIZE) -> None:
 
         # Render to virtual screen
         render_to_virtual_screen(
-            virtual_screen, font, state, camera, tile_size, elevation_range,
+            virtual_screen, font, state, camera, tile_size, state.get_elevation_range(),
             state.player_state.world_pixel_pos,
-            toolbar, ui_state, show_help, background_surface
+            toolbar, ui_state, show_help, background_surface, map_surface
         )
 
         # Scale and blit to actual screen

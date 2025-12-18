@@ -11,9 +11,9 @@ Handles:
 from __future__ import annotations
 
 import random
-from collections import Counter
+from collections import Counter, deque
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple
+from typing import Deque, Dict, List, Tuple
 
 from ground import (
     TerrainColumn,
@@ -79,6 +79,11 @@ def _create_default_subgrid() -> List[List[SubSquare]]:
     return subgrid
 
 
+def _create_moisture_deque() -> Deque[int]:
+    """Create a bounded deque for moisture history tracking."""
+    return deque(maxlen=MOISTURE_HISTORY_MAX)
+
+
 @dataclass
 class Tile:
     """
@@ -98,7 +103,7 @@ class Tile:
     surface: SurfaceTraits              # Surface features (trench, etc.)
     wellspring_output: int = 0          # Water output per tick (0 = not a wellspring)
     depot: bool = False                 # Is this the player's depot?
-    moisture_history: List[int] = field(default_factory=list)
+    moisture_history: Deque[int] = field(default_factory=_create_moisture_deque)
     subgrid: List[List[SubSquare]] = field(default_factory=_create_default_subgrid)
 
     @property
@@ -141,10 +146,11 @@ def _get_tile_total_water(tile: Tile) -> int:
 
 
 def update_moisture_history(tile: Tile) -> None:
-    """Track moisture over time for biome calculations."""
+    """Track moisture over time for biome calculations.
+
+    Uses a bounded deque which automatically discards old entries (O(1) vs O(n) for list.pop(0)).
+    """
     tile.moisture_history.append(_get_tile_total_water(tile))
-    if len(tile.moisture_history) > MOISTURE_HISTORY_MAX:
-        tile.moisture_history.pop(0)
 
 
 def get_average_moisture(tile: Tile) -> float:

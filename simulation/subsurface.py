@@ -55,11 +55,14 @@ def simulate_subsurface_tick(state: "GameState") -> None:
         for y in range(state.height):
             tile = state.tiles[x][y]
 
-            # Wellspring output
+            # Wellspring output (draws from finite global pool)
             if tile.wellspring_output > 0:
                 multiplier = RAIN_WELLSPRING_MULTIPLIER if state.raining else 100
-                gain = (tile.wellspring_output * multiplier) // 100
-                tile.water.add_layer_water(SoilLayer.REGOLITH, gain)
+                desired = (tile.wellspring_output * multiplier) // 100
+                # Draw from global pool instead of creating water from nothing
+                actual = state.water_pool.wellspring_draw(desired)
+                if actual > 0:
+                    tile.water.add_layer_water(SoilLayer.REGOLITH, actual)
 
             # Vertical seepage within the tile
             # Pass current surface water total for capillary rise check
@@ -123,25 +126,8 @@ def apply_tile_evaporation(state: "GameState") -> None:
                 atmo_mod = state.atmosphere.get_evaporation_modifier(x, y)
                 base_evap = int(base_evap * atmo_mod)
 
-            # Check for cisterns in any sub-square of this tile
-            # Structures are now keyed by sub-square coords
-            has_cistern = False
-            for row in tile.subgrid:
-                for subsquare in row:
-                    if subsquare.structure_id is not None:
-                        # Find structure by checking all structures (could optimize later)
-                        for sub_pos, struct in state.structures.items():
-                            from subgrid import subgrid_to_tile
-                            if subgrid_to_tile(sub_pos[0], sub_pos[1]) == (x, y):
-                                if struct.kind == "cistern":
-                                    has_cistern = True
-                                    break
-                    if has_cistern:
-                        break
-                if has_cistern:
-                    break
-
-            if has_cistern:
+            # Check for cisterns using O(1) cached lookup
+            if state.tile_has_cistern(x, y):
                 base_evap = (base_evap * CISTERN_EVAP_REDUCTION) // 100
 
             # Apply retention
@@ -165,3 +151,7 @@ def apply_tile_evaporation(state: "GameState") -> None:
                     # Apply evaporation capped at available water
                     sub_evap = min(sub_evap, subsquare.surface_water)
                     subsquare.surface_water -= sub_evap
+
+                    # Route evaporated water to atmospheric reserve (conservation)
+                    if sub_evap > 0:
+                        state.water_pool.evaporate(sub_evap)
