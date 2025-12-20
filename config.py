@@ -59,6 +59,7 @@ RAIN_INTERVAL_MAX = 2000   # Max time between rain events
 RAIN_DURATION_MIN = 300    # Min rain duration
 RAIN_DURATION_MAX = 500    # Max rain duration
 RAIN_WELLSPRING_MULTIPLIER = 150  # Percentage boost to wellsprings during rain
+MOISTURE_EMA_ALPHA = 0.05  # Exponential moving average factor for moisture tracking
 
 # =============================================================================
 # WATER CONSERVATION

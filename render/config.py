@@ -37,6 +37,7 @@ WELLSPRING_RADIUS = 27                # Wellspring indicator radius
 PROFILE_WIDTH = 140
 PROFILE_HEIGHT = 240
 PROFILE_MARGIN = 10
+METER_SCALE = 60                      # Pixels per meter for soil profile
 
 # =============================================================================
 # COLORS
@@ -61,6 +62,7 @@ TOOLBAR_TEXT_COLOR: Tuple[int, int, int] = (200, 200, 180)
 COLOR_WATER_DEEP = (48, 133, 214)
 COLOR_WATER_SHALLOW = (92, 180, 238)
 COLOR_WELLSPRING_STRONG = (100, 180, 240)
+COLOR_SKY = (160, 210, 250)
 COLOR_WELLSPRING_WEAK = (70, 140, 220)
 COLOR_DEPOT = (200, 200, 60)
 COLOR_STRUCTURE = (30, 30, 30)

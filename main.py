@@ -23,6 +23,7 @@ from config import (
     STARTING_SCRAP,
     STARTING_SEEDS,
     STARTING_BIOMASS,
+    MOISTURE_EMA_ALPHA,
 )
 from ground import (
     SoilLayer,
@@ -41,7 +42,6 @@ from mapgen import (
     TILE_TYPES,
     generate_map,
     recalculate_biomes,
-    update_moisture_history,
 )
 from player import PlayerState
 from structures import (
@@ -117,6 +117,7 @@ class GameState:
     # === Vectorized Simulation State ===
     water_grid: np.ndarray | None = None      # Shape: (width*3, height*3), dtype=int32
     elevation_grid: np.ndarray | None = None  # Shape: (width*3, height*3), dtype=int32
+    moisture_grid: np.ndarray | None = None   # Shape: (width, height), dtype=float64 (EMA)
     terrain_changed: bool = True              # Flag to trigger elevation grid rebuild
 
     # === Player convenience properties for backwards compatibility ===
@@ -262,6 +263,9 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
     from config import INITIAL_WATER_POOL
     water_pool = GlobalWaterPool(total_volume=INITIAL_WATER_POOL)
 
+    # Initialize moisture grid
+    moisture_grid = np.zeros((width, height), dtype=float)
+
     return GameState(
         width=width,
         height=height,
@@ -269,6 +273,7 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
         player_state=player_state,
         atmosphere=atmosphere,
         water_pool=water_pool,
+        moisture_grid=moisture_grid,
     )
 
 
@@ -403,9 +408,25 @@ def simulate_tick(state: GameState) -> None:
         # Seepage still iterates all tiles, but is less frequent.
         # Could be optimized further by tracking active surface water tiles.
         simulate_surface_seepage(state.tiles, state.width, state.height)
+        
+        # Update moisture history using Vectorized/EMA approach
+        # Calculate current total water (surface + subsurface)
+        # Note: We iterate to bridge the object gap until subsurface is fully vectorized
+        current_moisture = np.zeros((state.width, state.height), dtype=float)
         for x in range(state.width):
             for y in range(state.height):
-                update_moisture_history(state.tiles[x][y])
+                tile = state.tiles[x][y]
+                # Surface water sum
+                surf = sum(ss.surface_water for row in tile.subgrid for ss in row)
+                # Subsurface water sum
+                sub = tile.water.total_subsurface_water()
+                current_moisture[x, y] = surf + sub
+
+        if state.moisture_grid is None:
+            state.moisture_grid = current_moisture
+        else:
+            # Apply Exponential Moving Average
+            state.moisture_grid = (1 - MOISTURE_EMA_ALPHA) * state.moisture_grid + MOISTURE_EMA_ALPHA * current_moisture
 
     if tick % 4 == 1:
         simulate_subsurface_tick(state)
@@ -425,7 +446,7 @@ def end_day(state: GameState) -> None:
         erosion_messages = apply_overnight_erosion(state)
         state.messages.extend(erosion_messages)
 
-        biome_messages = recalculate_biomes(state.tiles, state.width, state.height)
+        biome_messages = recalculate_biomes(state.tiles, state.width, state.height, state.moisture_grid)
         state.messages.extend(biome_messages)
 
         for row in state.tiles:

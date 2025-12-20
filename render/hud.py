@@ -2,6 +2,7 @@
 """HUD panels: environment info, tile info, inventory, soil profile."""
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Tuple
 
 import pygame
@@ -19,6 +20,8 @@ from render.config import (
     COLOR_WELLSPRING_STRONG,
     COLOR_TRENCH,
     COLOR_WATER_DEEP,
+    COLOR_SKY,
+    METER_SCALE,
 )
 from simulation.surface import get_tile_surface_water
 
@@ -37,7 +40,7 @@ def render_hud(
     y_offset = start_y
 
     # Environment section
-    y_offset = draw_section_header(screen, font, "ENVIRONMENT", (hud_x, y_offset)) + 4
+    y_offset = draw_section_header(screen, font, "ENVIRONMENT", (hud_x, y_offset), width=130) + 4
     draw_text(screen, font, f"Day: {state.day}", (hud_x, y_offset))
     y_offset += LINE_HEIGHT
     draw_text(screen, font, f"Time: {'Night' if state.is_night else 'Day'}", (hud_x, y_offset))
@@ -47,6 +50,23 @@ def render_hud(
     draw_text(screen, font, f"Rain: {'Active' if state.raining else f'in {state.rain_timer}t'}", (hud_x, y_offset))
     y_offset += LINE_HEIGHT + SECTION_SPACING
 
+    # Atmosphere Section
+    if state.atmosphere:
+        x, y = state.player
+        region = state.atmosphere.get_region_at_tile(x, y)
+        
+        y_offset = draw_section_header(screen, font, "ATMOSPHERE", (hud_x, y_offset), width=130) + 4
+        
+        # Humidity
+        draw_text(screen, font, f"Humidity: {region.humidity*100:.0f}%", (hud_x, y_offset))
+        y_offset += LINE_HEIGHT
+        
+        # Wind
+        arrows = ['↑', '↗', '→', '↘', '↓', '↙', '←', '↖']
+        idx = region.wind_direction % 8
+        draw_text(screen, font, f"Wind: {arrows[idx]} {region.wind_speed*100:.0f}", (hud_x, y_offset))
+        y_offset += LINE_HEIGHT + SECTION_SPACING
+
     # Current tile section
     x, y = state.player
     tile = state.tiles[x][y]
@@ -54,12 +74,18 @@ def render_hud(
     player_sub = state.player_subsquare
     structure = state.structures.get(player_sub)
 
-    y_offset = draw_section_header(screen, font, "CURRENT TILE", (hud_x, y_offset)) + 4
+    y_offset = draw_section_header(screen, font, "CURRENT TILE", (hud_x, y_offset), width=130) + 4
     draw_text(screen, font, f"Position: ({x}, {y})", (hud_x, y_offset))
     y_offset += LINE_HEIGHT
     draw_text(screen, font, f"Type: {tile.kind.capitalize()}", (hud_x, y_offset))
     y_offset += LINE_HEIGHT
     draw_text(screen, font, f"Elevation: {tile.elevation:.2f}m", (hud_x, y_offset))
+    y_offset += LINE_HEIGHT
+
+    if state.moisture_grid is not None:
+        moist = state.moisture_grid[x, y]
+        # Light blue for moisture
+        draw_text(screen, font, f"Soil Moisture: {moist:.1f}", (hud_x, y_offset), (100, 200, 255))
     y_offset += LINE_HEIGHT
     # Get surface water from sub-squares (not tile.water which is subsurface only)
     surface_water = get_tile_surface_water(tile)
@@ -98,17 +124,13 @@ def render_inventory(
     screen,
     font,
     state: "GameState",
-    pos: Tuple[int, int],
-    width: int,
-    height: int,
-) -> None:
-    """Render the inventory panel."""
-    inv_x, inv_y = pos
-    pygame.draw.rect(screen, COLOR_BORDER, (inv_x, inv_y, width, height), 2)
+    x: int,
+    y: int,
+) -> int:
+    """Render the inventory as a text section. Returns new y position."""
+    ix, iy = x, y
 
-    ix, iy = inv_x + 8, inv_y + 8
-    draw_text(screen, font, "Inventory", (ix, iy))
-    iy += LINE_HEIGHT
+    iy = draw_section_header(screen, font, "INVENTORY", (ix, iy), width=130) + 4
 
     inv = state.inventory
     draw_text(screen, font, f"Water: {inv.water / 10:.1f}L", (ix, iy))
@@ -118,6 +140,8 @@ def render_inventory(
     draw_text(screen, font, f"Seeds: {inv.seeds}", (ix, iy))
     iy += LINE_HEIGHT
     draw_text(screen, font, f"Biomass: {inv.biomass}kg", (ix, iy))
+    
+    return iy + LINE_HEIGHT + SECTION_SPACING
 
 
 def render_soil_profile(
@@ -140,10 +164,12 @@ def render_soil_profile(
     # Use sub-square terrain if it has an override, otherwise tile terrain
     terrain = get_subsquare_terrain(subsquare, tile.terrain)
     water = tile.water
+    
+    # Offset in meters (from sub-square micro-terrain)
+    offset_m = subsquare.elevation_offset
 
     # Calculate elevations for the gauge
     surface_elev = terrain.get_surface_elevation()
-    bedrock_base = terrain.bedrock_base
     # Add subsquare offset (convert from meters to depth units)
     surface_elev_with_offset = surface_elev + int(subsquare.elevation_offset * 10)
 
@@ -152,92 +178,129 @@ def render_soil_profile(
     profile_x = x + gauge_width
     profile_width = width - gauge_width
 
-    # Draw header and border (full width)
-    header_y = y - 22
-    pygame.draw.rect(screen, COLOR_BG_PANEL, (x, header_y, width, height + 22), 0, border_radius=3)
-    pygame.draw.rect(screen, COLOR_BORDER_LIGHT, (x, header_y, width, height + 22), 1, border_radius=3)
 
-    # Header shows surface elevation
-    header_text = f"Elev: {units_to_meters(surface_elev_with_offset):.1f}m"
-    draw_section_header(screen, font, header_text, (x + 8, header_y + 5), width=width - 16)
+    # Define view transform: Sea level (0m) is at center of content area
+    center_y = y + height // 2
+    
+    def elev_to_y(elev_m: float) -> int:
+        """Convert elevation in meters to screen Y coordinate."""
+        # Y grows down, so positive elevation is up (negative Y offset)
+        return int(center_y - (elev_m * METER_SCALE))
 
-    total_depth = terrain.get_total_soil_depth() + terrain.bedrock_depth
-    if total_depth == 0:
-        return
+    # Set clip rect to ensure drawing stays within content area
+    content_rect = pygame.Rect(x, y, width, height)
+    original_clip = screen.get_clip()
+    screen.set_clip(content_rect)
 
-    scale = height / total_depth
-    current_y = y
+    # --- 1. Draw Sky ---
+    # Sky goes from top of panel down to surface elevation
+    surface_m = units_to_meters(surface_elev) + offset_m
+    surface_y = elev_to_y(surface_m)
+    
+    # Draw sky background
+    if surface_y > y:
+        sky_rect = pygame.Rect(profile_x, y, profile_width, surface_y - y)
+        pygame.draw.rect(screen, COLOR_SKY, sky_rect)
 
-    # Draw elevation gauge on the left
+    # --- 2. Draw Layers ---
+    # Iterate layers from top (Organics) to bottom (Bedrock)
+    for layer in reversed(SoilLayer):
+        depth = terrain.get_layer_depth(layer)
+        if depth == 0 and layer != SoilLayer.BEDROCK:
+            continue
+
+        # Get layer range in absolute meters (relative to sea level)
+        bot_units, top_units = terrain.get_layer_elevation_range(layer)
+        top_m = units_to_meters(top_units) + offset_m
+        bot_m = units_to_meters(bot_units) + offset_m
+        
+        # For bedrock, extend visually to bottom of panel
+        if layer == SoilLayer.BEDROCK:
+            bot_m = -100.0  # Arbitrary deep value
+
+        layer_top_y = elev_to_y(top_m)
+        layer_bot_y = elev_to_y(bot_m)
+        
+        # Skip if off screen
+        if layer_bot_y < y or layer_top_y > y + height:
+            continue
+            
+        # Clamp to panel
+        draw_top = max(y, layer_top_y)
+        draw_h = min(y + height, layer_bot_y) - draw_top
+        
+        if draw_h > 0:
+            props = MATERIAL_LIBRARY.get(terrain.get_layer_material(layer))
+            color = props.display_color if props else (150, 150, 150)
+            pygame.draw.rect(screen, color, (profile_x, draw_top, profile_width, draw_h))
+            
+            # Draw water fill overlay
+            water_in_layer = water.get_layer_water(layer)
+            max_storage = terrain.get_max_water_storage(layer)
+            if water_in_layer > 0 and max_storage > 0:
+                fill_pct = min(100, (water_in_layer * 100) // max_storage)
+                # Water fills from bottom of layer up
+                water_h = int((layer_bot_y - layer_top_y) * fill_pct / 100)
+                water_top = layer_bot_y - water_h
+                
+                # Clamp water rect
+                w_draw_top = max(y, water_top)
+                w_draw_bot = min(y + height, layer_bot_y)
+                if w_draw_bot > w_draw_top:
+                    water_surf = pygame.Surface((profile_width, w_draw_bot - w_draw_top), pygame.SRCALPHA)
+                    water_surf.fill((40, 80, 160, 150))
+                    screen.blit(water_surf, (profile_x, w_draw_top))
+
+            # Label
+            if draw_h >= 16:
+                draw_text(screen, font, f"{layer.name.capitalize()[:3]}", (profile_x + 4, draw_top + 2), color=COLOR_TEXT_WHITE)
+
+    # --- 3. Draw Surface Water ---
+    if subsquare.surface_water > 0:
+        water_depth_m = units_to_meters(subsquare.surface_water)
+        water_top_y = elev_to_y(surface_m + water_depth_m)
+        water_h = surface_y - water_top_y
+        if water_h > 0:
+            pygame.draw.rect(screen, (50, 100, 200), (profile_x, water_top_y, profile_width, water_h))
+
+    # --- 4. Draw Gauge ---
+    # Restore clip for gauge (or keep it clipped to content area)
+    # Draw gauge background
+    pygame.draw.rect(screen, COLOR_BG_PANEL, (x, y, gauge_width, height))
+
     gauge_x = x + 2
     gauge_line_x = x + gauge_width - 8
-
-    # Calculate elevation range for gauge
-    elev_top = surface_elev_with_offset
-    elev_bottom = bedrock_base
-
-    # Draw gauge line
     pygame.draw.line(screen, (120, 120, 130), (gauge_line_x, y), (gauge_line_x, y + height), 1)
 
-    # Draw tick marks and labels at key elevations
-    # Top tick (surface)
-    pygame.draw.line(screen, (150, 150, 160), (gauge_line_x - 4, y), (gauge_line_x, y), 1)
-    draw_text(screen, font, f"{units_to_meters(elev_top):.1f}", (gauge_x, y - 2), color=(150, 150, 160))
+    # Calculate visible meter range
+    # Top of panel is y, which corresponds to some elevation
+    # y = center_y - elev * scale  =>  elev = (center_y - y) / scale
+    max_visible_m = math.ceil((center_y - y) / METER_SCALE)
+    min_visible_m = math.floor((center_y - (y + height)) / METER_SCALE)
 
-    # Bottom tick (bedrock base)
-    pygame.draw.line(screen, (150, 150, 160), (gauge_line_x - 4, y + height - 1), (gauge_line_x, y + height - 1), 1)
-    draw_text(screen, font, f"{units_to_meters(elev_bottom):.1f}", (gauge_x, y + height - 12), color=(150, 150, 160))
+    for m in range(min_visible_m, max_visible_m + 1):
+        tick_y = elev_to_y(m)
+        if tick_y < y or tick_y > y + height:
+            continue
+            
+        # Major tick for 0 (Sea Level)
+        if m == 0:
+            pygame.draw.line(screen, (100, 150, 255), (gauge_line_x - 8, tick_y), (gauge_line_x + profile_width, tick_y), 1)
+            draw_text(screen, font, "0", (gauge_x + 8, tick_y - 6), color=(100, 150, 255))
+        else:
+            # Standard tick
+            pygame.draw.line(screen, (150, 150, 160), (gauge_line_x - 4, tick_y), (gauge_line_x, tick_y), 1)
+            if m % 2 == 0: # Label even meters
+                draw_text(screen, font, f"{m}", (gauge_x, tick_y - 6), color=(150, 150, 160))
 
-    # Sea level indicator if in range
-    if elev_bottom < 0 < elev_top:
-        sea_level_y = y + int((elev_top - 0) / (elev_top - elev_bottom) * height)
-        pygame.draw.line(screen, (100, 150, 200), (gauge_line_x - 6, sea_level_y), (gauge_line_x, sea_level_y), 2)
-        draw_text(screen, font, "0", (gauge_x + 8, sea_level_y - 6), color=(100, 150, 200))
+    # Restore clip
+    screen.set_clip(original_clip)
 
-    def draw_layer(soil_layer: SoilLayer, label: str):
-        nonlocal current_y
-        depth = terrain.get_layer_depth(soil_layer)
-        if depth == 0:
-            return
-
-        layer_height = int(depth * scale)
-        if layer_height < 1:
-            layer_height = 1
-
-        props = MATERIAL_LIBRARY.get(terrain.get_layer_material(soil_layer))
-        color = props.display_color if props else (150, 150, 150)
-        layer_rect = pygame.Rect(profile_x + 1, current_y, profile_width - 2, layer_height)
-        pygame.draw.rect(screen, color, layer_rect)
-
-        # Draw water fill overlay
-        water_in_layer = water.get_layer_water(soil_layer)
-        max_storage = terrain.get_max_water_storage(soil_layer)
-        if water_in_layer > 0 and max_storage > 0:
-            fill_pct = min(100, (water_in_layer * 100) // max_storage)
-            water_height = (layer_height * fill_pct) // 100
-            if water_height > 0:
-                water_rect = pygame.Rect(profile_x + 1, current_y + layer_height - water_height, profile_width - 2, water_height)
-                water_surf = pygame.Surface((water_rect.width, water_rect.height), pygame.SRCALPHA)
-                water_surf.fill((100, 150, 255, 100))
-                screen.blit(water_surf, water_rect.topleft)
-
-        # Draw label if layer is tall enough
-        if layer_height >= 16:
-            draw_text(screen, font, f"{label[:3]} {units_to_meters(depth):.1f}m", (profile_x + 5, current_y + 2), color=COLOR_TEXT_WHITE)
-
-        current_y += layer_height
-
-    # Draw surface water first, if any (from sub-square, not tile)
-    surface_water = subsquare.surface_water
-    if surface_water > 0:
-        surf_height = min(30, int(surface_water * scale * 0.5))
-        if surf_height > 0:
-            surf_rect = pygame.Rect(profile_x + 1, current_y, profile_width - 2, surf_height)
-            pygame.draw.rect(screen, (100, 150, 255), surf_rect)
-            if surf_height >= 16:
-                draw_text(screen, font, f"Water {surface_water / 10:.1f}L", (profile_x + 5, current_y + 2), color=COLOR_TEXT_WHITE)
-            current_y += surf_height
-
-    # Iterate from top (Organics) to bottom (Bedrock)
-    for layer in reversed(SoilLayer):
-        draw_layer(layer, layer.name.capitalize())
+    # --- 5. Draw Header & Border (Last to ensure Z-order on top) ---
+    header_y = y - 22
+    # Draw background for header only (to cover any sky bleeding up)
+    pygame.draw.rect(screen, COLOR_BG_PANEL, (x, header_y, width, 22), 0, border_radius=3)
+    # Draw border around entire panel
+    pygame.draw.rect(screen, COLOR_BORDER_LIGHT, (x, header_y, width, height + 22), 1, border_radius=3)
+    header_text = f"Elev: {units_to_meters(surface_elev_with_offset):.1f}m"
+    draw_section_header(screen, font, header_text, (x + 8, header_y + 2), width=width - 16)

@@ -11,7 +11,7 @@ Handles:
 from __future__ import annotations
 
 import random
-from collections import Counter, deque
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Deque, Dict, List, Tuple
 
@@ -28,7 +28,6 @@ from ground import (
 from water import WaterColumn
 from utils import get_neighbors
 from config import SUBGRID_SIZE
-from simulation.config import MOISTURE_HISTORY_MAX
 from subgrid import SubSquare
 
 Point = Tuple[int, int]
@@ -52,11 +51,6 @@ def _create_default_subgrid() -> List[List[SubSquare]]:
     return subgrid
 
 
-def _create_moisture_deque() -> Deque[int]:
-    """Create a bounded deque for moisture history tracking."""
-    return deque(maxlen=MOISTURE_HISTORY_MAX)
-
-
 @dataclass
 class Tile:
     """
@@ -76,7 +70,6 @@ class Tile:
     surface: SurfaceTraits              # Surface features (trench, etc.)
     wellspring_output: int = 0          # Water output per tick (0 = not a wellspring)
     depot: bool = False                 # Is this the player's depot?
-    moisture_history: Deque[int] = field(default_factory=_create_moisture_deque)
     subgrid: List[List[SubSquare]] = field(default_factory=_create_default_subgrid)
 
     @property
@@ -112,28 +105,7 @@ class Tile:
 # Biome Calculation
 # =============================================================================
 
-def _get_tile_total_water(tile: Tile) -> int:
-    """Get total water (surface + subsurface) for a tile."""
-    surface = sum(ss.surface_water for row in tile.subgrid for ss in row)
-    return surface + tile.water.total_subsurface_water()
-
-
-def update_moisture_history(tile: Tile) -> None:
-    """Track moisture over time for biome calculations.
-
-    Uses a bounded deque which automatically discards old entries (O(1) vs O(n) for list.pop(0)).
-    """
-    tile.moisture_history.append(_get_tile_total_water(tile))
-
-
-def get_average_moisture(tile: Tile) -> float:
-    """Get average moisture over recent history."""
-    if not tile.moisture_history:
-        return float(_get_tile_total_water(tile))
-    return sum(tile.moisture_history) / len(tile.moisture_history)
-
-
-def calculate_biome(tile: Tile, neighbor_tiles: List[Tile], elevation_percentile: float) -> str:
+def calculate_biome(tile: Tile, neighbor_tiles: List[Tile], elevation_percentile: float, avg_moisture: float) -> str:
     """
     Determine the biome type for a tile based on its properties.
 
@@ -141,11 +113,11 @@ def calculate_biome(tile: Tile, neighbor_tiles: List[Tile], elevation_percentile
         tile: The tile to classify
         neighbor_tiles: Adjacent tiles for context
         elevation_percentile: 0.0-1.0 ranking of elevation (0=lowest, 1=highest)
+        avg_moisture: Average moisture level for this tile
 
     Returns:
         Biome key string (e.g., "dune", "wadi", "rock")
     """
-    avg_moisture = get_average_moisture(tile)
     soil_depth = tile.terrain.get_total_soil_depth()
     topsoil_material = tile.terrain.topsoil_material
 
@@ -212,7 +184,7 @@ def invalidate_all_appearances(tiles: List[List[Tile]], width: int, height: int)
 
 
 def recalculate_biomes(
-    tiles: List[List[Tile]], width: int, height: int
+    tiles: List[List[Tile]], width: int, height: int, moisture_grid: np.ndarray
 ) -> List[str]:
     """
     Recalculate biomes for all tiles based on current conditions.
@@ -220,6 +192,7 @@ def recalculate_biomes(
     Called daily to allow landscape evolution based on moisture, etc.
     Also invalidates all appearance caches to refresh visuals.
 
+    moisture_grid: (width, height) array of average moisture values
     Returns:
         List of messages to display to player
     """
@@ -238,7 +211,8 @@ def recalculate_biomes(
                 for nx, ny in get_neighbors(x, y, width, height)
             ]
             elev_pct = percentiles.get((x, y), 0.5)
-            new_biome = calculate_biome(tile, neighbor_tiles, elev_pct)
+            avg_moisture = moisture_grid[x, y]
+            new_biome = calculate_biome(tile, neighbor_tiles, elev_pct, avg_moisture)
 
             if new_biome != tile.kind:
                 tile.kind = new_biome

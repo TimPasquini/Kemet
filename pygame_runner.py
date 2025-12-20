@@ -205,27 +205,30 @@ def render_to_virtual_screen(
     virtual_screen.blit(scaled_map, ui_state.map_rect.topleft)
 
     # 2. Render sidebar elements
-    sidebar_x = ui_state.sidebar_rect.x + 12
+    # Two-column layout:
+    # Left col: Text info (Env, Atmos, Tile, Inv)
+    # Right col: Soil profile
+    sidebar_x = ui_state.sidebar_rect.x
     y_offset = 12
+    
+    col1_x = sidebar_x + 12
+    col2_x = sidebar_x + 160  # 12 (margin) + 130 (text width) + ~18 (gap)
 
-    # HUD
-    render_hud(virtual_screen, font, state, sidebar_x, y_offset)
+    # Column 1: HUD Stack + Inventory
+    hud_bottom = render_hud(virtual_screen, font, state, col1_x, y_offset)
+    render_inventory(virtual_screen, font, state, col1_x, hud_bottom)
 
-    # Soil profile (show sub-square at cursor target, or player position if no target)
-    soil_x = ui_state.sidebar_rect.x + PROFILE_MARGIN
-    soil_y = 180  # Below HUD
+    # Column 2: Soil profile (show sub-square at cursor target, or player position if no target)
+    soil_y = y_offset + 22  # Offset to align top of header box with text in col 1
     profile_sub_pos = state.target_subsquare if state.target_subsquare else state.player_state.position
     profile_tile_pos = subgrid_to_tile(profile_sub_pos[0], profile_sub_pos[1])
     profile_tile = state.tiles[profile_tile_pos[0]][profile_tile_pos[1]]
     local_x, local_y = get_subsquare_index(profile_sub_pos[0], profile_sub_pos[1])
     profile_subsquare = profile_tile.subgrid[local_x][local_y]
-    render_soil_profile(virtual_screen, font, profile_tile, profile_subsquare, (soil_x, soil_y), PROFILE_WIDTH, PROFILE_HEIGHT - 22)
-
-    # Inventory
-    inv_w, inv_h = 180, 140
-    inv_x = VIRTUAL_WIDTH - inv_w - 12
-    inv_y = ui_state.map_rect.bottom - inv_h - 12
-    render_inventory(virtual_screen, font, state, (inv_x, inv_y), inv_w, inv_h)
+    
+    # Calculate available height for the soil profile (fill down to bottom margin)
+    soil_height = ui_state.log_panel_rect.y - soil_y - 12  # Stop at log panel line, -12 margin
+    render_soil_profile(virtual_screen, font, profile_tile, profile_subsquare, (col2_x, soil_y), PROFILE_WIDTH, soil_height)
 
     # 3. Render toolbar
     render_toolbar(virtual_screen, font, toolbar, ui_state.toolbar_rect.topleft,
