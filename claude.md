@@ -22,22 +22,13 @@ This creates emergent gameplay where understanding the systems lets you work wit
 
 ## Known Issues
 
-### Performance (Under Investigation)
+### Performance
 
-**Symptom**: Stuttery movement, inconsistent tick rhythm even when standing still.
-
-**Current mitigation**: Staggered simulation schedule spreads load across ticks.
-
-**Remaining suspects**:
-- Rendering overhead (not yet profiled with pygame)
-- GC pauses
-- Something else outside simulation
-
-**Unimplemented Potential Optimizations**
+**Potential Optimizations**
   1. Spatial partitioning - Only process tiles with water above a threshold
   2. Delta-based updates - Track which tiles changed and only recalculate neighbors
   3. Chunked processing - Spread subsurface work across multiple frames instead of one spike
-  4. Use numpy arrays - Replace nested Python loops with vectorized operations
+  4. **[x] Use numpy arrays** - Replace nested Python loops with vectorized operations (Implemented for surface flow)
 
 ### UI/UX Issues
 
@@ -127,6 +118,7 @@ Each simulation tile contains 9 **sub-squares**:
 - Start with ~100m of bulk material
 - Simplified single-layer model with hardness variation
 - Run 500-2000 erosion cycles during loading
+- **Note**: Long load times (minutes) are acceptable.
 - Water from wellsprings carves terrain reductively
 
 **Phase 2: Game Terrain (Converted at Start)**
@@ -208,6 +200,18 @@ Player moves on 180x135 grid, interaction range highlights work, cursor targetin
 - Proto-terrain with ~100m bulk material
 - Pre-game erosion cycles
 - Conversion to detailed layers at game start
+- **Note**: Load times of a few minutes are acceptable.
+
+### Phase 7: Persistence - PLANNED
+- Save/Load game state
+- Serialize World/Player/Weather objects
+
+### Phase 8: Performance Optimization - Parital
+- Already Refactored surface water simulation to use NumPy
+- Vectorized gradient and flow calculations
+- Added `water_grid` and `elevation_grid` to GameState
+- Implemented state buffering (Objects -> NumPy -> Objects)
+- Todo: Expand NumPy implementation when logical
 
 ---
 
@@ -223,10 +227,12 @@ def subgrid_to_tile(sub_x, sub_y):
 ```
 
 ### Water Transfer Functions
-- `simulate_surface_flow()` - Horizontal flow between sub-squares
+- `simulate_surface_flow()` - Horizontal flow between sub-squares (Vectorized)
 - `simulate_surface_seepage()` - Downward into topmost soil layer
 - `simulate_vertical_seepage()` - Between soil layers + capillary rise
 - `distribute_upward_seepage()` - Elevation-weighted distribution to sub-squares
+- `sync_objects_to_arrays()` - Buffer state to NumPy
+- `sync_arrays_to_objects()` - Write results back to objects
 
 ### Terrain Override Pattern
 ```python
@@ -252,6 +258,13 @@ background_surface = update_dirty_background(background_surface, state, font)
 
 Dynamic elements (water, player, structures) render on top each frame.
 
+### NumPy Integration
+To optimize surface flow, we use a hybrid approach:
+1. **Sync to Arrays**: `sync_objects_to_arrays()` copies `surface_water` and `elevation` to NumPy grids.
+2. **Vectorized Simulation**: `simulate_surface_flow()` uses NumPy for fast gradient/flow calculation.
+3. **Sync to Objects**: `sync_arrays_to_objects()` writes updated water levels back to `SubSquare` objects.
+4. **Terrain Dirty Flag**: `terrain_changed` flag avoids rebuilding elevation grid every frame.
+
 ---
 
 ## Water Balance (Current Tuning)
@@ -271,7 +284,7 @@ Dynamic elements (water, player, structures) render on top each frame.
 
 ```
 kemet/
-├── config.py              # Constants including water rates, tick intervals
+├── config.py              # Constants: Units, Time, Weather, Physics, UI
 ├── main.py                # GameState, tick orchestration, staggered schedule
 ├── world_state.py         # GlobalWaterPool, SedimentPool (conservation)
 ├── atmosphere.py          # AtmosphereLayer, regional humidity/wind
@@ -282,16 +295,23 @@ kemet/
 ├── mapgen.py              # Map generation, tile types (simulation props)
 ├── water.py               # WaterColumn (subsurface only)
 ├── ground.py              # TerrainColumn, SoilLayer, materials
+├── tools.py               # Tool system (Toolbar, Tool, ToolOption)
+├── keybindings.py         # Centralized input mappings
+├── pygame_runner.py       # Pygame frontend entry point
 ├── simulation/
-│   ├── surface.py         # Surface flow + seepage (with edge runoff)
+│   ├── surface.py         # Surface flow (NumPy) + seepage
 │   ├── subsurface.py      # Underground flow + evaporation
-│   └── erosion.py         # Overnight erosion, wind exposure accumulation
+│   └── erosion.py         # Overnight erosion (water/wind)
 ├── render/
-│   ├── map.py             # Map + water visualization (cached surfaces)
-│   ├── colors.py          # Color computation (uses surface_state)
-│   └── hud.py             # HUD panels + soil profile
+│   ├── __init__.py        # Module exports
+│   ├── map.py             # Map viewport, tiles, structures, highlights
+│   ├── hud.py             # HUD panels, inventory, soil profile
+│   ├── toolbar.py         # Toolbar and popup menu rendering
+│   ├── overlays.py        # Help, event log, player, night overlay
+│   ├── primitives.py      # Basic drawing helpers (text cache)
+│   └── colors.py          # Color computation (elevation/material)
 ├── structures.py          # Structure ABC + Cistern, Condenser, Planter
-└── ui_state.py            # UI state + cursor tracking
+└── ui_state.py            # UI state, layout, click regions, cursor tracking
 ```
 
 ---

@@ -13,10 +13,11 @@ Key concepts:
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Set
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Set, Union
 
+import numpy as np
 from config import SUBGRID_SIZE, SURFACE_FLOW_RATE, SURFACE_FLOW_THRESHOLD, SURFACE_SEEPAGE_RATE
-from subgrid import NEIGHBORS_8, get_subsquare_index, get_subsquare_terrain, tile_to_subgrid
+from subgrid import tile_to_subgrid
 
 if TYPE_CHECKING:
     from main import GameState
@@ -42,107 +43,174 @@ def get_subsquare_water_height(tile: "Tile", local_x: int, local_y: int) -> floa
     return elev + water
 
 
-def simulate_surface_flow(state: "GameState") -> int:
-    """Simulate one tick of surface water flow using an active set for performance.
+def sync_objects_to_arrays(state: "GameState") -> None:
+    """Sync data from GameState objects to NumPy arrays."""
+    w, h = state.width * SUBGRID_SIZE, state.height * SUBGRID_SIZE
 
-    Water flows from each sub-square in the active set to lower neighbors.
-    This avoids iterating over the entire grid every tick.
+    # Initialize arrays if needed
+    if state.water_grid is None or state.water_grid.shape != (w, h):
+        state.water_grid = np.zeros((w, h), dtype=np.int32)
+        state.elevation_grid = np.zeros((w, h), dtype=np.int32)
+        state.terrain_changed = True
 
-    Args:
-        state: The main game state, containing tiles and active_water_subsquares.
+    # Rebuild elevation grid if terrain changed
+    if state.terrain_changed:
+        # This iteration is slow but only happens on terrain modification events
+        for x in range(state.width):
+            for y in range(state.height):
+                tile = state.tiles[x][y]
+                base_elev = tile.terrain.get_surface_elevation()
+                for lx in range(SUBGRID_SIZE):
+                    for ly in range(SUBGRID_SIZE):
+                        ss = tile.subgrid[lx][ly]
+                        # Convert offset (meters) to units (100mm)
+                        # offset 0.1m = 1 unit
+                        val = base_elev + int(ss.elevation_offset * 10)
+                        state.elevation_grid[x * 3 + lx, y * 3 + ly] = val
+        state.terrain_changed = False
 
-    Returns:
-        Total edge runoff amount (for tracking).
-    """
-    tiles = state.tiles
-    width = state.width
-    height = state.height
-    water_pool = state.water_pool
-    sub_width = width * SUBGRID_SIZE
-    sub_height = height * SUBGRID_SIZE
+    # Sync water from active objects to grid
+    # We zero out the grid and rebuild from active set to ensure consistency
+    state.water_grid.fill(0)
+    for sx, sy in state.active_water_subsquares:
+        tx, ty = sx // SUBGRID_SIZE, sy // SUBGRID_SIZE
+        lx, ly = sx % SUBGRID_SIZE, sy % SUBGRID_SIZE
+        val = state.tiles[tx][ty].subgrid[lx][ly].surface_water
+        state.water_grid[sx, sy] = val
 
-    deltas: Dict[Point, int] = defaultdict(int)
-    edge_runoff_total = 0
-    EDGE_TARGET = (-1, -1)
 
-    # Iterate over a copy of the active set, as it may be modified during the loop
-    for sub_x, sub_y in list(state.active_water_subsquares):
-        tile_x, tile_y = sub_x // SUBGRID_SIZE, sub_y // SUBGRID_SIZE
-        local_x, local_y = sub_x % SUBGRID_SIZE, sub_y % SUBGRID_SIZE
-        tile = tiles[tile_x][tile_y]
-        subsquare = tile.subgrid[local_x][local_y]
-
-        if subsquare.surface_water <= 0:
-            state.active_water_subsquares.discard((sub_x, sub_y))
-            continue
-
-        my_height = get_subsquare_water_height(tile, local_x, local_y)
-        flow_targets: List[Tuple[Point, float]] = []
-        total_diff = 0.0
-
-        for dx, dy in NEIGHBORS_8:
-            n_sub_x, n_sub_y = sub_x + dx, sub_y + dy
-
-            if not (0 <= n_sub_x < sub_width and 0 <= n_sub_y < sub_height):
-                if water_pool is not None:
-                    edge_diff = my_height + 100
-                    flow_targets.append((EDGE_TARGET, edge_diff))
-                    total_diff += edge_diff
-                continue
-
-            n_tile_x, n_tile_y = n_sub_x // SUBGRID_SIZE, n_sub_y // SUBGRID_SIZE
-            n_local_x, n_local_y = n_sub_x % SUBGRID_SIZE, n_sub_y % SUBGRID_SIZE
-            n_tile = tiles[n_tile_x][n_tile_y]
-            n_height = get_subsquare_water_height(n_tile, n_local_x, n_local_y)
-
-            diff = my_height - n_height
-            if diff > SURFACE_FLOW_THRESHOLD:
-                flow_targets.append(((n_sub_x, n_sub_y), diff))
-                total_diff += diff
-
-        if not flow_targets:
-            continue
-
-        transferable = (subsquare.surface_water * SURFACE_FLOW_RATE) // 100
-        if transferable <= 0:
-            continue
-
-        total_transferred = 0
-        for target, diff in flow_targets:
-            portion = int((transferable * diff) / total_diff) if total_diff > 0 else 0
-            if portion > 0:
-                if target == EDGE_TARGET:
-                    edge_runoff_total += portion
-                else:
-                    deltas[target] += portion
-                    state.active_water_subsquares.add(target)  # Activate neighbor
-                total_transferred += portion
-
-        if total_transferred > 0:
-            deltas[(sub_x, sub_y)] -= total_transferred
-            subsquare.water_passage += total_transferred
-
-    if not deltas:
-        if water_pool is not None and edge_runoff_total > 0:
-            water_pool.edge_runoff(edge_runoff_total)
-        return edge_runoff_total
-
-    for (sub_x, sub_y), delta in deltas.items():
-        tile_x, tile_y = sub_x // SUBGRID_SIZE, sub_y // SUBGRID_SIZE
-        local_x, local_y = sub_x % SUBGRID_SIZE, sub_y % SUBGRID_SIZE
-        subsquare = tiles[tile_x][tile_y].subgrid[local_x][local_y]
-        subsquare.surface_water = max(0, subsquare.surface_water + delta)
-
-        if delta > 0:
-            subsquare.water_passage += delta
+def sync_arrays_to_objects(state: "GameState", outflow_grid: np.ndarray) -> None:
+    """Sync data from NumPy arrays back to GameState objects."""
+    # Identify all cells that need updates:
+    # 1. Cells that were active before (might have dried up)
+    # 2. Cells that are non-zero in the new grid (might be newly wet)
+    
+    old_active = state.active_water_subsquares.copy()
+    state.active_water_subsquares.clear()
+    
+    # Find currently wet cells
+    nz_rows, nz_cols = np.nonzero(state.water_grid)
+    current_wet_coords = set(zip(nz_rows, nz_cols))
+    
+    # Update active set
+    state.active_water_subsquares.update(current_wet_coords)
+    
+    # Union of old and new ensures we update cells that just dried out (to 0)
+    update_set = old_active.union(current_wet_coords)
+    
+    for sx, sy in update_set:
+        tx, ty = sx // SUBGRID_SIZE, sy // SUBGRID_SIZE
+        lx, ly = sx % SUBGRID_SIZE, sy % SUBGRID_SIZE
+        subsquare = state.tiles[tx][ty].subgrid[lx][ly]
+        
+        # Update water level
+        subsquare.surface_water = int(state.water_grid[sx, sy])
+        
+        # Accumulate water passage (for erosion)
+        outflow = int(outflow_grid[sx, sy])
+        if outflow > 0:
+            subsquare.water_passage += outflow
+            
+        # Update visual state
         subsquare.check_water_threshold()
 
-        if subsquare.surface_water <= 0:
-            state.active_water_subsquares.discard((sub_x, sub_y))
 
-    if water_pool is not None and edge_runoff_total > 0:
-        water_pool.edge_runoff(edge_runoff_total)
+def simulate_surface_flow(state: "GameState") -> int:
+    """Simulate surface water flow using vectorized NumPy operations."""
+    
+    # 1. Sync In
+    sync_objects_to_arrays(state)
+    
+    water = state.water_grid
+    elev = state.elevation_grid
+    
+    # Pad arrays to handle edges (runoff sink)
+    # Pad elevation with a very low value so edges act as sinks
+    # Pad water with 0
+    H = np.pad(elev + water, 1, mode='constant', constant_values=-10000)
+    water_padded = np.pad(water, 1, mode='constant', constant_values=0)
+    
+    # Accumulators
+    deltas = np.zeros_like(water_padded)
+    outflow_accum = np.zeros_like(water_padded)
+    
+    # 2. Vectorized Physics
+    # Slices for the center (active) region
+    center_slice = (slice(1, -1), slice(1, -1))
+    H_center = H[center_slice]
+    
+    # Calculate total potential difference to all 8 neighbors
+    diff_sum = np.zeros_like(H_center, dtype=np.float64)
+    diffs = []
+    
+    # Iterate 8 neighbors (dx, dy)
+    # Neighbors relative to center (0,0)
+    neighbor_offsets = [
+        (-1, -1), (0, -1), (1, -1),
+        (-1, 0),           (1, 0),
+        (-1, 1),  (0, 1),  (1, 1)
+    ]
+    
+    for dx, dy in neighbor_offsets:
+        # Shifted view of H representing the neighbor at (x+dx, y+dy)
+        # If dx=1, we look at slice(2, None). If dx=-1, slice(0, -2).
+        # This aligns the neighbor's value with the center cell's coordinate.
+        neighbor_slice = (slice(1 + dx, -1 + dx if -1 + dx != 0 else None), 
+                          slice(1 + dy, -1 + dy if -1 + dy != 0 else None))
+        
+        H_neighbor = H[neighbor_slice]
+        d = H_center - H_neighbor
+        d = np.maximum(d, 0) # Only flow downhill
+        diffs.append((d, dx, dy))
+        diff_sum += d
+        
+    # Calculate flow
+    # Mask where flow is possible
+    flow_mask = (diff_sum > 0) & (water_padded[center_slice] > 0)
+    
+    # Amount to move (percentage of current water)
+    amount_to_move = (water_padded[center_slice] * SURFACE_FLOW_RATE) // 100
+    
+    # Distribute flow
+    for d, dx, dy in diffs:
+        # Fraction of flow going to this neighbor
+        # Use safe division
+        fraction = np.divide(d, diff_sum, out=np.zeros_like(d, dtype=np.float64), where=diff_sum!=0)
+        
+        # Calculate integer flow amount
+        flow = (amount_to_move * fraction).astype(np.int32)
+        
+        # Apply flow only where valid
+        flow = np.where(flow_mask, flow, 0)
+        
+        # Subtract from center
+        deltas[center_slice] -= flow
+        outflow_accum[center_slice] += flow
+        
+        # Add to neighbor
+        neighbor_slice = (slice(1 + dx, -1 + dx if -1 + dx != 0 else None), 
+                          slice(1 + dy, -1 + dy if -1 + dy != 0 else None))
+        deltas[neighbor_slice] += flow
 
+    # Apply deltas
+    water_padded += deltas
+    
+    # 3. Handle Edge Runoff
+    # Calculate how much water ended up in the padding halo
+    total_water_after = np.sum(water_padded)
+    internal_water_after = np.sum(water_padded[center_slice])
+    edge_runoff_total = int(total_water_after - internal_water_after)
+    
+    if state.water_pool is not None and edge_runoff_total > 0:
+        state.water_pool.edge_runoff(edge_runoff_total)
+
+    # 4. Sync Out
+    # Update the main grid from the padded calculation (discarding halo)
+    state.water_grid = water_padded[center_slice].astype(np.int32)
+    
+    # Sync back to objects
+    sync_arrays_to_objects(state, outflow_accum[center_slice])
+    
     return edge_runoff_total
 
 

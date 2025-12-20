@@ -12,6 +12,7 @@ import random
 from dataclasses import dataclass, field
 from typing import Deque, Dict, List, Set, Tuple
 
+import numpy as np
 from config import (
     MAX_POUR_AMOUNT,
     MIN_LAYER_THICKNESS,
@@ -108,6 +109,11 @@ class GameState:
 
     # Elevation range cache (invalidated on terrain changes)
     _cached_elevation_range: Tuple[float, float] | None = None
+
+    # === Vectorized Simulation State ===
+    water_grid: np.ndarray | None = None      # Shape: (width*3, height*3), dtype=int32
+    elevation_grid: np.ndarray | None = None  # Shape: (width*3, height*3), dtype=int32
+    terrain_changed: bool = True              # Flag to trigger elevation grid rebuild
 
     # === Player convenience properties for backwards compatibility ===
     @property
@@ -271,6 +277,7 @@ def dig_trench(state: GameState) -> None:
     subsquare.has_trench = True
     subsquare.invalidate_appearance()
     state.dirty_subsquares.add(sub_pos)
+    state.terrain_changed = True
     # Remove some surface water from this sub-square when digging
     subsquare.surface_water = max(subsquare.surface_water - 10, 0)
     state.messages.append("Dug a trench; flow improves, evap drops here.")
@@ -307,6 +314,7 @@ def lower_ground(state: GameState) -> None:
     subsquare.invalidate_appearance()
     state.dirty_subsquares.add(sub_pos)
     state.invalidate_elevation_range()  # Terrain changed
+    state.terrain_changed = True
     removed = terrain.remove_material_from_layer(exposed, 2)
     material_name = terrain.get_layer_material(exposed)
     new_elev = units_to_meters(terrain.get_surface_elevation()) + subsquare.elevation_offset
@@ -325,6 +333,7 @@ def raise_ground(state: GameState) -> None:
     subsquare.invalidate_appearance()
     state.dirty_subsquares.add(sub_pos)
     state.invalidate_elevation_range()  # Terrain changed
+    state.terrain_changed = True
     # Add to exposed layer (which becomes the new surface)
     exposed = terrain.get_exposed_layer()
     terrain.add_material_to_layer(exposed, 2)
