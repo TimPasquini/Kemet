@@ -2,11 +2,21 @@
 """
 Centralized game configuration for Kemet.
 
-All magic numbers and constants in one place for easy tuning.
+This file contains high-level, cross-cutting constants.
+Domain-specific constants are in:
+- simulation/config.py (physics, erosion, etc.)
+- render/config.py (colors, UI dimensions, etc.)
 """
 from __future__ import annotations
 
 from typing import Dict, Tuple
+
+# =============================================================================
+# CORE GAME DESIGN
+# =============================================================================
+SUBGRID_SIZE = 3              # 3x3 sub-squares per tile. The ONE constant to rule them all.
+INTERACTION_RANGE = 2         # Sub-squares player can reach (1-2 squares out)
+MAP_SIZE: Tuple[int, int] = (60, 45)  # Large world for exploration
 
 # =============================================================================
 # UNITS & SCALE
@@ -51,27 +61,10 @@ RAIN_DURATION_MAX = 500    # Max rain duration
 RAIN_WELLSPRING_MULTIPLIER = 150  # Percentage boost to wellsprings during rain
 
 # =============================================================================
-# WATER PHYSICS
-# =============================================================================
-# Flow rates (as percentages: 0-100)
-SURFACE_FLOW_RATE = 50       # Fast surface flow (50% per tick)
-SURFACE_SEEPAGE_RATE = 15    # Surface water seeping into soil (15% per tick)
-SUBSURFACE_FLOW_RATE = 8     # Slow subsurface flow (8% per tick)
-OVERFLOW_FLOW_RATE = 90      # Overflow is rapid, high-pressure
-VERTICAL_SEEPAGE_RATE = 30   # Vertical seepage speed (30% per tick)
-CAPILLARY_RISE_RATE = 5      # Capillary rise is much slower (5% per tick)
-
-# Flow thresholds (in depth units)
-SURFACE_FLOW_THRESHOLD = 1     # Min elevation diff for surface flow (~1cm)
-SUBSURFACE_FLOW_THRESHOLD = 1  # Min pressure diff for subsurface flow
-
-# =============================================================================
 # WATER CONSERVATION
 # =============================================================================
 INITIAL_WATER_POOL = 100000    # Starting water in global pool (10,000L)
 MIN_GAMEPLAY_WATER = 10000     # Minimum water to ensure at game start
-
-# Note: Erosion configuration is in simulation/erosion.py (overnight processing)
 
 # =============================================================================
 # STRUCTURES
@@ -108,7 +101,14 @@ STRUCTURE_COSTS: Dict[str, Dict[str, int]] = {
 # =============================================================================
 MAX_POUR_AMOUNT = 1000      # Max pour amount in units (100L)
 MIN_LAYER_THICKNESS = 1     # Min thickness when digging
-MOISTURE_HISTORY_MAX = 24   # Ticks of moisture history to track
+MOVE_SPEED = 220
+DIAGONAL_FACTOR = 0.707
+
+# Starting Inventory
+STARTING_WATER = 200        # 20.0L
+STARTING_SCRAP = 6
+STARTING_SEEDS = 2
+STARTING_BIOMASS = 0
 
 # =============================================================================
 # DEPOT / RESUPPLY
@@ -116,58 +116,6 @@ MOISTURE_HISTORY_MAX = 24   # Ticks of moisture history to track
 DEPOT_WATER_AMOUNT = 300    # Units (30L)
 DEPOT_SCRAP_AMOUNT = 3
 DEPOT_SEEDS_AMOUNT = 1
-
-# =============================================================================
-# SUB-GRID SYSTEM
-# =============================================================================
-SUBGRID_SIZE = 3              # 3x3 sub-squares per tile
-INTERACTION_RANGE = 2         # Sub-squares player can reach (1-2 squares out)
-
-# =============================================================================
-# UI (Pygame)
-# =============================================================================
-# Sub-squares are player-scale tiles (48px each)
-# Simulation tiles contain 3x3 sub-squares (144px each)
-SUB_TILE_SIZE = 48                        # Player-scale tile size in pixels
-TILE_SIZE = SUB_TILE_SIZE * SUBGRID_SIZE  # 144px simulation tile
-
-SIDEBAR_WIDTH = 300
-LINE_HEIGHT = 20
-FONT_SIZE = 18
-SECTION_SPACING = 8
-MOVE_SPEED = 220
-DIAGONAL_FACTOR = 0.707
-MAP_SIZE: Tuple[int, int] = (60, 45)  # Large world for exploration
-
-# Rendering constants
-PLAYER_RADIUS = 18                    # Player circle radius in pixels
-STRUCTURE_INSET = 36                  # Inset for structure rendering
-TRENCH_INSET = 45                     # Inset for trench rendering
-WELLSPRING_RADIUS = 27                # Wellspring indicator radius
-PROFILE_WIDTH = 140
-PROFILE_HEIGHT = 240
-PROFILE_MARGIN = 10
-TOOLBAR_HEIGHT = 32
-
-# Colors
-TOOLBAR_BG_COLOR: Tuple[int, int, int] = (30, 30, 35)
-TOOLBAR_SELECTED_COLOR: Tuple[int, int, int] = (60, 55, 40)
-TOOLBAR_TEXT_COLOR: Tuple[int, int, int] = (200, 200, 180)
-
-# Elevation-based coloring
-ELEVATION_BRIGHTNESS_MIN = 0.7
-ELEVATION_BRIGHTNESS_MAX = 1.3
-MATERIAL_BLEND_WEIGHT = 0.35
-ORGANICS_BLEND_WEIGHT = 0.50
-
-# Biome base colors
-BIOME_COLORS: Dict[str, Tuple[int, int, int]] = {
-    "dune": (204, 174, 120),
-    "flat": (188, 158, 112),
-    "wadi": (150, 125, 96),
-    "rock": (128, 128, 128),
-    "salt": (220, 220, 210),
-}
 
 # =============================================================================
 # ACTION DURATIONS (seconds)

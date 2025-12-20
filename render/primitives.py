@@ -6,7 +6,11 @@ from typing import Tuple, Dict
 
 import pygame
 
-from config import LINE_HEIGHT
+from render.config import (
+    LINE_HEIGHT,
+    COLOR_TEXT_WHITE,
+    COLOR_TEXT_HIGHLIGHT,
+)
 
 Color = Tuple[int, int, int]
 
@@ -15,7 +19,7 @@ Color = Tuple[int, int, int]
 _TEXT_CACHE: Dict[Tuple[int, str, Color], pygame.Surface] = {}
 
 
-def draw_text(surface, font, text: str, pos: Tuple[int, int], color: Color = (230, 230, 230)) -> None:
+def draw_text(surface, font, text: str, pos: Tuple[int, int], color: Color = COLOR_TEXT_WHITE) -> None:
     """Draw text at the given position, using a cache to avoid re-rendering."""
     # Use the font object's id as part of the key to handle multiple fonts.
     font_id = id(font)
@@ -33,7 +37,7 @@ def draw_text(surface, font, text: str, pos: Tuple[int, int], color: Color = (23
 def draw_section_header(surface, font, text: str, pos: Tuple[int, int], width: int = 200) -> int:
     """Draw a section header with underline. Returns the y position after the header."""
     x, y = pos
-    draw_text(surface, font, text, (x, y), color=(220, 200, 120))
+    draw_text(surface, font, text, (x, y), color=COLOR_TEXT_HIGHLIGHT)
     y += LINE_HEIGHT
     pygame.draw.line(surface, (100, 100, 80), (x, y), (x + width, y), 1)
     return y + 6

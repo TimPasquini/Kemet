@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Tuple, Callable
 
-from config import ACTION_DURATIONS, DIAGONAL_FACTOR, SUBGRID_SIZE, SUB_TILE_SIZE
+from config import ACTION_DURATIONS, DIAGONAL_FACTOR, SUBGRID_SIZE
 from subgrid import subgrid_to_tile
 from utils import clamp
 
@@ -59,11 +59,6 @@ class PlayerState:
     def subsquare_index(self) -> Point:
         """Get the local subsquare index (0-2, 0-2) within the current tile."""
         return (int(self.smooth_x) % SUBGRID_SIZE, int(self.smooth_y) % SUBGRID_SIZE)
-
-    @property
-    def world_pixel_pos(self) -> Tuple[float, float]:
-        """Get world position in pixels for rendering."""
-        return self.smooth_x * SUB_TILE_SIZE, self.smooth_y * SUB_TILE_SIZE
 
     def start_action(self, action: str) -> bool:
         """Start an action if not busy."""

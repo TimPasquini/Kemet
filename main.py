@@ -19,6 +19,10 @@ from config import (
     DEPOT_WATER_AMOUNT,
     DEPOT_SCRAP_AMOUNT,
     DEPOT_SEEDS_AMOUNT,
+    STARTING_WATER,
+    STARTING_SCRAP,
+    STARTING_SEEDS,
+    STARTING_BIOMASS,
 )
 from ground import (
     SoilLayer,
@@ -64,10 +68,10 @@ Point = Tuple[int, int]
 @dataclass
 class Inventory:
     """Holds player resources in integer units."""
-    water: int = 200  # Start with 20.0L (200 units)
-    scrap: int = 6
-    seeds: int = 2
-    biomass: int = 0
+    water: int = STARTING_WATER
+    scrap: int = STARTING_SCRAP
+    seeds: int = STARTING_SEEDS
+    biomass: int = STARTING_BIOMASS
 
 
 @dataclass

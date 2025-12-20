@@ -12,19 +12,28 @@ from typing import TYPE_CHECKING, Tuple, Optional, List
 
 import pygame
 
-from mapgen import TILE_TYPES
+from ground import TILE_TYPES
 from surface_state import compute_surface_appearance
 from render.colors import color_for_tile, color_for_subsquare
 from render.primitives import draw_text
 from config import (
+    SUBGRID_SIZE,
+    INTERACTION_RANGE,
+)
+from render.config import (
     STRUCTURE_INSET,
     TRENCH_INSET,
     WELLSPRING_RADIUS,
     PLAYER_RADIUS,
-    SUBGRID_SIZE,
-    INTERACTION_RANGE,
     SUB_TILE_SIZE,
     TILE_SIZE,
+    COLOR_BG_DARK,
+    COLOR_STRUCTURE,
+    COLOR_WELLSPRING_STRONG,
+    COLOR_WELLSPRING_WEAK,
+    COLOR_DEPOT,
+    COLOR_TRENCH,
+    HIGHLIGHT_COLORS,
 )
 from subgrid import (
     subgrid_to_tile,
@@ -61,19 +70,6 @@ def _get_cached_highlight_surface(
     return _HIGHLIGHT_SURFACE_CACHE[key]
 
 
-# =============================================================================
-# Highlight Colors by Tool Type
-# =============================================================================
-HIGHLIGHT_COLORS = {
-    "build": (80, 140, 200),      # Blue for building
-    "build_invalid": (200, 80, 80),  # Red for invalid placement
-    "shovel": (200, 180, 80),     # Yellow for terrain
-    "bucket": (80, 180, 200),     # Cyan for water
-    "survey": (80, 200, 120),     # Green for survey
-    "default": (180, 180, 180),   # White/gray for no tool
-}
-
-
 def render_map_viewport(
     surface: pygame.Surface,
     font,
@@ -96,7 +92,7 @@ def render_map_viewport(
         elevation_range: (min, max) elevation for color scaling
         background_surface: Pre-rendered static terrain (optional, falls back to per-frame render)
     """
-    surface.fill((20, 20, 25))
+    surface.fill(COLOR_BG_DARK)
 
     if background_surface is not None:
         # --- 1. Blit the pre-rendered static background ---
@@ -125,7 +121,7 @@ def render_map_viewport(
         world_y = sub_y * sub_size
         vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
         rect = pygame.Rect(int(vp_x), int(vp_y), sub_size - 1, sub_size - 1)
-        pygame.draw.rect(surface, (30, 30, 30), rect.inflate(-2, -2))
+        pygame.draw.rect(surface, COLOR_STRUCTURE, rect.inflate(-2, -2))
         # Draw structure initial centered in sub-square
         draw_text(surface, font, structure.kind[0].upper(), (rect.x + sub_size // 3, rect.y + sub_size // 4))
 
@@ -138,10 +134,10 @@ def render_map_viewport(
             rect = pygame.Rect(int(vp_x), int(vp_y), tile_size - 1, tile_size - 1)
 
             if tile.wellspring_output > 0:
-                spring_color = (100, 180, 240) if tile.wellspring_output / 10 > 0.5 else (70, 140, 220)
+                spring_color = COLOR_WELLSPRING_STRONG if tile.wellspring_output / 10 > 0.5 else COLOR_WELLSPRING_WEAK
                 pygame.draw.circle(surface, spring_color, rect.center, WELLSPRING_RADIUS)
             if tile.depot:
-                pygame.draw.rect(surface, (200, 200, 60), rect.inflate(-TRENCH_INSET, -TRENCH_INSET), border_radius=3)
+                pygame.draw.rect(surface, COLOR_DEPOT, rect.inflate(-TRENCH_INSET, -TRENCH_INSET), border_radius=3)
                 draw_text(surface, font, "D", (rect.x + 18, rect.y + 12), color=(40, 40, 20))
 
     # Render sub-grid water overlay (dynamic, so drawn on top of static background)
@@ -236,7 +232,7 @@ def render_static_background(state: "GameState", font) -> pygame.Surface:
     world_pixel_width = state.width * TILE_SIZE
     world_pixel_height = state.height * TILE_SIZE
     background_surface = pygame.Surface((world_pixel_width, world_pixel_height))
-    background_surface.fill((20, 20, 25))
+    background_surface.fill(COLOR_BG_DARK)
 
     # Get cached elevation range for brightness scaling
     elevation_range = state.get_elevation_range()
@@ -268,7 +264,7 @@ def render_static_background(state: "GameState", font) -> pygame.Surface:
             appearance = subsquare.get_appearance(tile)
             if "trench" in appearance.features:
                 # Draw a visible border around trenched subsquares
-                pygame.draw.rect(background_surface, (60, 100, 120), rect, 2)
+                pygame.draw.rect(background_surface, COLOR_TRENCH, rect, 2)
 
     return background_surface
 
@@ -300,7 +296,7 @@ def redraw_background_rect(background_surface: pygame.Surface, state: "GameState
     # Draw trench indicator if present
     appearance = subsquare.get_appearance(tile)
     if "trench" in appearance.features:
-        pygame.draw.rect(background_surface, (60, 100, 120), rect, 2)
+        pygame.draw.rect(background_surface, COLOR_TRENCH, rect, 2)
 
 
 def get_tool_highlight_color(

@@ -44,9 +44,6 @@ from tools import get_toolbar, Toolbar
 from ui_state import (
     get_ui_state,
     UIState,
-    VIRTUAL_WIDTH,
-    VIRTUAL_HEIGHT,
-    LOG_PANEL_HEIGHT,
 )
 from keybindings import (
     CONTROL_DESCRIPTIONS,
@@ -58,17 +55,23 @@ from keybindings import (
     HELP_KEY,
 )
 from config import (
-    TILE_SIZE,
-    SUB_TILE_SIZE,
     MOVE_SPEED,
     TICK_INTERVAL,
+    SUBGRID_SIZE,
+    MAP_SIZE,
+)
+from render.config import (
+    VIRTUAL_WIDTH,
+    VIRTUAL_HEIGHT,
+    LOG_PANEL_HEIGHT,
     PROFILE_WIDTH,
     PROFILE_HEIGHT,
     PROFILE_MARGIN,
     TOOLBAR_HEIGHT,
-    MAP_SIZE,
     FONT_SIZE,
-    SUBGRID_SIZE,
+    COLOR_BG_DARK,
+    TILE_SIZE,
+    SUB_TILE_SIZE,
 )
 from subgrid import subgrid_to_tile, get_subsquare_index
 from render import (
@@ -179,7 +182,7 @@ def render_to_virtual_screen(
     map_surface: pygame.Surface = None,
 ) -> None:
     """Render everything to the virtual screen at fixed resolution."""
-    virtual_screen.fill((20, 20, 25))
+    virtual_screen.fill(COLOR_BG_DARK)
 
     # 1. Render map viewport (tiles, structures, features)
     # map_surface is now passed in and reused to avoid per-frame allocation
@@ -330,7 +333,8 @@ def run(tile_size: int = TILE_SIZE) -> None:
     move_speed_subsquares = MOVE_SPEED / SUB_TILE_SIZE
 
     # Center camera on player
-    player_px, player_py = state.player_state.world_pixel_pos
+    player_px = state.player_state.smooth_x * SUB_TILE_SIZE
+    player_py = state.player_state.smooth_y * SUB_TILE_SIZE
     camera.center_on(player_px, player_py)
     show_help = False
     # elevation_range is now cached on state and retrieved via get_elevation_range()
@@ -505,7 +509,8 @@ def run(tile_size: int = TILE_SIZE) -> None:
             )
 
         # Camera follows player (get pixel position from player state)
-        player_px, player_py = state.player_state.world_pixel_pos
+        player_px = state.player_state.smooth_x * SUB_TILE_SIZE
+        player_py = state.player_state.smooth_y * SUB_TILE_SIZE
         camera.follow(player_px, player_py)
 
         # Update cursor tracking only when mouse has moved (avoids per-frame recalculation)
@@ -538,7 +543,7 @@ def run(tile_size: int = TILE_SIZE) -> None:
         # Render to virtual screen
         render_to_virtual_screen(
             virtual_screen, font, state, camera, tile_size, state.get_elevation_range(),
-            state.player_state.world_pixel_pos,
+            (player_px, player_py),
             toolbar, ui_state, show_help, background_surface, map_surface
         )
 

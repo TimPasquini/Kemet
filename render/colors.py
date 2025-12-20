@@ -5,12 +5,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Tuple, cast
 
 from ground import MATERIAL_LIBRARY
-from config import (
+from render.config import (
     BIOME_COLORS,
     ELEVATION_BRIGHTNESS_MIN,
     ELEVATION_BRIGHTNESS_MAX,
     MATERIAL_BLEND_WEIGHT,
     ORGANICS_BLEND_WEIGHT,
+    COLOR_WATER_DEEP,
+    COLOR_WATER_SHALLOW,
 )
 
 if TYPE_CHECKING:
@@ -61,9 +63,9 @@ def color_for_tile(state_tile, tile_type, elevation_range: Tuple[float, float]) 
     """Calculate the final display color for a tile (legacy, uses tile.kind)."""
     # Water-saturated tiles show as blue
     if state_tile.hydration >= 10.0:
-        return 48, 133, 214
+        return COLOR_WATER_DEEP
     if state_tile.hydration >= 5.0:
-        return 92, 180, 238
+        return COLOR_WATER_SHALLOW
 
     # Start with biome base color
     base_color = BIOME_COLORS.get(tile_type.name, (200, 200, 200))

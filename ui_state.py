@@ -13,7 +13,15 @@ from typing import Tuple, Optional, Callable, List, TYPE_CHECKING
 
 import pygame
 
-from config import TOOLBAR_HEIGHT, INTERACTION_RANGE
+from config import INTERACTION_RANGE
+from render.config import (
+    VIRTUAL_WIDTH,
+    VIRTUAL_HEIGHT,
+    SIDEBAR_WIDTH,
+    TOOLBAR_HEIGHT,
+    LOG_PANEL_HEIGHT,
+    POPUP_OPTION_HEIGHT,
+)
 from subgrid import clamp_to_range, clamp_to_bounds, subgrid_to_tile
 
 if TYPE_CHECKING:
@@ -21,15 +29,9 @@ if TYPE_CHECKING:
     from main import GameState
     from tools import Tool
 
-# Virtual screen dimensions (fixed internal resolution)
-VIRTUAL_WIDTH = 1280
-VIRTUAL_HEIGHT = 720
-
-# Layout constants
-SIDEBAR_WIDTH = 280
-MAP_VIEWPORT_WIDTH = VIRTUAL_WIDTH - SIDEBAR_WIDTH  # 1000
-MAP_VIEWPORT_HEIGHT = VIRTUAL_HEIGHT - TOOLBAR_HEIGHT - 100  # 588
-LOG_PANEL_HEIGHT = 100
+# Layout constants derived from render config
+MAP_VIEWPORT_WIDTH = VIRTUAL_WIDTH - SIDEBAR_WIDTH
+MAP_VIEWPORT_HEIGHT = VIRTUAL_HEIGHT - TOOLBAR_HEIGHT - LOG_PANEL_HEIGHT
 
 
 @dataclass
@@ -68,7 +70,7 @@ class UIState:
 
     # Tool options popup bounds (set during render when menu is open)
     popup_rect: Optional[pygame.Rect] = None
-    popup_option_height: int = 24
+    popup_option_height: int = POPUP_OPTION_HEIGHT
     popup_option_count: int = 0
 
     # Cursor tracking for sub-grid interaction system

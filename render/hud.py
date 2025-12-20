@@ -8,7 +8,18 @@ import pygame
 
 from ground import SoilLayer, MATERIAL_LIBRARY, units_to_meters
 from render.primitives import draw_text, draw_section_header
-from config import LINE_HEIGHT, SECTION_SPACING
+from render.config import (
+    LINE_HEIGHT,
+    SECTION_SPACING,
+    COLOR_BORDER,
+    COLOR_BORDER_LIGHT,
+    COLOR_BG_PANEL,
+    COLOR_TEXT_GRAY,
+    COLOR_TEXT_WHITE,
+    COLOR_WELLSPRING_STRONG,
+    COLOR_TRENCH,
+    COLOR_WATER_DEEP,
+)
 from simulation.surface import get_tile_surface_water
 
 if TYPE_CHECKING:
@@ -55,29 +66,29 @@ def render_hud(
     total_water = surface_water + tile.water.total_subsurface_water()
     draw_text(screen, font, f"Water: {total_water / 10:.1f}L total", (hud_x, y_offset))
     y_offset += LINE_HEIGHT
-    draw_text(screen, font, f"  Surface: {surface_water / 10:.1f}L", (hud_x + 10, y_offset), (180, 180, 180))
+    draw_text(screen, font, f"  Surface: {surface_water / 10:.1f}L", (hud_x + 10, y_offset), COLOR_TEXT_GRAY)
     y_offset += LINE_HEIGHT
 
     if tile.water.total_subsurface_water() > 0:
-        draw_text(screen, font, f"  Ground: {tile.water.total_subsurface_water() / 10:.1f}L", (hud_x + 10, y_offset), (180, 180, 180))
+        draw_text(screen, font, f"  Ground: {tile.water.total_subsurface_water() / 10:.1f}L", (hud_x + 10, y_offset), COLOR_TEXT_GRAY)
         y_offset += LINE_HEIGHT
 
     if tile.wellspring_output > 0:
-        draw_text(screen, font, f"Wellspring: {tile.wellspring_output / 10:.2f}L/tick", (hud_x, y_offset), (100, 180, 255))
+        draw_text(screen, font, f"Wellspring: {tile.wellspring_output / 10:.2f}L/tick", (hud_x, y_offset), COLOR_WELLSPRING_STRONG)
         y_offset += LINE_HEIGHT
 
     if tile.trench:
-        draw_text(screen, font, "Trench: Yes", (hud_x, y_offset), (180, 180, 120))
+        draw_text(screen, font, "Trench: Yes", (hud_x, y_offset), COLOR_TRENCH)
         y_offset += LINE_HEIGHT
 
     if structure:
         draw_text(screen, font, f"Structure: {structure.kind.capitalize()}", (hud_x, y_offset), (120, 200, 120))
         y_offset += LINE_HEIGHT
         if structure.kind == "cistern":
-            draw_text(screen, font, f"  Stored: {structure.stored / 10:.1f}L", (hud_x + 10, y_offset), (180, 180, 180))
+            draw_text(screen, font, f"  Stored: {structure.stored / 10:.1f}L", (hud_x + 10, y_offset), COLOR_TEXT_GRAY)
             y_offset += LINE_HEIGHT
         elif structure.kind == "planter":
-            draw_text(screen, font, f"  Growth: {structure.growth}%", (hud_x + 10, y_offset), (180, 180, 180))
+            draw_text(screen, font, f"  Growth: {structure.growth}%", (hud_x + 10, y_offset), COLOR_TEXT_GRAY)
             y_offset += LINE_HEIGHT
 
     return y_offset
@@ -93,7 +104,7 @@ def render_inventory(
 ) -> None:
     """Render the inventory panel."""
     inv_x, inv_y = pos
-    pygame.draw.rect(screen, (40, 40, 40), (inv_x, inv_y, width, height), 2)
+    pygame.draw.rect(screen, COLOR_BORDER, (inv_x, inv_y, width, height), 2)
 
     ix, iy = inv_x + 8, inv_y + 8
     draw_text(screen, font, "Inventory", (ix, iy))
@@ -143,8 +154,8 @@ def render_soil_profile(
 
     # Draw header and border (full width)
     header_y = y - 22
-    pygame.draw.rect(screen, (40, 40, 45), (x, header_y, width, height + 22), 0, border_radius=3)
-    pygame.draw.rect(screen, (80, 80, 85), (x, header_y, width, height + 22), 1, border_radius=3)
+    pygame.draw.rect(screen, COLOR_BG_PANEL, (x, header_y, width, height + 22), 0, border_radius=3)
+    pygame.draw.rect(screen, COLOR_BORDER_LIGHT, (x, header_y, width, height + 22), 1, border_radius=3)
 
     # Header shows surface elevation
     header_text = f"Elev: {units_to_meters(surface_elev_with_offset):.1f}m"
@@ -212,7 +223,7 @@ def render_soil_profile(
 
         # Draw label if layer is tall enough
         if layer_height >= 16:
-            draw_text(screen, font, f"{label[:3]} {units_to_meters(depth):.1f}m", (profile_x + 5, current_y + 2), color=(255, 255, 255))
+            draw_text(screen, font, f"{label[:3]} {units_to_meters(depth):.1f}m", (profile_x + 5, current_y + 2), color=COLOR_TEXT_WHITE)
 
         current_y += layer_height
 
@@ -224,7 +235,7 @@ def render_soil_profile(
             surf_rect = pygame.Rect(profile_x + 1, current_y, profile_width - 2, surf_height)
             pygame.draw.rect(screen, (100, 150, 255), surf_rect)
             if surf_height >= 16:
-                draw_text(screen, font, f"Water {surface_water / 10:.1f}L", (profile_x + 5, current_y + 2), color=(255, 255, 255))
+                draw_text(screen, font, f"Water {surface_water / 10:.1f}L", (profile_x + 5, current_y + 2), color=COLOR_TEXT_WHITE)
             current_y += surf_height
 
     # Iterate from top (Organics) to bottom (Bedrock)

@@ -22,43 +22,16 @@ from ground import (
     create_default_terrain,
     elevation_to_units,
     units_to_meters,
+    TileType,
+    TILE_TYPES,
 )
 from water import WaterColumn
 from utils import get_neighbors
-from config import MOISTURE_HISTORY_MAX, SUBGRID_SIZE
+from config import SUBGRID_SIZE
+from simulation.config import MOISTURE_HISTORY_MAX
 from subgrid import SubSquare
 
 Point = Tuple[int, int]
-
-
-# =============================================================================
-# Tile Types (Biomes)
-# =============================================================================
-
-@dataclass
-class TileType:
-    """Simulation properties for a tile type.
-
-    Tile types define how tiles behave in simulation (evaporation, water
-    capacity). Visual rendering is handled separately via surface_state.py
-    based on terrain materials and environmental factors.
-    """
-    name: str
-    char: str       # ASCII character for text rendering (debug)
-    evap: int       # Base evaporation rate
-    capacity: int   # Water holding capacity
-    retention: int  # Water retention percentage
-
-
-TILE_TYPES: Dict[str, TileType] = {
-    # Evap rates reduced ~10x for realistic water persistence
-    # At heat=100, evap per sub-square per tick: dune=1, flat=1, wadi=0, rock=1, salt=1
-    "dune": TileType("dune", ".", evap=1, capacity=60, retention=5),
-    "flat": TileType("flat", ",", evap=1, capacity=90, retention=8),
-    "wadi": TileType("wadi", "w", evap=0, capacity=140, retention=20),  # Wadis retain water well
-    "rock": TileType("rock", "^", evap=1, capacity=50, retention=2),
-    "salt": TileType("salt", "_", evap=2, capacity=70, retention=3),   # Salt flats dry fastest
-}
 
 
 # =============================================================================

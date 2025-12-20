@@ -14,6 +14,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 from config import SUBGRID_SIZE
+from simulation.config import (
+    WATER_EROSION_THRESHOLD,
+    WATER_EROSION_RATE,
+    WIND_EROSION_THRESHOLD,
+    WIND_EROSION_RATE,
+)
 from atmosphere import ATMOSPHERE_REGION_SIZE
 from ground import SoilLayer, MATERIAL_LIBRARY
 from subgrid import get_subsquare_terrain, ensure_terrain_override
@@ -29,14 +35,6 @@ Point = Tuple[int, int]
 # =============================================================================
 # EROSION CONFIGURATION
 # =============================================================================
-
-# Water erosion thresholds (based on accumulated water_passage)
-WATER_EROSION_THRESHOLD = 100.0      # Min water passage before erosion occurs
-WATER_EROSION_RATE = 0.001           # Erosion per unit of water passage above threshold
-
-# Wind erosion thresholds
-WIND_EROSION_THRESHOLD = 0.3         # Min wind speed (0-1) for erosion
-WIND_EROSION_RATE = 0.05             # Base erosion rate from wind
 
 # Material resistance (lower = more resistant)
 EROSION_RESISTANCE: Dict[SoilLayer, float] = {

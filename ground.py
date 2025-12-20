@@ -15,7 +15,7 @@ Surface elevation is calculated from sum of all layer depths.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict
 from enum import IntEnum
 
 from config import DEPTH_UNIT_MM, SEA_LEVEL
@@ -388,3 +388,31 @@ def elevation_to_units(meters: float) -> int:
 def units_to_meters(units: int) -> float:
     """Convert integer depth units to floating point meters."""
     return units * DEPTH_UNIT_MM / 1000.0
+
+# =============================================================================
+# TILE TYPES (BIOMES)
+# =============================================================================
+@dataclass
+class TileType:
+    """Simulation properties for a tile type.
+
+    Tile types define how tiles behave in simulation (evaporation, water
+    capacity). Visual rendering is handled separately via surface_state.py
+    based on terrain materials and environmental factors.
+    """
+    name: str
+    char: str       # ASCII character for text rendering (debug)
+    evap: int       # Base evaporation rate
+    capacity: int   # Water holding capacity
+    retention: int  # Water retention percentage
+
+
+TILE_TYPES: Dict[str, TileType] = {
+    # Evap rates reduced ~10x for realistic water persistence
+    # At heat=100, evap per sub-square per tick: dune=1, flat=1, wadi=0, rock=1, salt=1
+    "dune": TileType("dune", ".", evap=1, capacity=60, retention=5),
+    "flat": TileType("flat", ",", evap=1, capacity=90, retention=8),
+    "wadi": TileType("wadi", "w", evap=0, capacity=140, retention=20),  # Wadis retain water well
+    "rock": TileType("rock", "^", evap=1, capacity=50, retention=2),
+    "salt": TileType("salt", "_", evap=2, capacity=70, retention=3),   # Salt flats dry fastest
+}

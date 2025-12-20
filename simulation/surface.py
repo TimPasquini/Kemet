@@ -16,7 +16,12 @@ from collections import defaultdict
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Set, Union
 
 import numpy as np
-from config import SUBGRID_SIZE, SURFACE_FLOW_RATE, SURFACE_FLOW_THRESHOLD, SURFACE_SEEPAGE_RATE
+from config import SUBGRID_SIZE
+from simulation.config import (
+    SURFACE_FLOW_RATE,
+    SURFACE_FLOW_THRESHOLD,
+    SURFACE_SEEPAGE_RATE,
+)
 from subgrid import tile_to_subgrid
 
 if TYPE_CHECKING:

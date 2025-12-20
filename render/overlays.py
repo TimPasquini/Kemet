@@ -7,10 +7,17 @@ from typing import TYPE_CHECKING, List, Tuple
 import pygame
 
 from render.primitives import draw_text
-from config import (
+from render.config import (
     LINE_HEIGHT,
     PLAYER_RADIUS,
     SUB_TILE_SIZE,
+    COLOR_BG_PANEL,
+    COLOR_TEXT_HIGHLIGHT,
+    COLOR_TEXT_GRAY,
+    COLOR_TEXT_DIM,
+    COLOR_PLAYER,
+    COLOR_PLAYER_ACTION_BG,
+    COLOR_PLAYER_ACTION_BAR,
 )
 
 if TYPE_CHECKING:
@@ -40,15 +47,15 @@ def render_help_overlay(
     col_width, row_height = 130, 18
     cols = max(1, available_width // col_width)
 
-    pygame.draw.rect(surface, (25, 25, 30), (x - 4, y - 4, available_width, available_height), 0)
-    draw_text(surface, font, "CONTROLS", (x, y), color=(220, 200, 120))
+    pygame.draw.rect(surface, COLOR_BG_PANEL, (x - 4, y - 4, available_width, available_height), 0)
+    draw_text(surface, font, "CONTROLS", (x, y), color=COLOR_TEXT_HIGHLIGHT)
     y += row_height + 4
 
     for i, control in enumerate(controls):
         cx = x + (i % cols * col_width)
         cy = y + (i // cols * row_height)
         if cy + row_height < pos[1] + available_height:
-            draw_text(surface, font, control, (cx, cy), color=(180, 180, 160))
+            draw_text(surface, font, control, (cx, cy), color=COLOR_TEXT_GRAY)
 
 
 def render_event_log(
@@ -82,7 +89,7 @@ def render_event_log(
     header = "EVENT LOG"
     if scroll_offset > 0:
         header += f" [{scroll_offset}^]"
-    draw_text(surface, font, header, (log_x, log_y), color=(200, 180, 120))
+    draw_text(surface, font, header, (log_x, log_y), color=COLOR_TEXT_HIGHLIGHT)
     log_y += LINE_HEIGHT + 4
 
     # Calculate visible messages
@@ -109,7 +116,7 @@ def render_event_log(
         if scroll_offset > 0:
             hint_parts.append(f"{scroll_offset} newer")
         hint = f"[scroll: {', '.join(hint_parts)}]"
-        draw_text(surface, font, hint, (log_x, log_y), color=(100, 100, 100))
+        draw_text(surface, font, hint, (log_x, log_y), color=COLOR_TEXT_DIM)
 
     return visible_count
 
@@ -129,7 +136,7 @@ def render_player(
     # Draw player circle
     pygame.draw.circle(
         surface,
-        (240, 240, 90),
+        COLOR_PLAYER,
         (player_x, player_y),
         PLAYER_RADIUS,
     )
@@ -141,8 +148,8 @@ def render_player(
         bar_x = player_x - bar_width // 2
         bar_y = player_y - SUB_TILE_SIZE // 2 - bar_height - 2
         progress = state.get_action_progress()
-        pygame.draw.rect(surface, (50, 50, 50), (bar_x, bar_y, bar_width, bar_height))
-        pygame.draw.rect(surface, (200, 200, 80), (bar_x, bar_y, int(bar_width * progress), bar_height))
+        pygame.draw.rect(surface, COLOR_PLAYER_ACTION_BG, (bar_x, bar_y, bar_width, bar_height))
+        pygame.draw.rect(surface, COLOR_PLAYER_ACTION_BAR, (bar_x, bar_y, int(bar_width * progress), bar_height))
 
 
 def render_night_overlay(

@@ -7,10 +7,16 @@ from typing import TYPE_CHECKING, Tuple, Optional
 import pygame
 
 from render.primitives import draw_text
-from config import (
+from render.config import (
     TOOLBAR_BG_COLOR,
     TOOLBAR_SELECTED_COLOR,
     TOOLBAR_TEXT_COLOR,
+    POPUP_OPTION_HEIGHT,
+    POPUP_WIDTH,
+    COLOR_TEXT_SELECTED,
+    COLOR_TEXT_HIGHLIGHT,
+    COLOR_TEXT_GRAY,
+    COLOR_TEXT_DIM,
 )
 
 if TYPE_CHECKING:
@@ -32,8 +38,8 @@ def _render_tool_options_popup(
     if not tool or not tool.options:
         return
 
-    option_height = 24
-    popup_width = 140
+    option_height = POPUP_OPTION_HEIGHT
+    popup_width = POPUP_WIDTH
     popup_height = len(tool.options) * option_height + 8
     popup_x = tool_x + (tool_width - popup_width) // 2
     popup_y = toolbar_y - popup_height - 4
@@ -59,16 +65,16 @@ def _render_tool_options_popup(
             pygame.draw.rect(surface, (60, 80, 100), (popup_x + 2, opt_y, popup_width - 4, option_height - 2), border_radius=2)
 
         # Draw option name
-        text_color = (255, 255, 200) if is_highlighted else ((200, 200, 160) if is_current else (160, 160, 160))
+        text_color = COLOR_TEXT_SELECTED if is_highlighted else ((200, 200, 160) if is_current else COLOR_TEXT_GRAY)
         draw_text(surface, font, opt.name, (popup_x + 8, opt_y + 4), color=text_color)
 
         # Draw checkmark for currently selected option
         if is_current:
-            draw_text(surface, font, "*", (popup_x + popup_width - 16, opt_y + 4), color=(180, 200, 120))
+            draw_text(surface, font, "*", (popup_x + popup_width - 16, opt_y + 4), color=COLOR_TEXT_HIGHLIGHT)
 
     # Draw hint at bottom
     hint_y = popup_y + popup_height + 2
-    draw_text(surface, font, "W/S:move R:select", (popup_x, hint_y), color=(100, 100, 100))
+    draw_text(surface, font, "W/S:move R:select", (popup_x, hint_y), color=COLOR_TEXT_DIM)
 
 
 def render_toolbar(
