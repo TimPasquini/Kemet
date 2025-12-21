@@ -29,6 +29,7 @@ from water import WaterColumn
 from utils import get_neighbors
 from config import SUBGRID_SIZE
 from subgrid import SubSquare
+from simulation.surface import distribute_water_to_tile
 
 Point = Tuple[int, int]
 
@@ -43,9 +44,8 @@ def _create_default_subgrid() -> List[List[SubSquare]]:
     for sx in range(SUBGRID_SIZE):
         row = []
         for sy in range(SUBGRID_SIZE):
-            # Small random elevation offset to create micro-terrain
-            # Range: -0.05 to +0.05 meters
-            offset = random.uniform(-0.05, 0.05)
+            # Quantize to 0.1m steps so physics engine (1 unit = 0.1m) sees the variation
+            offset = random.choice([-0.1, 0.0, 0.1])
             row.append(SubSquare(elevation_offset=offset))
         subgrid.append(row)
     return subgrid
@@ -251,7 +251,7 @@ def _generate_wellsprings(tiles: List[List[Tile]], width: int, height: int) -> N
     tiles[px][py].wellspring_output = random.randint(40, 60)
     tiles[px][py].water.add_layer_water(SoilLayer.REGOLITH, 200)
     # Distribute initial surface water to sub-squares
-    _distribute_water_to_subgrid(tiles[px][py], 200)
+    distribute_water_to_tile(tiles[px][py], 200)
 
     # Secondary wellsprings
     secondary_count = random.randint(1, 2)
@@ -266,7 +266,7 @@ def _generate_wellsprings(tiles: List[List[Tile]], width: int, height: int) -> N
         tiles[sx][sy].wellspring_output = random.randint(15, 30)
         tiles[sx][sy].water.add_layer_water(SoilLayer.REGOLITH, 100)
         # Distribute initial surface water to sub-squares
-        _distribute_water_to_subgrid(tiles[sx][sy], 80)
+        distribute_water_to_tile(tiles[sx][sy], 80)
         placed += 1
 
 
@@ -368,42 +368,6 @@ def generate_map(width: int, height: int) -> List[List[Tile]]:
         for y in range(height):
             tile = tiles[x][y]
             if tile.kind == "wadi":
-                _distribute_water_to_subgrid(tile, random.randint(5, 30))
+                distribute_water_to_tile(tile, random.randint(5, 30))
 
     return tiles
-
-
-def _distribute_water_to_subgrid(tile: Tile, amount: int) -> None:
-    """Distribute water to a tile's sub-squares by elevation.
-
-    Lower sub-squares receive more water (natural pooling behavior).
-
-    Args:
-        tile: Tile to distribute water to
-        amount: Amount of water to distribute
-    """
-    if amount <= 0:
-        return
-
-    # Calculate inverse elevation weights
-    weights = []
-    total_weight = 0.0
-
-    for lx in range(SUBGRID_SIZE):
-        for ly in range(SUBGRID_SIZE):
-            offset = tile.subgrid[lx][ly].elevation_offset
-            # Lower elevation = higher weight
-            weight = 1.0 / (offset + 0.15)
-            weights.append((lx, ly, weight))
-            total_weight += weight
-
-    # Distribute proportionally
-    distributed = 0
-    for i, (lx, ly, weight) in enumerate(weights):
-        if i == len(weights) - 1:
-            portion = amount - distributed
-        else:
-            portion = int((amount * weight) / total_weight)
-
-        tile.subgrid[lx][ly].surface_water += max(0, portion)
-        distributed += portion

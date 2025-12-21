@@ -22,6 +22,11 @@ This creates emergent gameplay where understanding the systems lets you work wit
 
 ## Known Issues
 
+**Play test noted issues**
+- Water tends to collect in bottom right subsquare of tile regardless of subsquare selection when dumping from bucket
+- Water collection from a subsquare seems to collect the whole tile
+- Water naturally seems to gravitate towards bottom right subsquare of a tile
+
 ### Performance
 
 **Potential Optimizations**

@@ -13,6 +13,7 @@ Key concepts:
 from __future__ import annotations
 
 from collections import defaultdict
+import random
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Set, Union
 
 import numpy as np
@@ -32,7 +33,7 @@ if TYPE_CHECKING:
 Point = Tuple[int, int]
 
 
-def get_subsquare_elevation(tile: "Tile", local_x: int, local_y: int) -> float:
+def get_subsquare_elevation(tile: "Tile", local_x: int, local_y: int) -> int:
     """Get absolute elevation of a sub-square in depth units."""
     # Tile's terrain surface elevation (in depth units) + sub-square offset
     base_elev = tile.terrain.get_surface_elevation()
@@ -173,8 +174,8 @@ def simulate_surface_flow(state: "GameState") -> int:
     # Mask where flow is possible
     flow_mask = (diff_sum > 0) & (water_padded[center_slice] > 0)
     
-    # Amount to move (percentage of current water)
-    amount_to_move = (water_padded[center_slice] * SURFACE_FLOW_RATE) // 100
+    # Amount to move (percentage of current water). Use float to preserve small amounts.
+    amount_to_move = water_padded[center_slice] * (SURFACE_FLOW_RATE / 100.0)
     
     # Distribute flow
     for d, dx, dy in diffs:
@@ -182,8 +183,9 @@ def simulate_surface_flow(state: "GameState") -> int:
         # Use safe division
         fraction = np.divide(d, diff_sum, out=np.zeros_like(d, dtype=np.float64), where=diff_sum!=0)
         
-        # Calculate integer flow amount
-        flow = (amount_to_move * fraction).astype(np.int32)
+        # Calculate integer flow amount using probabilistic rounding to prevent stagnation of small volumes
+        ideal_flow = amount_to_move * fraction
+        flow = np.floor(ideal_flow + np.random.random(ideal_flow.shape)).astype(np.int32)
         
         # Apply flow only where valid
         flow = np.where(flow_mask, flow, 0)
@@ -330,33 +332,6 @@ def remove_water_proportionally(tile: "Tile", amount: int) -> int:
     return to_remove - remaining
 
 
-def _calculate_elevation_weights(tile: "Tile") -> Tuple[List[Tuple[int, int, float]], float]:
-    """Calculate inverse elevation weights for water distribution.
-
-    Uses ABSOLUTE elevation (tile base + subsquare offset) for consistency.
-    Lower elevation = higher weight = receives more water.
-
-    Args:
-        tile: Tile to calculate weights for
-
-    Returns:
-        Tuple of (list of (local_x, local_y, weight), total_weight)
-    """
-    weights: List[Tuple[int, int, float]] = []
-    total_weight = 0.0
-
-    for lx in range(SUBGRID_SIZE):
-        for ly in range(SUBGRID_SIZE):
-            abs_elev = get_subsquare_elevation(tile, lx, ly)
-            # Inverse weight with offset to prevent division issues
-            # +100 ensures positive values even for negative elevations
-            weight = 1.0 / (abs_elev + 100.0)
-            weights.append((lx, ly, weight))
-            total_weight += weight
-
-    return weights, total_weight
-
-
 def set_tile_surface_water(tile: "Tile", amount: int) -> None:
     """Distribute water amount across tile's sub-squares by elevation.
 
@@ -374,19 +349,102 @@ def set_tile_surface_water(tile: "Tile", amount: int) -> None:
     if amount <= 0:
         return
 
-    weights, total_weight = _calculate_elevation_weights(tile)
+    distribute_water_to_tile(tile, amount)
 
-    # Distribute proportionally
-    distributed = 0
-    for i, (lx, ly, weight) in enumerate(weights):
-        if i == len(weights) - 1:
-            # Last one gets remainder to avoid rounding errors
-            portion = amount - distributed
+
+def distribute_water_to_tile(tile: "Tile", amount: int) -> List[Tuple[int, int]]:
+    """
+    Distribute water to a tile's sub-squares, filling from lowest absolute elevation up.
+    Ensures water surface level remains flat across the connected body within the tile.
+
+    Args:
+        tile: The tile to distribute water to
+        amount: Amount of water to add
+
+    Returns:
+        List of (local_x, local_y) indices that received water.
+    """
+    if amount <= 0:
+        return []
+
+    # 1. Build list of targets with current absolute elevation
+    targets = []
+    for lx in range(SUBGRID_SIZE):
+        for ly in range(SUBGRID_SIZE):
+            ss = tile.subgrid[lx][ly]
+            # Use absolute elevation helper for correctness
+            base_elev = get_subsquare_elevation(tile, lx, ly)
+            current_level = base_elev + ss.surface_water
+            targets.append({
+                'lx': lx,
+                'ly': ly,
+                'ss': ss,
+                'level': current_level,
+                'added': 0
+            })
+
+    # 2. Sort by current level (lowest first)
+    targets.sort(key=lambda x: x['level'])
+
+    remaining = amount
+
+    while remaining > 0:
+        # Get current lowest level
+        min_level = targets[0]['level']
+
+        # Find all subsquares at this level (the "active group")
+        group = []
+        for t in targets:
+            if t['level'] == min_level:
+                group.append(t)
+            else:
+                break
+
+        # Find the next elevation level to reach
+        if len(group) < len(targets):
+            next_level = targets[len(group)]['level']
+            diff = next_level - min_level
         else:
-            portion = int((amount * weight) / total_weight)
+            # No higher level, we are at the top. Treat remaining space as infinite.
+            diff = remaining
 
-        tile.subgrid[lx][ly].surface_water = max(0, portion)
-        distributed += portion
+        # Calculate volume needed to raise the active group to the next level
+        needed = diff * len(group)
+
+        if needed > 0:
+            if remaining >= needed:
+                # We have enough water to raise the whole group to the next level
+                fill_per = diff
+                for t in group:
+                    t['added'] += fill_per
+                    t['level'] += fill_per
+                remaining -= needed
+            else:
+                # We can only partially raise the group
+                count = len(group)
+                per_share = remaining // count
+                rem = remaining % count
+                # Shuffle group to avoid spatial bias in remainder distribution
+                random.shuffle(group)
+                
+                for i, t in enumerate(group):
+                    add = per_share + (1 if i < rem else 0)
+                    t['added'] += add
+                    t['level'] += add
+                remaining = 0
+        else:
+            # Should not happen if logic is correct, but prevents infinite loop
+            break
+
+    # 3. Apply changes to the actual sub-squares
+    modified_indices = []
+    for t in targets:
+        if t['added'] > 0:
+            t['ss'].surface_water += t['added']
+            t['ss'].check_water_threshold()
+            modified_indices.append((t['lx'], t['ly']))
+
+    return modified_indices
 
 
 def distribute_upward_seepage(
@@ -409,20 +467,9 @@ def distribute_upward_seepage(
     if water_amount <= 0:
         return
 
-    weights, total_weight = _calculate_elevation_weights(tile)
-    base_sub_x, base_sub_y = tile_to_subgrid(tile_x, tile_y)
+    modified = distribute_water_to_tile(tile, water_amount)
 
-    distributed = 0
-    for i, (lx, ly, weight) in enumerate(weights):
-        if i == len(weights) - 1:
-            portion = water_amount - distributed
-        else:
-            portion = int((water_amount * weight) / total_weight)
-
-        if portion > 0:
-            subsquare = tile.subgrid[lx][ly]
-            subsquare.surface_water += portion
-            subsquare.check_water_threshold()
-            if active_set is not None:
-                active_set.add((base_sub_x + lx, base_sub_y + ly))
-            distributed += portion
+    if active_set is not None:
+        base_sub_x, base_sub_y = tile_to_subgrid(tile_x, tile_y)
+        for lx, ly in modified:
+            active_set.add((base_sub_x + lx, base_sub_y + ly))

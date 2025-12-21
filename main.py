@@ -53,8 +53,8 @@ from simulation.surface import (
     simulate_surface_flow,
     simulate_surface_seepage,
     get_tile_surface_water,
+    get_subsquare_elevation,
     remove_water_proportionally,
-    distribute_upward_seepage,
 )
 from simulation.subsurface import simulate_subsurface_tick, apply_tile_evaporation
 from simulation.erosion import apply_overnight_erosion, accumulate_wind_exposure
@@ -362,14 +362,17 @@ def collect_water(state: GameState) -> None:
             f"Depot resupply: +{DEPOT_WATER_AMOUNT / 10:.1f}L water, +{DEPOT_SCRAP_AMOUNT} scrap, +{DEPOT_SEEDS_AMOUNT} seeds.")
         return
 
-    # Get total surface water from sub-squares in this tile
-    available = get_tile_surface_water(tile)
-    if available <= 5:
+    tile, subsquare, _ = state.get_target_tile_and_subsquare()
+    available = subsquare.surface_water
+
+    if available <= 0:
         state.messages.append("No water to collect here.")
         return
 
-    # Collect up to 100 units (10L) from this tile
-    gathered = remove_water_proportionally(tile, min(100, available))
+    gathered = min(100, available)
+    subsquare.surface_water -= gathered
+    subsquare.check_water_threshold()
+    state.active_water_subsquares.add(state.get_action_target_subsquare())
     state.inventory.water += gathered
     state.messages.append(f"Collected {gathered / 10:.1f}L water.")
 
@@ -383,14 +386,15 @@ def pour_water(state: GameState, amount: float) -> None:
         state.messages.append("Not enough water carried.")
         return
 
-    tx, ty = state.get_action_target_tile()
-    tile = state.tiles[tx][ty]
-
-    # Distribute water and update active set
-    distribute_upward_seepage(tile, amount_units, state.active_water_subsquares, tx, ty)
+    tile, subsquare, _ = state.get_target_tile_and_subsquare()
+    subsquare.surface_water += amount_units
+    subsquare.check_water_threshold()
+    
+    # Add to active set for flow simulation
+    state.active_water_subsquares.add(state.get_action_target_subsquare())
 
     state.inventory.water -= amount_units
-    state.messages.append(f"Poured {amount:.1f}L water into soil.")
+    state.messages.append(f"Poured {amount:.1f}L water.")
 
 
 def simulate_tick(state: GameState) -> None:
@@ -417,7 +421,7 @@ def simulate_tick(state: GameState) -> None:
             for y in range(state.height):
                 tile = state.tiles[x][y]
                 # Surface water sum
-                surf = sum(ss.surface_water for row in tile.subgrid for ss in row)
+                surf = get_tile_surface_water(tile)
                 # Subsurface water sum
                 sub = tile.water.total_subsurface_water()
                 current_moisture[x, y] = surf + sub
@@ -476,14 +480,15 @@ def show_status(state: GameState) -> None:
 
 def survey_tile(state: GameState) -> None:
     tile, subsquare, _ = state.get_target_tile_and_subsquare()
+    lx, ly = state.get_action_target_subsquare()
     x, y = state.get_action_target_tile()
     sub_pos = state.get_action_target_subsquare()
     structure = state.structures.get(sub_pos)
 
-    surface_water = get_tile_surface_water(tile)
+    elev_m = units_to_meters(get_subsquare_elevation(tile, sub_pos[0] % 3, sub_pos[1] % 3))
 
-    desc = [f"Tile {x},{y}", f"type={tile.kind}", f"elev={tile.elevation:.2f}m",
-            f"surf={surface_water / 10:.1f}L"]
+    desc = [f"Tile {x},{y}", f"Sub {sub_pos[0]%3},{sub_pos[1]%3}", f"elev={elev_m:.2f}m",
+            f"surf={subsquare.surface_water / 10:.1f}L"]
     if tile.water.total_subsurface_water() > 0:
         desc.append(f"subsrf={tile.water.total_subsurface_water() / 10:.1f}L")
     desc.append(f"topsoil={units_to_meters(tile.terrain.topsoil_depth):.1f}m")

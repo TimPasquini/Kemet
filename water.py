@@ -7,9 +7,8 @@ Simulation logic has been moved to simulation/subsurface.py.
 """
 from __future__ import annotations
 
-from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Dict, Tuple
+from typing import List, Tuple
 
 from ground import SoilLayer
 
@@ -26,21 +25,28 @@ class WaterColumn:
 
     Note: Surface water is stored per-SubSquare in subgrid.py, not here.
     """
-    layer_water: Dict[SoilLayer, int] = field(
-        default_factory=lambda: defaultdict(int)
-    )
+    # Fixed size list for layers defined in SoilLayer
+    _levels: List[int] = field(default_factory=lambda: [0] * len(SoilLayer))
+    # Cache total for O(1) access
+    _total: int = 0
 
     def get_layer_water(self, layer: SoilLayer) -> int:
         """Get water amount in a specific layer."""
-        return self.layer_water[layer]
+        return self._levels[layer]
 
     def set_layer_water(self, layer: SoilLayer, amount: int) -> None:
         """Set water amount in a specific layer, ensuring it's not negative."""
-        self.layer_water[layer] = max(0, amount)
+        amount = max(0, amount)
+        diff = amount - self._levels[layer]
+        self._levels[layer] = amount
+        self._total += diff
 
     def add_layer_water(self, layer: SoilLayer, amount: int) -> None:
         """Add water to a specific layer."""
-        self.layer_water[layer] += amount
+        if amount <= 0:
+            return
+        self._levels[layer] += amount
+        self._total += amount
 
     def remove_layer_water(self, layer: SoilLayer, amount: int) -> int:
         """
@@ -48,11 +54,12 @@ class WaterColumn:
 
         Returns actual amount removed (could be less if insufficient water).
         """
-        current = self.get_layer_water(layer)
+        current = self._levels[layer]
         actual = min(amount, current)
-        self.set_layer_water(layer, current - actual)
+        self._levels[layer] -= actual
+        self._total -= actual
         return actual
 
     def total_subsurface_water(self) -> int:
         """Total water in all subsurface layers."""
-        return sum(self.layer_water.values())
+        return self._total
