@@ -3,62 +3,58 @@
 ## Project Vision
 
 Kemet is a terraforming simulation where:
-- **Erosion sculpts terrain**: Starting from abundant material, water and wind carve hills, valleys, rivers, lakes
-- **Player moves dirt, doesn't create/destroy it**: Wheelbarrow → cart → bulldozer progression
-- **Conservation of mass/water**: Core mechanic - nothing vanishes, everything goes somewhere
-- **Topology matters**: Elevation affects movement and gameplay, not just visuals
-- **WFC for appearance**: Simulations provide constraints for wave function collapse to determine biome visuals
+- **Erosion sculpts terrain**: Starting from abundant material, water and wind carve hills, valleys, rivers, lakes.
+- **Player moves dirt, doesn't create/destroy it**: Wheelbarrow → cart → bulldozer progression. (example, not firm progression)
+- **Conservation of mass/water**: Core mechanic - nothing vanishes, everything goes somewhere.
+- **Topology matters**: Elevation affects movement and gameplay, not just visuals.
+- **Data-Oriented Simulation**: High-performance NumPy arrays drive the physics, enabling large-scale environmental interactions.
 
 ### Design Philosophy: Systems Respond Naturally
 
 The player can place anything anywhere, but natural systems respond realistically:
-- Pile organics in a stream → they wash downstream and deposit elsewhere
-- Stack sand on an exposed hilltop → wind blows it away
-- Block water flow → it pools and finds another path
+- Pile organics in a stream → they wash downstream and deposit elsewhere.
+- Stack sand on an exposed hilltop → wind blows it away.
+- Block water flow → it pools and finds another path.
 
 This creates emergent gameplay where understanding the systems lets you work with nature rather than against it.
 
 ---
 
-## Known Issues
-
-**Play test noted issues**
-- Water tends to collect in bottom right subsquare of tile regardless of subsquare selection when dumping from bucket
-- Water collection from a subsquare seems to collect the whole tile
-- Water naturally seems to gravitate towards bottom right subsquare of a tile
+## Known Issues & Watchlist
 
 ### Performance
+- **[SOLVED] Stutter/Jerkiness**: Addressed via NumPy vectorization of surface flow.
+- **Bottleneck**: `sync_objects_to_arrays` is the current heavy lifter. This will be eliminated in the Unification phase.
 
-**Potential Optimizations**
-  1. Spatial partitioning - Only process tiles with water above a threshold
-  2. Delta-based updates - Track which tiles changed and only recalculate neighbors
-  3. Chunked processing - Spread subsurface work across multiple frames instead of one spike
-  4. **[x] Use numpy arrays** - Replace nested Python loops with vectorized operations (Implemented for surface flow)
+### Gameplay/Simulation
+- **Water Bias**: Historical issue where water favored bottom-right flow. Mitigated by probabilistic rounding in NumPy implementation, but requires monitoring.
+- **Resolution Mismatch**: Subsurface (Tile) vs Surface (SubSquare) resolution causes logical disconnects (e.g., localized infiltration spreads to whole tile). *To be solved by Unification.*
 
-### UI/UX Issues
-
-1. **Navigation** - Hard to find the depot; needs a minimap
-2. **UI proportions** - Information displays not in clean columns
-3. **Dead space** - Map feels crowded; consider HUD overlay with floating windows
-4. **No clock** - Hard to tell time of day
-
-### Gameplay Issues
-
-1. **Topology doesn't feel meaningful** - Player walks freely regardless of elevation
-2. **Layers too thin** - Current ~1m of soil erodes to bedrock too quickly
-3. **No pre-simulation** - Map shows raw generation, not eroded terrain
-
+### UI/UX
+- **[SOLVED] Navigation**: Minimap and Zoom implemented.
+- **Feedback**: "Trench" status is a boolean flag, visually distinct but physically "magic" (reduces evap without geometry). *To be solved by Geometric Trenches.*
+- **Dead Space**: Map feels crowded; consider HUD overlay with floating windows
+- **No clock**: Hard to know time of day"
 ---
 
 ## Architecture Overview
 
-### Three Simulation Layers
+### Current State: Hybrid Object-Array Model
 
-| Layer | Grid Resolution | Update Frequency | Contents |
-|-------|-----------------|------------------|----------|
-| **Atmosphere** | Region (4x4 tiles) | Every tick | Humidity, wind, evaporation pressure |
-| **Surface** | Sub-grid (3x3 per tile) | Every 2 ticks | Player, structures, surface water, erosion |
-| **Subsurface** | Tile | Every 4 ticks | Soil layers, water table, vertical seepage |
+The codebase is in transition from a pure Object-Oriented model to a Data-Oriented (NumPy) model.
+
+1.  **Storage (Objects)**:
+    *   `Tile` (60x45): Holds `TerrainColumn`, `WaterColumn`, `AtmosphereRegion`.
+    *   `SubSquare` (180x135): Holds `surface_water`, `elevation_offset`.
+2.  **Simulation (Arrays)**:
+    *   Surface flow is calculated on 180x135 `int32` NumPy grids (`water_grid`, `elevation_grid`).
+    *   Data is synced `Objects -> Arrays -> Physics -> Objects` every tick.
+
+### Target State: Unified Grid (Data-Oriented)
+*   **Single Truth**: All simulation state lives in global NumPy arrays (180x135 currently, potentially 1024x1024 or 2048x2048).
+*   **No Objects**: `Tile` and `SubSquare` classes are removed or become transient render helpers.
+*   **Vectorized Physics**: All systems (Water, Wind, Erosion, Plants) run as array operations.
+*   **Geometry-First**: Features like trenches are geometric depressions, not boolean flags.
 
 ### Simulation Pipeline (Staggered)
 
@@ -112,31 +108,6 @@ Each simulation tile contains 9 **sub-squares**:
 - World sub-coords: `(tile_x * 3 + sub_x, tile_y * 3 + sub_y)`
 - For 60x45 tile map → 180x135 sub-square map
 - Player position: sub-square coordinates
-
----
-
-## Future Architecture: Geological Erosion
-
-### Two-Phase Terrain Model (Planned)
-
-**Phase 1: Proto-Terrain (Pre-Game)**
-- Start with ~100m of bulk material
-- Simplified single-layer model with hardness variation
-- Run 500-2000 erosion cycles during loading
-- **Note**: Long load times (minutes) are acceptable.
-- Water from wellsprings carves terrain reductively
-
-**Phase 2: Game Terrain (Converted at Start)**
-- Convert eroded proto-terrain to detailed soil layers
-- Layer distribution based on remaining material depth
-- Thin material = exposed bedrock; thick = full soil profile
-
-### Key Concepts
-
-- **Game floor**: True immutable bottom beneath erodible bedrock
-- **Hardness variation**: Spatial noise creates ridges (hard) and valleys (soft)
-- **Sediment return**: Material eroded off edges returns via dust storms
-- **Open edges**: Water/material flows off map freely during pre-game erosion
 
 ---
 
@@ -196,27 +167,60 @@ Player moves on 180x135 grid, interaction range highlights work, cursor targetin
 - Edge runoff returns to pool
 - Evaporation routes to atmospheric reserve
 
-### Phase 5: Erosion System - IN PROGRESS
+### Phase 5: Erosion System - PAUSED
 - Overnight erosion using accumulated daily pressures
 - Water passage and wind exposure tracking
-- Real-time erosion moved to overnight processing
+- *Paused to prioritize architectural unification*
 
-### Phase 6: Geological Pre-Simulation - PLANNED
-- Proto-terrain with ~100m bulk material
-- Pre-game erosion cycles
-- Conversion to detailed layers at game start
-- **Note**: Load times of a few minutes are acceptable.
-
-### Phase 7: Persistence - PLANNED
-- Save/Load game state
-- Serialize World/Player/Weather objects
-
-### Phase 8: Performance Optimization - Parital
+### Completed Optimization
 - Already Refactored surface water simulation to use NumPy
 - Vectorized gradient and flow calculations
 - Added `water_grid` and `elevation_grid` to GameState
 - Implemented state buffering (Objects -> NumPy -> Objects)
-- Todo: Expand NumPy implementation when logical
+
+
+---
+
+## Roadmap: The Great Unification
+
+The immediate technical goal is to complete the transition to a fully vectorized system.
+
+### Phase 1: Unification (Next Step)
+**Goal**: Eliminate `Tile` and `SubSquare` as simulation units. Move all state to global arrays.
+- **Unified Grid**: 180x135 (or larger) becomes the single source of truth.
+- **Unified Layers**: `TerrainColumn` becomes a dictionary of arrays (`bedrock_grid`, `sand_grid`, `organics_grid`).
+- **Unified Atmosphere**: Atmosphere becomes 180x135 arrays (`humidity_grid`, `wind_grid`), allowing micro-climates and occlusion.
+- **Benefit**: Removes the expensive sync step, enables massive map scaling.
+
+### Phase 2: Geometric Trenches
+**Goal**: Replace `has_trench` flag with actual geometry.
+- **Digging**: Removes material from the `topsoil` array, lowering the `elevation` array.
+- **Physics**: Water flows into the hole naturally due to gravity.
+- **Shelter**: Evaporation is calculated using "Wind Occlusion" (raymarching or neighbor checks on the elevation grid) rather than magic flags.
+
+### Phase 3: Scale Up
+**Goal**: Increase map size once performance overhead is removed.
+- Target: 512x512 (approx 170m x 170m).
+- Potential for 1024x1024 or 2048x2048 with active region slicing.
+
+### Phase 4: Geological Erosion (Pre-Sim)
+**Goal**: Generate realistic starting terrain.
+- **Bulk Material**: Generate initial volume using noise functions (not perlin/simplex, but geological uplift simulation).
+- **Hydraulic Erosion**: Run `simulate_surface_flow` with `rain=True` for N cycles.
+- **Wind Erosion**: Should run against map areas that are above water.
+- **Resolution**: Where velocity is high -> `elevation -= sediment`. Where low -> `elevation += sediment`.
+- **Conversion**: Convert resulting heightmap/sediment map into soil layers.
+
+### Phase 4.5: Procedural Generation Strategy
+**Goal**: Intelligent placement of features using advanced algorithms.
+- **Graph Grammars**: Use for river network generation and connecting "Locations of Note" with ancient roads.
+- **L-Systems**: Use for procedural plant growth and branching structures.
+- **Wave Function Collapse**: Use for biome texture synthesis and micro-terrain transitions (e.g., Sand -> Dunes -> Rock).
+
+### Phase 5: Persistence
+**Goal**: Save/Load system.
+- Serialize the unified NumPy arrays (compressed).
+- Serialize Player and Weather state.
 
 ---
 

@@ -43,6 +43,9 @@ class Camera:
     # Tile size for coordinate conversions
     tile_size: int = 32
 
+    # Zoom level (1.0 = 100%, 0.5 = 50% size / 2x view area, 2.0 = 200% size)
+    zoom: float = 1.0
+
     def set_world_bounds(self, world_width_tiles: int, world_height_tiles: int, tile_size: int) -> None:
         """Set the world bounds based on tile dimensions."""
         self.world_pixel_width = world_width_tiles * tile_size
@@ -54,10 +57,15 @@ class Camera:
         self.viewport_width = width
         self.viewport_height = height
 
+    def set_zoom(self, zoom_level: float) -> None:
+        """Set zoom level, clamping to reasonable bounds."""
+        self.zoom = max(0.25, min(4.0, zoom_level))
+        self._clamp_to_bounds()
+
     def center_on(self, world_x: float, world_y: float) -> None:
         """Center the camera on a world position."""
-        self.world_x = world_x - self.viewport_width / 2
-        self.world_y = world_y - self.viewport_height / 2
+        self.world_x = world_x - (self.viewport_width / self.zoom) / 2
+        self.world_y = world_y - (self.viewport_height / self.zoom) / 2
         self._clamp_to_bounds()
 
     def center_on_tile(self, tile_x: int, tile_y: int) -> None:
@@ -74,39 +82,50 @@ class Camera:
         """
         margin_x = self.viewport_width * margin
         margin_y = self.viewport_height * margin
+        
+        # Viewport extent in world units depends on zoom
+        view_w_world = self.viewport_width / self.zoom
+        view_h_world = self.viewport_height / self.zoom
 
-        # Calculate target position in viewport space
+        # Calculate target position relative to camera
         vx = world_x - self.world_x
         vy = world_y - self.world_y
 
-        # Only adjust if outside the margin
-        if vx < margin_x:
-            self.world_x = world_x - margin_x
-        elif vx > self.viewport_width - margin_x:
-            self.world_x = world_x - (self.viewport_width - margin_x)
+        # Margin in world units (approximate for smooth feel)
+        world_margin_x = margin_x / self.zoom
+        world_margin_y = margin_y / self.zoom
 
-        if vy < margin_y:
-            self.world_y = world_y - margin_y
-        elif vy > self.viewport_height - margin_y:
-            self.world_y = world_y - (self.viewport_height - margin_y)
+        if vx < world_margin_x:
+            self.world_x = world_x - world_margin_x
+        elif vx > view_w_world - world_margin_x:
+            self.world_x = world_x - (view_w_world - world_margin_x)
+
+        if vy < world_margin_y:
+            self.world_y = world_y - world_margin_y
+        elif vy > view_h_world - world_margin_y:
+            self.world_y = world_y - (view_h_world - world_margin_y)
 
         self._clamp_to_bounds()
 
     def _clamp_to_bounds(self) -> None:
         """Clamp camera position to world bounds."""
-        max_x = max(0, self.world_pixel_width - self.viewport_width)
-        max_y = max(0, self.world_pixel_height - self.viewport_height)
+        # Visible world width/height
+        visible_w = self.viewport_width / self.zoom
+        visible_h = self.viewport_height / self.zoom
+        
+        max_x = max(0, self.world_pixel_width - visible_w)
+        max_y = max(0, self.world_pixel_height - visible_h)
 
         self.world_x = max(0, min(self.world_x, max_x))
         self.world_y = max(0, min(self.world_y, max_y))
 
     def world_to_viewport(self, world_x: float, world_y: float) -> Tuple[float, float]:
         """Convert world coordinates to viewport coordinates."""
-        return world_x - self.world_x, world_y - self.world_y
+        return (world_x - self.world_x) * self.zoom, (world_y - self.world_y) * self.zoom
 
     def viewport_to_world(self, vp_x: float, vp_y: float) -> Tuple[float, float]:
         """Convert viewport coordinates to world coordinates."""
-        return vp_x + self.world_x, vp_y + self.world_y
+        return (vp_x / self.zoom) + self.world_x, (vp_y / self.zoom) + self.world_y
 
     def world_to_tile(self, world_x: float, world_y: float) -> Tuple[int, int]:
         """Convert world pixel coordinates to tile coordinates."""
@@ -158,11 +177,11 @@ class Camera:
         start_y = max(0, int(self.world_y // sub_size))
 
         end_x = min(
-            int((self.world_x + self.viewport_width) // sub_size) + 1,
+            int((self.world_x + (self.viewport_width / self.zoom)) // sub_size) + 1,
             world_sub_width
         )
         end_y = min(
-            int((self.world_y + self.viewport_height) // sub_size) + 1,
+            int((self.world_y + (self.viewport_height / self.zoom)) // sub_size) + 1,
             world_sub_height
         )
 
@@ -184,11 +203,11 @@ class Camera:
 
         # Calculate end tiles (add 1 for partial tiles at edge)
         end_x = min(
-            int((self.world_x + self.viewport_width) // self.tile_size) + 1,
+            int((self.world_x + (self.viewport_width / self.zoom)) // self.tile_size) + 1,
             self.world_pixel_width // self.tile_size
         )
         end_y = min(
-            int((self.world_y + self.viewport_height) // self.tile_size) + 1,
+            int((self.world_y + (self.viewport_height / self.zoom)) // self.tile_size) + 1,
             self.world_pixel_height // self.tile_size
         )
 

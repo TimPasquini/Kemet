@@ -77,7 +77,6 @@ from subgrid import subgrid_to_tile, get_subsquare_index
 from render import (
     render_map_viewport,
     render_static_background,
-    render_player,
     render_night_overlay,
     render_hud,
     render_inventory,
@@ -87,6 +86,8 @@ from render import (
     render_event_log,
 )
 from render.map import render_interaction_highlights, redraw_background_rect
+from render.player_renderer import render_player
+from render.minimap import render_minimap
 
 
 def screen_to_virtual(
@@ -186,7 +187,15 @@ def render_to_virtual_screen(
 
     # 1. Render map viewport (tiles, structures, features)
     # map_surface is now passed in and reused to avoid per-frame allocation
-    render_map_viewport(map_surface, font, state, camera, tile_size, elevation_range, background_surface)
+    # We pass the scaled tile size to the renderer so it draws at the correct zoom level
+    scaled_tile_size = int(tile_size * camera.zoom)
+    
+    # Ensure map surface is large enough for the viewport
+    if map_surface.get_width() != camera.viewport_width or map_surface.get_height() != camera.viewport_height:
+        # This shouldn't happen often if camera viewport is fixed to layout
+        map_surface = pygame.Surface((camera.viewport_width, camera.viewport_height))
+
+    render_map_viewport(map_surface, font, state, camera, scaled_tile_size, elevation_range, background_surface)
 
     # Render interaction highlights (before player, after tiles)
     render_interaction_highlights(
@@ -197,7 +206,7 @@ def render_to_virtual_screen(
         toolbar.get_selected_tool(),
     )
 
-    render_player(map_surface, state, camera, player_world_pos, tile_size)
+    render_player(map_surface, state, camera, player_world_pos, scaled_tile_size)
     render_night_overlay(map_surface, state.heat)
 
     # Scale map surface to fit the ui_state's map rect
@@ -214,8 +223,13 @@ def render_to_virtual_screen(
     col1_x = sidebar_x + 12
     col2_x = sidebar_x + 160  # 12 (margin) + 130 (text width) + ~18 (gap)
 
-    # Column 1: HUD Stack + Inventory
-    hud_bottom = render_hud(virtual_screen, font, state, col1_x, y_offset)
+    # Minimap (Top of Col 1)
+    minimap_height = 100
+    minimap_rect = pygame.Rect(col1_x, y_offset, 130, minimap_height)
+    render_minimap(virtual_screen, state, camera, minimap_rect)
+
+    # Column 1: HUD Stack + Inventory (Below Minimap)
+    hud_bottom = render_hud(virtual_screen, font, state, col1_x, y_offset + minimap_height + 10)
     render_inventory(virtual_screen, font, state, col1_x, hud_bottom)
 
     # Column 2: Soil profile (show sub-square at cursor target, or player position if no target)
@@ -374,8 +388,22 @@ def run(tile_size: int = TILE_SIZE) -> None:
                     toolbar.cycle_menu_highlight(-scroll_dir)
                 else:
                     virtual_pos = screen_to_virtual(pygame.mouse.get_pos(), screen.get_size())
-                    ui_state.handle_scroll(virtual_pos, scroll_dir, len(state.messages), visible_messages)
+                    # Try to scroll UI first (e.g. log panel)
+                    if not ui_state.handle_scroll(virtual_pos, scroll_dir, len(state.messages), visible_messages):
+                        # If UI didn't consume the scroll, zoom the camera
+                        # scroll_dir is usually 1 (up/in) or -1 (down/out)
+                        zoom_speed = 0.1
+                        camera.set_zoom(camera.zoom + (scroll_dir * zoom_speed))
                 continue
+                
+            # Zoom controls (Plus/Minus keys)
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_EQUALS or event.key == pygame.K_PLUS: # +
+                    camera.set_zoom(camera.zoom + 0.25)
+                    continue
+                elif event.key == pygame.K_MINUS: # -
+                    camera.set_zoom(camera.zoom - 0.25)
+                    continue
 
             # Mouse clicks
             if event.type == pygame.MOUSEBUTTONDOWN and event.button not in (4, 5):
@@ -494,10 +522,9 @@ def run(tile_size: int = TILE_SIZE) -> None:
                 tile_x, tile_y = subgrid_to_tile(sub_x, sub_y)
                 tile = state.tiles[tile_x][tile_y]
 
-                # Block on rock tiles
-                if tile.kind == "rock":
-                    return True
-
+                # REMOVED: Block on rock tiles
+                # Rock tiles are now passable terrain
+                
                 # Check if this specific subsquare has a structure
                 local_x, local_y = get_subsquare_index(sub_x, sub_y)
                 subsquare = tile.subgrid[local_x][local_y]

@@ -61,5 +61,6 @@ CONTROL_DESCRIPTIONS = [
     "Esc: quit/cancel",
     "LClick: select",
     "RClick: options",
-    "Scroll: log history",
+    "Scroll: zoom / log",
+    "+/-: zoom",
 ]
