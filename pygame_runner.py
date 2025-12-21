@@ -189,6 +189,7 @@ def render_to_virtual_screen(
     # map_surface is now passed in and reused to avoid per-frame allocation
     # We pass the scaled tile size to the renderer so it draws at the correct zoom level
     scaled_tile_size = int(tile_size * camera.zoom)
+    scaled_sub_tile_size = int(scaled_tile_size / SUBGRID_SIZE)
     
     # Ensure map surface is large enough for the viewport
     if map_surface.get_width() != camera.viewport_width or map_surface.get_height() != camera.viewport_height:
@@ -204,6 +205,7 @@ def render_to_virtual_screen(
         state.player_state.position,  # Sub-grid coordinates
         ui_state,
         toolbar.get_selected_tool(),
+        scaled_sub_tile_size,
     )
 
     render_player(map_surface, state, camera, player_world_pos, scaled_tile_size)

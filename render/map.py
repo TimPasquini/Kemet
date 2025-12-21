@@ -96,11 +96,21 @@ def render_map_viewport(
 
     if background_surface is not None:
         # --- 1. Blit the pre-rendered static background ---
-        # Get the portion of the background surface that is visible to the camera
-        cam_x = -camera.world_to_viewport(0, 0)[0]
-        cam_y = -camera.world_to_viewport(0, 0)[1]
-        visible_world_rect = pygame.Rect(cam_x, cam_y, camera.viewport_width, camera.viewport_height)
-        surface.blit(background_surface, (0, 0), visible_world_rect)
+        # Determine the source rectangle from the full-world background surface
+        # that corresponds to the camera's current view.
+        src_w = camera.viewport_width / camera.zoom
+        src_h = camera.viewport_height / camera.zoom
+        source_rect = pygame.Rect(camera.world_x, camera.world_y, src_w, src_h)
+
+        # Clip the source rectangle to the bounds of the background surface
+        # to prevent "subsurface outside surface" errors at the edges.
+        source_rect.clamp_ip(background_surface.get_rect())
+
+        # Extract the visible portion and scale it to fit the viewport.
+        if source_rect.width > 0 and source_rect.height > 0:
+            visible_bg = background_surface.subsurface(source_rect)
+            scaled_bg = pygame.transform.scale(visible_bg, surface.get_size())
+            surface.blit(scaled_bg, (0, 0))
     else:
         # Fallback: render terrain per-frame (slower but works without background cache)
         _render_terrain_per_frame(surface, state, camera, tile_size, elevation_range)
@@ -117,8 +127,8 @@ def render_map_viewport(
         if not camera.is_tile_visible(tile_x, tile_y):
             continue
         # Get world position for sub-square (using sub-square coords directly)
-        world_x = sub_x * sub_size
-        world_y = sub_y * sub_size
+        world_x = sub_x * (tile_size / SUBGRID_SIZE)
+        world_y = sub_y * (tile_size / SUBGRID_SIZE)
         vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
         rect = pygame.Rect(int(vp_x), int(vp_y), sub_size - 1, sub_size - 1)
         pygame.draw.rect(surface, COLOR_STRUCTURE, rect.inflate(-2, -2))
@@ -135,7 +145,7 @@ def render_map_viewport(
 
             if tile.wellspring_output > 0:
                 spring_color = COLOR_WELLSPRING_STRONG if tile.wellspring_output / 10 > 0.5 else COLOR_WELLSPRING_WEAK
-                pygame.draw.circle(surface, spring_color, rect.center, WELLSPRING_RADIUS)
+                pygame.draw.circle(surface, spring_color, rect.center, WELLSPRING_RADIUS * camera.zoom)
             if tile.depot:
                 pygame.draw.rect(surface, COLOR_DEPOT, rect.inflate(-TRENCH_INSET, -TRENCH_INSET), border_radius=3)
                 draw_text(surface, font, "D", (rect.x + 18, rect.y + 12), color=(40, 40, 20))
@@ -153,6 +163,7 @@ def _render_terrain_per_frame(
 ) -> None:
     """Fallback terrain rendering - renders each visible sub-square per frame."""
     start_x, start_y, end_x, end_y = camera.get_visible_subsquare_range()
+    scaled_sub_tile_size = max(1, int((TILE_SIZE / SUBGRID_SIZE) * camera.zoom))
 
     for sub_y in range(start_y, end_y):
         for sub_x in range(start_x, end_x):
@@ -170,7 +181,7 @@ def _render_terrain_per_frame(
             world_x, world_y = camera.subsquare_to_world(sub_x, sub_y)
             vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
 
-            rect = pygame.Rect(int(vp_x), int(vp_y), SUB_TILE_SIZE, SUB_TILE_SIZE)
+            rect = pygame.Rect(int(vp_x), int(vp_y), scaled_sub_tile_size, scaled_sub_tile_size)
             pygame.draw.rect(surface, color, rect)
 
 
@@ -184,7 +195,7 @@ def render_subgrid_water(
     Render water as a single semi-transparent overlay for performance.
     This avoids thousands of small blit calls per frame.
     """
-    sub_size = tile_size // SUBGRID_SIZE
+    sub_size = max(1, tile_size // SUBGRID_SIZE)
     start_x, start_y, end_x, end_y = camera.get_visible_subsquare_range()
 
     # Create a single overlay surface for the entire viewport.
@@ -323,13 +334,14 @@ def render_interaction_highlights(
     player_pos: Tuple[int, int],
     ui_state: "UIState",
     tool: Optional["Tool"],
+    scaled_sub_tile_size: int,
 ) -> None:
     """Render interaction range indicator and target highlight."""
     target_subsquare = ui_state.target_subsquare
     if target_subsquare is None:
         return
 
-    sub_size = int(camera.sub_tile_size)
+    sub_size = scaled_sub_tile_size
     # Use the validity flag from ui_state to determine the color
     color = get_tool_highlight_color(tool, ui_state.is_valid_target)
     world_x, world_y = camera.subsquare_to_world(target_subsquare[0], target_subsquare[1])
@@ -337,6 +349,7 @@ def render_interaction_highlights(
     rect = pygame.Rect(int(vp_x), int(vp_y), sub_size, sub_size)
 
     # Use cached highlight surface to avoid per-frame allocation
-    highlight_surface = _get_cached_highlight_surface(sub_size, color, 60)
-    surface.blit(highlight_surface, (int(vp_x), int(vp_y)))
+    if sub_size > 0:
+        highlight_surface = _get_cached_highlight_surface(sub_size, color, 60)
+        surface.blit(highlight_surface, (int(vp_x), int(vp_y)))
     pygame.draw.rect(surface, color, rect, 2)
