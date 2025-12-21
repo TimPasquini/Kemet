@@ -108,12 +108,12 @@ def get_wind_exposure(
     return 1.0
 
 
-def get_soil_moisture(tile: "Tile", local_x: int, local_y: int) -> float:
+def get_soil_moisture(tile: "Tile", local_x: int, local_y: int, surface_water: int) -> float:
     """Get moisture level (0-1) affecting wind erosion resistance."""
     subsquare = tile.subgrid[local_x][local_y]
 
     # Surface water = fully wet
-    if subsquare.surface_water > 10:
+    if surface_water > 10:
         return 1.0
 
     # Check soil saturation
@@ -130,7 +130,7 @@ def get_soil_moisture(tile: "Tile", local_x: int, local_y: int) -> float:
     saturation = current / max_storage
 
     # Surface water adds moisture
-    surface_factor = min(subsquare.surface_water / 20.0, 0.3)
+    surface_factor = min(surface_water / 20.0, 0.3)
 
     return min(1.0, saturation * 0.7 + surface_factor)
 
@@ -188,7 +188,9 @@ def apply_overnight_erosion(
                     if exposed == SoilLayer.BEDROCK:
                         continue
 
-                    moisture = get_soil_moisture(tile, local_x, local_y)
+                    sx, sy = tile_x * SUBGRID_SIZE + local_x, tile_y * SUBGRID_SIZE + local_y
+                    water = state.water_grid[sx, sy]
+                    moisture = get_soil_moisture(tile, local_x, local_y, water)
                     moisture_mod = 1.0 - (moisture * 0.8)
                     if moisture_mod <= 0.1:
                         continue
@@ -263,7 +265,9 @@ def accumulate_wind_exposure(state: "GameState") -> None:
 
                     state.active_wind_tiles.add((tile_x, tile_y))
                     tile = state.tiles[tile_x][tile_y]
-                    for row in tile.subgrid:
-                        for subsquare in row:
-                            if subsquare.surface_water < 10:
+                    for local_x in range(SUBGRID_SIZE):
+                        for local_y in range(SUBGRID_SIZE):
+                            subsquare = tile.subgrid[local_x][local_y]
+                            sx, sy = tile_x * SUBGRID_SIZE + local_x, tile_y * SUBGRID_SIZE + local_y
+                            if state.water_grid[sx, sy] < 10:
                                 subsquare.wind_exposure += region.wind_speed

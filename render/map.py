@@ -176,7 +176,8 @@ def _render_terrain_per_frame(
             subsquare = tile.subgrid[local_x][local_y]
 
             sub_elevation = tile.get_subsquare_elevation(local_x, local_y)
-            color = color_for_subsquare(subsquare, sub_elevation, tile, elevation_range)
+            water_amt = state.water_grid[sub_x, sub_y]
+            color = color_for_subsquare(subsquare, sub_elevation, tile, elevation_range, water_amt)
 
             world_x, world_y = camera.subsquare_to_world(sub_x, sub_y)
             vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
@@ -207,7 +208,7 @@ def render_subgrid_water(
             local_x, local_y = get_subsquare_index(sub_x, sub_y)
 
             tile = state.tiles[tile_x][tile_y]
-            water = tile.subgrid[local_x][local_y].surface_water
+            water = state.water_grid[sub_x, sub_y]
 
             if water <= 2:
                 continue
@@ -263,7 +264,7 @@ def render_static_background(state: "GameState", font) -> pygame.Surface:
             sub_elevation = tile.get_subsquare_elevation(local_x, local_y)
 
             # Use same color logic as per-frame rendering (includes elevation brightness)
-            color = color_for_subsquare(subsquare, sub_elevation, tile, elevation_range)
+            color = color_for_subsquare(subsquare, sub_elevation, tile, elevation_range, 0) # Static bg has no water
 
             # Position on the large background surface
             px = sub_x * SUB_TILE_SIZE
@@ -271,10 +272,8 @@ def render_static_background(state: "GameState", font) -> pygame.Surface:
             rect = pygame.Rect(px, py, SUB_TILE_SIZE, SUB_TILE_SIZE)
             pygame.draw.rect(background_surface, color, rect)
 
-            # Draw static features directly onto the background
-            appearance = subsquare.get_appearance(tile)
-            if "trench" in appearance.features:
-                # Draw a visible border around trenched subsquares
+            # Draw trench border from the global grid
+            if state.trench_grid is not None and state.trench_grid[sub_x, sub_y]:
                 pygame.draw.rect(background_surface, COLOR_TRENCH, rect, 2)
 
     return background_surface
@@ -299,14 +298,14 @@ def redraw_background_rect(background_surface: pygame.Surface, state: "GameState
     # Get cached elevation range and calculate color with brightness
     elevation_range = state.get_elevation_range()
     sub_elevation = tile.get_subsquare_elevation(local_x, local_y)
-    color = color_for_subsquare(subsquare, sub_elevation, tile, elevation_range)
+    water_amt = state.water_grid[sub_x, sub_y]
+    color = color_for_subsquare(subsquare, sub_elevation, tile, elevation_range, water_amt)
 
     # Draw the updated sub-square directly onto the background surface
     pygame.draw.rect(background_surface, color, rect)
 
-    # Draw trench indicator if present
-    appearance = subsquare.get_appearance(tile)
-    if "trench" in appearance.features:
+    # Draw trench indicator from the global grid
+    if state.trench_grid is not None and state.trench_grid[sub_x, sub_y]:
         pygame.draw.rect(background_surface, COLOR_TRENCH, rect, 2)
 
 

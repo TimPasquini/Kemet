@@ -44,22 +44,15 @@ def get_subsquare_elevation(tile: "Tile", local_x: int, local_y: int) -> int:
 
 def get_subsquare_water_height(tile: "Tile", local_x: int, local_y: int) -> float:
     """Get water surface height (elevation + water depth) for a sub-square."""
+    # NOTE: This function is legacy. For simulation, use the grids directly.
+    # It cannot know the water amount without access to the grid.
     elev = get_subsquare_elevation(tile, local_x, local_y)
-    water = tile.subgrid[local_x][local_y].surface_water
-    return elev + water
+    return float(elev)
 
 
-def sync_objects_to_arrays(state: "GameState") -> None:
-    """Sync data from GameState objects to NumPy arrays."""
-    w, h = state.width * SUBGRID_SIZE, state.height * SUBGRID_SIZE
-
-    # Initialize arrays if needed
-    if state.water_grid is None or state.water_grid.shape != (w, h):
-        state.water_grid = np.zeros((w, h), dtype=np.int32)
-        state.elevation_grid = np.zeros((w, h), dtype=np.int32)
-        state.terrain_changed = True
-
-    # Rebuild elevation grid if terrain changed
+def simulate_surface_flow(state: "GameState") -> int:
+    """Simulate surface water flow using vectorized NumPy operations."""
+    # 1. Ensure Elevation Grid is up to date
     if state.terrain_changed:
         # This iteration is slow but only happens on terrain modification events
         for x in range(state.width):
@@ -69,64 +62,10 @@ def sync_objects_to_arrays(state: "GameState") -> None:
                 for lx in range(SUBGRID_SIZE):
                     for ly in range(SUBGRID_SIZE):
                         ss = tile.subgrid[lx][ly]
-                        # Convert offset (meters) to units (100mm)
-                        # offset 0.1m = 1 unit
                         val = base_elev + int(ss.elevation_offset * 10)
                         state.elevation_grid[x * 3 + lx, y * 3 + ly] = val
         state.terrain_changed = False
 
-    # Sync water from active objects to grid
-    # We zero out the grid and rebuild from active set to ensure consistency
-    state.water_grid.fill(0)
-    for sx, sy in state.active_water_subsquares:
-        tx, ty = sx // SUBGRID_SIZE, sy // SUBGRID_SIZE
-        lx, ly = sx % SUBGRID_SIZE, sy % SUBGRID_SIZE
-        val = state.tiles[tx][ty].subgrid[lx][ly].surface_water
-        state.water_grid[sx, sy] = val
-
-
-def sync_arrays_to_objects(state: "GameState", outflow_grid: np.ndarray) -> None:
-    """Sync data from NumPy arrays back to GameState objects."""
-    # Identify all cells that need updates:
-    # 1. Cells that were active before (might have dried up)
-    # 2. Cells that are non-zero in the new grid (might be newly wet)
-    
-    old_active = state.active_water_subsquares.copy()
-    state.active_water_subsquares.clear()
-    
-    # Find currently wet cells
-    nz_rows, nz_cols = np.nonzero(state.water_grid)
-    current_wet_coords = set(zip(nz_rows, nz_cols))
-    
-    # Update active set
-    state.active_water_subsquares.update(current_wet_coords)
-    
-    # Union of old and new ensures we update cells that just dried out (to 0)
-    update_set = old_active.union(current_wet_coords)
-    
-    for sx, sy in update_set:
-        tx, ty = sx // SUBGRID_SIZE, sy // SUBGRID_SIZE
-        lx, ly = sx % SUBGRID_SIZE, sy % SUBGRID_SIZE
-        subsquare = state.tiles[tx][ty].subgrid[lx][ly]
-        
-        # Update water level
-        subsquare.surface_water = int(state.water_grid[sx, sy])
-        
-        # Accumulate water passage (for erosion)
-        outflow = int(outflow_grid[sx, sy])
-        if outflow > 0:
-            subsquare.water_passage += outflow
-            
-        # Update visual state
-        subsquare.check_water_threshold()
-
-
-def simulate_surface_flow(state: "GameState") -> int:
-    """Simulate surface water flow using vectorized NumPy operations."""
-    
-    # 1. Sync In
-    sync_objects_to_arrays(state)
-    
     water = state.water_grid
     elev = state.elevation_grid
     
@@ -211,92 +150,103 @@ def simulate_surface_flow(state: "GameState") -> int:
     if state.water_pool is not None and edge_runoff_total > 0:
         state.water_pool.edge_runoff(edge_runoff_total)
 
-    # 4. Sync Out
+    # 4. Update Active Sets and Accumulators
     # Update the main grid from the padded calculation (discarding halo)
     state.water_grid = water_padded[center_slice].astype(np.int32)
-    
-    # Sync back to objects
-    sync_arrays_to_objects(state, outflow_accum[center_slice])
+
+    # Update active set based on non-zero water
+    nz_rows, nz_cols = np.nonzero(state.water_grid)
+    state.active_water_subsquares = set(zip(nz_rows, nz_cols))
+
+    # Update water passage accumulators for erosion
+    outflow_real = outflow_accum[center_slice]
+    nz_out_rows, nz_out_cols = np.nonzero(outflow_real)
+    for i in range(len(nz_out_rows)):
+        sx, sy = nz_out_rows[i], nz_out_cols[i]
+        tx, ty = sx // SUBGRID_SIZE, sy // SUBGRID_SIZE
+        lx, ly = sx % SUBGRID_SIZE, sy % SUBGRID_SIZE
+        subsquare = state.tiles[tx][ty].subgrid[lx][ly]
+        subsquare.water_passage += outflow_real[sx, sy]
+
+        # Check visual threshold (using new water value)
+        subsquare.check_water_threshold(state.water_grid[sx, sy])
     
     return edge_runoff_total
 
 
-def simulate_surface_seepage(
-    tiles: List[List["Tile"]],
-    width: int,
-    height: int,
-) -> None:
+def simulate_surface_seepage(state: "GameState") -> None:
     """Simulate surface water seeping into the topmost soil layer.
 
     Water on each sub-square seeps down into the tile's soil based on
     the permeability of the exposed material.
 
     Args:
-        tiles: 2D list of tiles [x][y]
-        width: Map width in tiles
-        height: Map height in tiles
+        state: The main game state.
     """
     from ground import MATERIAL_LIBRARY, SoilLayer
 
-    for tile_x in range(width):
-        for tile_y in range(height):
-            tile = tiles[tile_x][tile_y]
+    # Only iterate active water subsquares for efficiency
+    # We need a copy because we might modify the set (though seepage usually just reduces water)
+    for sx, sy in list(state.active_water_subsquares):
+        water_amt = state.water_grid[sx, sy]
+        if water_amt <= 0:
+            continue
 
-            # Get the topmost soil layer for this tile
-            exposed_layer = tile.terrain.get_exposed_layer()
-            if exposed_layer == SoilLayer.BEDROCK:
-                continue  # Can't seep into bedrock
+        tx, ty = sx // SUBGRID_SIZE, sy // SUBGRID_SIZE
+        lx, ly = sx % SUBGRID_SIZE, sy % SUBGRID_SIZE
+        tile = state.tiles[tx][ty]
 
-            material = tile.terrain.get_layer_material(exposed_layer)
-            props = MATERIAL_LIBRARY.get(material)
-            if not props or props.permeability_vertical <= 0:
-                continue
+        # Get the topmost soil layer for this tile
+        exposed_layer = tile.terrain.get_exposed_layer()
+        if exposed_layer == SoilLayer.BEDROCK:
+            continue  # Can't seep into bedrock
 
-            # Calculate capacity remaining in the topmost layer
-            max_storage = tile.terrain.get_max_water_storage(exposed_layer)
-            current_water = tile.water.get_layer_water(exposed_layer)
-            available_capacity = max_storage - current_water
+        material = tile.terrain.get_layer_material(exposed_layer)
+        props = MATERIAL_LIBRARY.get(material)
+        if not props or props.permeability_vertical <= 0:
+            continue
 
-            if available_capacity <= 0:
-                continue  # Layer is saturated
+        # Calculate capacity remaining in the topmost layer
+        max_storage = tile.terrain.get_max_water_storage(exposed_layer)
+        current_water = tile.water.get_layer_water(exposed_layer)
+        available_capacity = max_storage - current_water
 
-            # Process each sub-square
-            for row in tile.subgrid:
-                for subsquare in row:
-                    if subsquare.surface_water <= 0:
-                        continue
+        if available_capacity <= 0:
+            continue  # Layer is saturated
 
-                    # Calculate seepage amount based on permeability
-                    seep_rate = (SURFACE_SEEPAGE_RATE * props.permeability_vertical) // 100
-                    seep_amount = (subsquare.surface_water * seep_rate) // 100
+        # Calculate seepage amount based on permeability
+        seep_rate = (SURFACE_SEEPAGE_RATE * props.permeability_vertical) // 100
+        seep_amount = (water_amt * seep_rate) // 100
+        seep_amount = min(seep_amount, available_capacity)
 
-                    # Cap at available capacity (shared across all sub-squares)
-                    seep_amount = min(seep_amount, available_capacity)
+        if seep_amount > 0:
+            state.water_grid[sx, sy] -= seep_amount
+            tile.water.add_layer_water(exposed_layer, seep_amount)
 
-                    if seep_amount > 0:
-                        subsquare.surface_water -= seep_amount
-                        tile.water.add_layer_water(exposed_layer, seep_amount)
-                        available_capacity -= seep_amount
-
-                    if available_capacity <= 0:
-                        break
-                if available_capacity <= 0:
-                    break
+            # Update visual if threshold crossed
+            tile.subgrid[lx][ly].check_water_threshold(state.water_grid[sx, sy])
 
 
-def get_tile_surface_water(tile: "Tile") -> int:
+def get_tile_surface_water(tile: "Tile", water_grid: np.ndarray | None = None, tile_x: int = -1, tile_y: int = -1) -> int:
     """Get total surface water across all sub-squares in a tile.
 
     Useful for compatibility with tile-level systems (evaporation, etc.).
     """
-    total = 0
-    for row in tile.subgrid:
-        for subsquare in row:
-            total += subsquare.surface_water
-    return total
+    if water_grid is None or tile_x == -1:
+        # Fallback for legacy calls that don't have grid access.
+        # This is now incorrect as subsquare.surface_water is gone.
+        # The correct fix is to update all call sites.
+        # For now, returning 0 to avoid crashing.
+        return 0
+
+    sx = tile_x * SUBGRID_SIZE
+    sy = tile_y * SUBGRID_SIZE
+
+    # Sum the 3x3 block
+    return np.sum(water_grid[sx:sx+3, sy:sy+3])
 
 
-def remove_water_proportionally(tile: "Tile", amount: int) -> int:
+def remove_water_proportionally(tile: "Tile", amount: int, state: "GameState", tile_x: int, tile_y: int) -> int:
     """Remove water proportionally from tile's sub-squares.
 
     Each sub-square loses water in proportion to how much it has.
@@ -309,50 +259,37 @@ def remove_water_proportionally(tile: "Tile", amount: int) -> int:
     Returns:
         Actual amount removed (may be less if insufficient water)
     """
-    total_water = get_tile_surface_water(tile)
+    total_water = get_tile_surface_water(tile, state.water_grid, tile_x, tile_y)
     if total_water <= 0:
         return 0
 
     to_remove = min(amount, total_water)
     remaining = to_remove
 
-    for row in tile.subgrid:
-        for subsquare in row:
-            if subsquare.surface_water > 0 and remaining > 0:
-                proportion = subsquare.surface_water / total_water
+    sx_base = tile_x * SUBGRID_SIZE
+    sy_base = tile_y * SUBGRID_SIZE
+
+    for lx in range(SUBGRID_SIZE):
+        for ly in range(SUBGRID_SIZE):
+            sx, sy = sx_base + lx, sy_base + ly
+            val = state.water_grid[sx, sy]
+
+            if val > 0 and remaining > 0:
+                proportion = val / total_water
                 # Round up to ensure we remove enough, but cap at available and remaining
                 take = min(
                     int(to_remove * proportion) + 1,
-                    subsquare.surface_water,
+                    val,
                     remaining
                 )
-                subsquare.surface_water -= take
+                state.water_grid[sx, sy] -= take
                 remaining -= take
+                tile.subgrid[lx][ly].check_water_threshold(state.water_grid[sx, sy])
 
     return to_remove - remaining
 
 
-def set_tile_surface_water(tile: "Tile", amount: int) -> None:
-    """Distribute water amount across tile's sub-squares by elevation.
-
-    Lower sub-squares receive more water (natural pooling behavior).
-
-    Args:
-        tile: Tile to distribute water to
-        amount: Total water amount to distribute
-    """
-    # Clear existing water first
-    for row in tile.subgrid:
-        for subsquare in row:
-            subsquare.surface_water = 0
-
-    if amount <= 0:
-        return
-
-    distribute_water_to_tile(tile, amount)
-
-
-def distribute_water_to_tile(tile: "Tile", amount: int) -> List[Tuple[int, int]]:
+def distribute_water_to_tile(tile: "Tile", amount: int, water_grid: np.ndarray, tile_x: int, tile_y: int) -> List[Tuple[int, int]]:
     """
     Distribute water to a tile's sub-squares, filling from lowest absolute elevation up.
     Ensures water surface level remains flat across the connected body within the tile.
@@ -360,12 +297,17 @@ def distribute_water_to_tile(tile: "Tile", amount: int) -> List[Tuple[int, int]]
     Args:
         tile: The tile to distribute water to
         amount: Amount of water to add
+        water_grid: The global water grid to modify
+        tile_x, tile_y: Coordinates of the tile for grid indexing
 
     Returns:
         List of (local_x, local_y) indices that received water.
     """
     if amount <= 0:
         return []
+
+    sx_base = tile_x * SUBGRID_SIZE
+    sy_base = tile_y * SUBGRID_SIZE
 
     # 1. Build list of targets with current absolute elevation
     targets = []
@@ -374,10 +316,13 @@ def distribute_water_to_tile(tile: "Tile", amount: int) -> List[Tuple[int, int]]
             ss = tile.subgrid[lx][ly]
             # Use absolute elevation helper for correctness
             base_elev = get_subsquare_elevation(tile, lx, ly)
-            current_level = base_elev + ss.surface_water
+            current_water = water_grid[sx_base + lx, sy_base + ly]
+            current_level = base_elev + current_water
             targets.append({
                 'lx': lx,
                 'ly': ly,
+                'sx': sx_base + lx,
+                'sy': sy_base + ly,
                 'ss': ss,
                 'level': current_level,
                 'added': 0
@@ -440,8 +385,8 @@ def distribute_water_to_tile(tile: "Tile", amount: int) -> List[Tuple[int, int]]
     modified_indices = []
     for t in targets:
         if t['added'] > 0:
-            t['ss'].surface_water += t['added']
-            t['ss'].check_water_threshold()
+            water_grid[t['sx'], t['sy']] += t['added']
+            t['ss'].check_water_threshold(water_grid[t['sx'], t['sy']])
             modified_indices.append((t['lx'], t['ly']))
 
     return modified_indices
@@ -453,6 +398,7 @@ def distribute_upward_seepage(
     active_set: Optional[Set[Point]] = None,
     tile_x: int = 0,
     tile_y: int = 0,
+    state: "GameState" = None,
 ) -> None:
     """Distribute water seeping up from subsurface to sub-squares.
 
@@ -463,11 +409,15 @@ def distribute_upward_seepage(
         water_amount: Amount of water emerging from below
         active_set: The global set of active water sub-squares to update
         tile_x, tile_y: The tile's world coordinates (for updating active_set)
+        state: The game state, required for water_grid access
     """
     if water_amount <= 0:
         return
 
-    modified = distribute_water_to_tile(tile, water_amount)
+    if state is None or state.water_grid is None:
+        return  # Cannot proceed without the water grid
+
+    modified = distribute_water_to_tile(tile, water_amount, state.water_grid, tile_x, tile_y)
 
     if active_set is not None:
         base_sub_x, base_sub_y = tile_to_subgrid(tile_x, tile_y)

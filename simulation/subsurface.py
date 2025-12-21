@@ -294,7 +294,7 @@ def simulate_subsurface_tick(state: "GameState") -> None:
     # Process vertical seepage only on active tiles
     for x, y in list(state.active_water_tiles):
         tile = state.tiles[x][y]
-        surface_water = get_tile_surface_water(tile)
+        surface_water = get_tile_surface_water(tile, state.water_grid, x, y)
         capillary = simulate_vertical_seepage(tile.terrain, tile.water, surface_water)
         if capillary > 0:
             capillary_rises[(x, y)] = capillary
@@ -311,7 +311,7 @@ def simulate_subsurface_tick(state: "GameState") -> None:
     if not flow_candidate_coords:
          # Apply capillary rise even if there's no horizontal flow
         for (x, y), amount in capillary_rises.items():
-            distribute_upward_seepage(state.tiles[x][y], amount, state.active_water_subsquares, x, y)
+            distribute_upward_seepage(state.tiles[x][y], amount, state.active_water_subsquares, x, y, state)
         return
 
     tiles_data = {
@@ -337,10 +337,10 @@ def simulate_subsurface_tick(state: "GameState") -> None:
 
     for (x, y), amount in overflow_surf_deltas.items():
         if amount > 0:
-            distribute_upward_seepage(state.tiles[x][y], amount, state.active_water_subsquares, x, y)
+            distribute_upward_seepage(state.tiles[x][y], amount, state.active_water_subsquares, x, y, state)
 
     for (x, y), amount in capillary_rises.items():
-        distribute_upward_seepage(state.tiles[x][y], amount, state.active_water_subsquares, x, y)
+        distribute_upward_seepage(state.tiles[x][y], amount, state.active_water_subsquares, x, y, state)
 
 
 def apply_tile_evaporation(state: "GameState") -> None:
@@ -356,9 +356,9 @@ def apply_tile_evaporation(state: "GameState") -> None:
         tile_x, tile_y = sub_x // 3, sub_y // 3
         local_x, local_y = sub_x % 3, sub_y % 3
         tile = state.tiles[tile_x][tile_y]
-        subsquare = tile.subgrid[local_x][local_y]
+        water_amt = state.water_grid[sub_x, sub_y]
 
-        if subsquare.surface_water <= 0:
+        if water_amt <= 0:
             state.active_water_subsquares.discard((sub_x, sub_y))
             continue
 
@@ -375,13 +375,13 @@ def apply_tile_evaporation(state: "GameState") -> None:
             continue
 
         sub_evap = tile_evap
-        if subsquare.has_trench:
+        if state.trench_grid[sub_x, sub_y]:
             sub_evap = (sub_evap * TRENCH_EVAP_REDUCTION) // 100
 
-        evaporated = min(sub_evap, subsquare.surface_water)
+        evaporated = min(sub_evap, water_amt)
         if evaporated > 0:
-            subsquare.surface_water -= evaporated
+            state.water_grid[sub_x, sub_y] -= evaporated
             state.water_pool.evaporate(evaporated)
 
-        if subsquare.surface_water <= 0:
+        if state.water_grid[sub_x, sub_y] <= 0:
             state.active_water_subsquares.discard((sub_x, sub_y))

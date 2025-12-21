@@ -244,7 +244,8 @@ def render_to_virtual_screen(
     
     # Calculate available height for the soil profile (fill down to bottom margin)
     soil_height = ui_state.log_panel_rect.y - soil_y - 12  # Stop at log panel line, -12 margin
-    render_soil_profile(virtual_screen, font, profile_tile, profile_subsquare, (col2_x, soil_y), PROFILE_WIDTH, soil_height)
+    profile_water = state.water_grid[profile_sub_pos]
+    render_soil_profile(virtual_screen, font, profile_tile, profile_subsquare, (col2_x, soil_y), PROFILE_WIDTH, soil_height, profile_water)
 
     # 3. Render toolbar
     render_toolbar(virtual_screen, font, toolbar, ui_state.toolbar_rect.topleft,

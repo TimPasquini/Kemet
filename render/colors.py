@@ -88,7 +88,8 @@ def color_for_subsquare(
     subsquare: "SubSquare",
     subsquare_elevation: float,
     tile,
-    elevation_range: Tuple[float, float]
+    elevation_range: Tuple[float, float],
+    surface_water: int = 0,
 ) -> Color:
     """Calculate the display color for a sub-square from cached appearance.
 
@@ -102,7 +103,7 @@ def color_for_subsquare(
         elevation_range: (min, max) elevation for brightness scaling
     """
     # Get cached appearance (computes if needed)
-    appearance = subsquare.get_appearance(tile)
+    appearance = subsquare.get_appearance(tile, surface_water)
 
     # Start with computed base color
     base_color = appearance.display_color

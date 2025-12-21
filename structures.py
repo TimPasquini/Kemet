@@ -31,6 +31,7 @@ from simulation.surface import (
     distribute_upward_seepage,
     remove_water_proportionally,
 )
+from subgrid import subgrid_to_tile
 
 if TYPE_CHECKING:
     from main import GameState, Inventory
@@ -45,7 +46,7 @@ class Structure(ABC):
     hp: int = 3
 
     @abstractmethod
-    def tick(self, state: "GameState", tile: "Tile", subsquare: "SubSquare") -> None:
+    def tick(self, state: "GameState", tile: "Tile", subsquare: "SubSquare", tx: int, ty: int) -> None:
         """Update the structure for one simulation tick."""
         pass
 
@@ -64,9 +65,9 @@ class Condenser(Structure):
     """Generates water from the air."""
     kind: str = "condenser"
 
-    def tick(self, state: "GameState", tile: "Tile", subsquare: "SubSquare") -> None:
+    def tick(self, state: "GameState", tile: "Tile", subsquare: "SubSquare", tx: int, ty: int) -> None:
         # Add water to sub-squares (distributed by elevation)
-        distribute_upward_seepage(tile, CONDENSER_OUTPUT)
+        distribute_upward_seepage(tile, CONDENSER_OUTPUT, state.active_water_subsquares, tx, ty, state)
 
     def get_survey_string(self) -> str:
         return f"struct={self.kind}"
@@ -78,15 +79,15 @@ class Cistern(Structure):
     kind: str = "cistern"
     stored: int = 0  # Water storage in units
 
-    def tick(self, state: "GameState", tile: "Tile", subsquare: "SubSquare") -> None:
+    def tick(self, state: "GameState", tile: "Tile", subsquare: "SubSquare", tx: int, ty: int) -> None:
         # Get total surface water from sub-squares
-        surface_water = get_tile_surface_water(tile)
+        surface_water = get_tile_surface_water(tile, state.water_grid, tx, ty)
 
         # Transfer surface water into cistern storage
         if surface_water > CISTERN_TRANSFER_RATE and self.stored < CISTERN_CAPACITY:
             transfer = min(CISTERN_TRANSFER_RATE, surface_water, CISTERN_CAPACITY - self.stored)
             # Remove water proportionally from sub-squares
-            remove_water_proportionally(tile, transfer)
+            remove_water_proportionally(tile, transfer, state, tx, ty)
             self.stored += transfer
 
         # Cistern slowly leaks (scales with heat)
@@ -94,7 +95,7 @@ class Cistern(Structure):
         drained = min(self.stored, loss)
         self.stored -= drained
         recovered = (drained * CISTERN_LOSS_RECOVERY) // 100
-        distribute_upward_seepage(tile, recovered)
+        distribute_upward_seepage(tile, recovered, state.active_water_subsquares, tx, ty, state)
 
     def get_survey_string(self) -> str:
         return f"struct={self.kind} | stored={self.stored / 10:.1f}L"
@@ -109,11 +110,11 @@ class Planter(Structure):
     kind: str = "planter"
     growth: int = 0  # Growth progress 0-100
 
-    def tick(self, state: "GameState", tile: "Tile", subsquare: "SubSquare") -> None:
+    def tick(self, state: "GameState", tile: "Tile", subsquare: "SubSquare", tx: int, ty: int) -> None:
         from subgrid import ensure_terrain_override  # Local import
 
         # Total water includes sub-square surface water + subsurface
-        surface_water = get_tile_surface_water(tile)
+        surface_water = get_tile_surface_water(tile, state.water_grid, tx, ty)
         total_water = surface_water + tile.water.total_subsurface_water()
 
         if total_water >= PLANTER_WATER_REQUIREMENT:
@@ -127,7 +128,7 @@ class Planter(Structure):
             self.growth = 0
             state.inventory.biomass += 1
             state.inventory.seeds += 1
-            remove_water_proportionally(tile, PLANTER_WATER_COST)
+            remove_water_proportionally(tile, PLANTER_WATER_COST, state, tx, ty)
             terrain = ensure_terrain_override(subsquare, tile.terrain)
             if terrain.get_layer_depth(SoilLayer.ORGANICS) < MAX_ORGANICS_DEPTH:
                 terrain.add_material_to_layer(SoilLayer.ORGANICS, 1)
@@ -205,4 +206,4 @@ def tick_structures(state: "GameState", heat: int) -> None:
         local_x, local_y = get_subsquare_index(sub_pos[0], sub_pos[1])
         subsquare = tile.subgrid[local_x][local_y]
 
-        structure.tick(state, tile, subsquare)
+        structure.tick(state, tile, subsquare, tile_pos[0], tile_pos[1])

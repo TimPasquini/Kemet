@@ -307,8 +307,6 @@ class SurfaceTraits:
     - Surface structures (buildings, equipment)
     - Surface water features (puddles, ice)
     """
-    # For now, just track basic state
-    has_trench: bool = False
     has_structure: bool = False  # Will link to structure system
     
     # Future additions:

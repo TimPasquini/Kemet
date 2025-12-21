@@ -23,8 +23,7 @@ This creates emergent gameplay where understanding the systems lets you work wit
 ## Known Issues & Watchlist
 
 ### Performance
-- **[SOLVED] Stutter/Jerkiness**: Addressed via NumPy vectorization of surface flow.
-- **Bottleneck**: `sync_objects_to_arrays` is the current heavy lifter. This will be eliminated in the Unification phase.
+- **[PARTIALLY SOLVED] Performance**: The `sync_objects_to_arrays` bottleneck has been eliminated for the surface water simulation by migrating state to global NumPy arrays. Subsurface simulation still uses a hybrid model.
 
 ### Gameplay/Simulation
 - **Water Bias**: Historical issue where water favored bottom-right flow. Mitigated by probabilistic rounding in NumPy implementation, but requires monitoring.
@@ -32,9 +31,9 @@ This creates emergent gameplay where understanding the systems lets you work wit
 
 ### UI/UX
 - **[SOLVED] Navigation**: Minimap and Zoom implemented.
+- **[SOLVED] No clock**: Hard to know time of day.
 - **Feedback**: "Trench" status is a boolean flag, visually distinct but physically "magic" (reduces evap without geometry). *To be solved by Geometric Trenches.*
 - **Dead Space**: Map feels crowded; consider HUD overlay with floating windows
-- **No clock**: Hard to know time of day"
 ---
 
 ## Architecture Overview
@@ -45,10 +44,10 @@ The codebase is in transition from a pure Object-Oriented model to a Data-Orient
 
 1.  **Storage (Objects)**:
     *   `Tile` (60x45): Holds `TerrainColumn`, `WaterColumn`, `AtmosphereRegion`.
-    *   `SubSquare` (180x135): Holds `surface_water`, `elevation_offset`.
+    *   `SubSquare` (180x135): Holds `elevation_offset` and other transient state. `surface_water` and `has_trench` have been migrated to global NumPy arrays.
 2.  **Simulation (Arrays)**:
     *   Surface flow is calculated on 180x135 `int32` NumPy grids (`water_grid`, `elevation_grid`).
-    *   Data is synced `Objects -> Arrays -> Physics -> Objects` every tick.
+    *   `water_grid` and `trench_grid` are now the single source of truth for surface simulation, eliminating the object-array sync step for those properties.
 
 ### Target State: Unified Grid (Data-Oriented)
 *   **Single Truth**: All simulation state lives in global NumPy arrays (180x135 currently, potentially 1024x1024 or 2048x2048).
@@ -97,9 +96,8 @@ Each simulation tile contains 9 **sub-squares**:
 
 **Sub-square data:**
 - `elevation_offset: float` - Height relative to tile base (meters)
-- `surface_water: int` - Water pooled on this sub-square
 - `structure_id: Optional[int]` - Structure occupying this sub-square
-- `has_trench: bool` - Reduces evaporation
+- `trench_grid`: A global boolean grid indicates trench presence.
 - `terrain_override: Optional[TerrainColumn]` - Per-sub-square terrain modifications
 - `water_passage: float` - Daily accumulator for erosion calculations
 - `wind_exposure: float` - Daily accumulator for wind erosion
@@ -173,10 +171,9 @@ Player moves on 180x135 grid, interaction range highlights work, cursor targetin
 - *Paused to prioritize architectural unification*
 
 ### Completed Optimization
-- Already Refactored surface water simulation to use NumPy
+- Refactored surface water simulation to use NumPy.
 - Vectorized gradient and flow calculations
-- Added `water_grid` and `elevation_grid` to GameState
-- Implemented state buffering (Objects -> NumPy -> Objects)
+- Migrated `surface_water` and `has_trench` state to global NumPy arrays (`water_grid`, `trench_grid`), making them the single source of truth and eliminating the object-array sync bottleneck for surface simulation.
 
 
 ---
@@ -184,9 +181,10 @@ Player moves on 180x135 grid, interaction range highlights work, cursor targetin
 ## Roadmap: The Great Unification
 
 The immediate technical goal is to complete the transition to a fully vectorized system.
-
-### Phase 1: Unification (Next Step)
-**Goal**: Eliminate `Tile` and `SubSquare` as simulation units. Move all state to global arrays.
+### Phase 1: Unification (In Progress)
+**Goal**: Eliminate `Tile` and `SubSquare` as primary simulation units. Move all state to global arrays.
+- **[DONE]** `has_trench` migrated to `trench_grid`.
+- **[DONE]** `surface_water` migrated to `water_grid`, eliminating `sync_objects_to_arrays`.
 - **Unified Grid**: 180x135 (or larger) becomes the single source of truth.
 - **Unified Layers**: `TerrainColumn` becomes a dictionary of arrays (`bedrock_grid`, `sand_grid`, `organics_grid`).
 - **Unified Atmosphere**: Atmosphere becomes 180x135 arrays (`humidity_grid`, `wind_grid`), allowing micro-climates and occlusion.
@@ -240,8 +238,6 @@ def subgrid_to_tile(sub_x, sub_y):
 - `simulate_surface_seepage()` - Downward into topmost soil layer
 - `simulate_vertical_seepage()` - Between soil layers + capillary rise
 - `distribute_upward_seepage()` - Elevation-weighted distribution to sub-squares
-- `sync_objects_to_arrays()` - Buffer state to NumPy
-- `sync_arrays_to_objects()` - Write results back to objects
 
 ### Terrain Override Pattern
 ```python
@@ -268,11 +264,7 @@ background_surface = update_dirty_background(background_surface, state, font)
 Dynamic elements (water, player, structures) render on top each frame.
 
 ### NumPy Integration
-To optimize surface flow, we use a hybrid approach:
-1. **Sync to Arrays**: `sync_objects_to_arrays()` copies `surface_water` and `elevation` to NumPy grids.
-2. **Vectorized Simulation**: `simulate_surface_flow()` uses NumPy for fast gradient/flow calculation.
-3. **Sync to Objects**: `sync_arrays_to_objects()` writes updated water levels back to `SubSquare` objects.
-4. **Terrain Dirty Flag**: `terrain_changed` flag avoids rebuilding elevation grid every frame.
+The surface simulation is now fully data-oriented. The `water_grid` and `elevation_grid` are the sources of truth for the physics calculations. The expensive `sync_objects_to_arrays` and `sync_arrays_to_objects` functions have been removed, eliminating a major performance bottleneck. The `terrain_changed` flag is used to trigger rebuilds of the `elevation_grid` only when necessary.
 
 ---
 

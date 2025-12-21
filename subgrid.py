@@ -35,9 +35,7 @@ class SubSquare:
     when these factors change, or it will be recalculated at day end.
     """
     elevation_offset: float = 0.0
-    surface_water: int = 0
     structure_id: Optional[int] = None
-    has_trench: bool = False
     terrain_override: Optional["TerrainColumn"] = None
     # Erosion system fields (sediment for immediate feedback)
     sediment_load: int = 0                      # Carried sediment amount (depth units)
@@ -50,34 +48,35 @@ class SubSquare:
     # Track water level for threshold-based invalidation
     _last_water_state: int = field(default=0, repr=False)  # 0=dry, 1=wet, 2=flooded
 
-    def get_appearance(self, tile: "Tile") -> object:
+    def get_appearance(self, tile: "Tile", surface_water: int = 0) -> object:
         """Get cached appearance, computing if needed.
 
         Args:
             tile: Parent tile (for terrain data if no override)
+            surface_water: Current water level (passed in as it's now external)
 
         Returns:
             SurfaceAppearance instance
         """
         if self._cached_appearance is None:
             from surface_state import compute_surface_appearance
-            self._cached_appearance = compute_surface_appearance(self, tile)
+            self._cached_appearance = compute_surface_appearance(self, tile, surface_water)
         return self._cached_appearance
 
     def invalidate_appearance(self) -> None:
         """Mark appearance cache as stale. Will be recomputed on next access."""
         self._cached_appearance = None
 
-    def check_water_threshold(self) -> bool:
+    def check_water_threshold(self, current_water: int) -> bool:
         """Check if water crossed a visual threshold, invalidating if so.
 
         Returns:
             True if appearance was invalidated
         """
         # Determine current water state
-        if self.surface_water > 50:
+        if current_water > 50:
             new_state = 2  # flooded
-        elif self.surface_water > 5:
+        elif current_water > 5:
             new_state = 1  # wet
         else:
             new_state = 0  # dry

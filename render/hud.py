@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import numpy as np
 from typing import TYPE_CHECKING, Tuple
 
 import pygame
@@ -25,6 +26,7 @@ from render.config import (
     METER_SCALE,
 )
 from simulation.surface import get_tile_surface_water
+from subgrid import tile_to_subgrid
 
 if TYPE_CHECKING:
     from main import GameState
@@ -108,7 +110,7 @@ def render_hud(
         draw_text(screen, font, f"Soil Moisture: {moist:.1f}", (hud_x, y_offset), (100, 200, 255))
     y_offset += LINE_HEIGHT
     # Get surface water from sub-squares (not tile.water which is subsurface only)
-    surface_water = get_tile_surface_water(tile)
+    surface_water = get_tile_surface_water(tile, state.water_grid, x, y)
     total_water = surface_water + tile.water.total_subsurface_water()
     draw_text(screen, font, f"Water: {total_water / 10:.1f}L total", (hud_x, y_offset))
     y_offset += LINE_HEIGHT
@@ -119,12 +121,14 @@ def render_hud(
         draw_text(screen, font, f"  Ground: {tile.water.total_subsurface_water() / 10:.1f}L", (hud_x + 10, y_offset), COLOR_TEXT_GRAY)
         y_offset += LINE_HEIGHT
 
-    if tile.wellspring_output > 0:
-        draw_text(screen, font, f"Wellspring: {tile.wellspring_output / 10:.2f}L/tick", (hud_x, y_offset), COLOR_WELLSPRING_STRONG)
+    # Check if any subsquare in the player's tile has a trench
+    sx_base, sy_base = tile_to_subgrid(x, y)
+    if state.trench_grid is not None and np.any(state.trench_grid[sx_base:sx_base+3, sy_base:sy_base+3]):
+        draw_text(screen, font, "Trench: Yes", (hud_x, y_offset), COLOR_TRENCH)
         y_offset += LINE_HEIGHT
 
-    if tile.trench:
-        draw_text(screen, font, "Trench: Yes", (hud_x, y_offset), COLOR_TRENCH)
+    if tile.wellspring_output > 0:
+        draw_text(screen, font, f"Wellspring: {tile.wellspring_output / 10:.2f}L/tick", (hud_x, y_offset), COLOR_WELLSPRING_STRONG)
         y_offset += LINE_HEIGHT
 
     if structure:
@@ -172,6 +176,7 @@ def render_soil_profile(
     pos: Tuple[int, int],
     width: int,
     height: int,
+    surface_water: int = 0,
 ) -> None:
     """Render the soil profile visualization for a sub-square.
 
@@ -276,8 +281,8 @@ def render_soil_profile(
                 draw_text(screen, font, f"{layer.name.capitalize()[:3]}", (profile_x + 4, draw_top + 2), color=COLOR_TEXT_WHITE)
 
     # --- 3. Draw Surface Water ---
-    if subsquare.surface_water > 0:
-        water_depth_m = units_to_meters(subsquare.surface_water)
+    if surface_water > 0:
+        water_depth_m = units_to_meters(surface_water)
         water_top_y = elev_to_y(surface_m + water_depth_m)
         water_h = surface_y - water_top_y
         if water_h > 0:

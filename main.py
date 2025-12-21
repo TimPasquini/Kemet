@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Deque, Dict, List, Set, Tuple
 
 import numpy as np
+from config import SUBGRID_SIZE
 from config import (
     MAX_POUR_AMOUNT,
     MIN_LAYER_THICKNESS,
@@ -118,6 +119,7 @@ class GameState:
     water_grid: np.ndarray | None = None      # Shape: (width*3, height*3), dtype=int32
     elevation_grid: np.ndarray | None = None  # Shape: (width*3, height*3), dtype=int32
     moisture_grid: np.ndarray | None = None   # Shape: (width, height), dtype=float64 (EMA)
+    trench_grid: np.ndarray | None = None     # Shape: (width*3, height*3), dtype=uint8
     terrain_changed: bool = True              # Flag to trigger elevation grid rebuild
 
     # === Player convenience properties for backwards compatibility ===
@@ -239,8 +241,12 @@ class GameState:
 def build_initial_state(width: int = 10, height: int = 10) -> GameState:
     """Create a new game state with generated map."""
     from subgrid import tile_center_subsquare
+    
+    # Initialize water grid early for map generation
+    water_grid = np.zeros((width * SUBGRID_SIZE, height * SUBGRID_SIZE), dtype=np.int32)
+    elevation_grid = np.zeros((width * SUBGRID_SIZE, height * SUBGRID_SIZE), dtype=np.int32)
 
-    tiles = generate_map(width, height)
+    tiles = generate_map(width, height, water_grid)
     start_tile = (width // 2, height // 2)
 
     # Set up depot at player start location
@@ -266,29 +272,35 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
     # Initialize moisture grid
     moisture_grid = np.zeros((width, height), dtype=float)
 
+    # Initialize trench grid
+    trench_grid = np.zeros((width * SUBGRID_SIZE, height * SUBGRID_SIZE), dtype=np.uint8)
+
     return GameState(
         width=width,
         height=height,
         tiles=tiles,
         player_state=player_state,
+        water_grid=water_grid,
+        elevation_grid=elevation_grid,
         atmosphere=atmosphere,
         water_pool=water_pool,
         moisture_grid=moisture_grid,
+        trench_grid=trench_grid,
     )
 
 
 def dig_trench(state: GameState) -> None:
     tile, subsquare, _ = state.get_target_tile_and_subsquare()
-    if subsquare.has_trench:
+    sub_pos = state.get_action_target_subsquare()
+    if state.trench_grid[sub_pos]:
         state.messages.append("Already trenched.")
         return
-    sub_pos = state.get_action_target_subsquare()
-    subsquare.has_trench = True
+    state.trench_grid[sub_pos] = 1
     subsquare.invalidate_appearance()
     state.dirty_subsquares.add(sub_pos)
     state.terrain_changed = True
-    # Remove some surface water from this sub-square when digging
-    subsquare.surface_water = max(subsquare.surface_water - 10, 0)
+    # Remove some surface water from this sub-square's grid cell when digging
+    state.water_grid[sub_pos] = max(state.water_grid[sub_pos] - 10, 0)
     state.messages.append("Dug a trench; flow improves, evap drops here.")
 
 
@@ -363,15 +375,16 @@ def collect_water(state: GameState) -> None:
         return
 
     tile, subsquare, _ = state.get_target_tile_and_subsquare()
-    available = subsquare.surface_water
+    sx, sy = state.get_action_target_subsquare()
+    available = state.water_grid[sx, sy]
 
     if available <= 0:
         state.messages.append("No water to collect here.")
         return
 
     gathered = min(100, available)
-    subsquare.surface_water -= gathered
-    subsquare.check_water_threshold()
+    state.water_grid[sx, sy] -= gathered
+    subsquare.check_water_threshold(state.water_grid[sx, sy])
     state.active_water_subsquares.add(state.get_action_target_subsquare())
     state.inventory.water += gathered
     state.messages.append(f"Collected {gathered / 10:.1f}L water.")
@@ -387,8 +400,9 @@ def pour_water(state: GameState, amount: float) -> None:
         return
 
     tile, subsquare, _ = state.get_target_tile_and_subsquare()
-    subsquare.surface_water += amount_units
-    subsquare.check_water_threshold()
+    sx, sy = state.get_action_target_subsquare()
+    state.water_grid[sx, sy] += amount_units
+    subsquare.check_water_threshold(state.water_grid[sx, sy])
     
     # Add to active set for flow simulation
     state.active_water_subsquares.add(state.get_action_target_subsquare())
@@ -411,7 +425,7 @@ def simulate_tick(state: GameState) -> None:
     if tick % 2 == 1:
         # Seepage still iterates all tiles, but is less frequent.
         # Could be optimized further by tracking active surface water tiles.
-        simulate_surface_seepage(state.tiles, state.width, state.height)
+        simulate_surface_seepage(state)
         
         # Update moisture history using Vectorized/EMA approach
         # Calculate current total water (surface + subsurface)
@@ -421,7 +435,7 @@ def simulate_tick(state: GameState) -> None:
             for y in range(state.height):
                 tile = state.tiles[x][y]
                 # Surface water sum
-                surf = get_tile_surface_water(tile)
+                surf = get_tile_surface_water(tile, state.water_grid, x, y)
                 # Subsurface water sum
                 sub = tile.water.total_subsurface_water()
                 current_moisture[x, y] = surf + sub
@@ -484,18 +498,19 @@ def survey_tile(state: GameState) -> None:
     x, y = state.get_action_target_tile()
     sub_pos = state.get_action_target_subsquare()
     structure = state.structures.get(sub_pos)
+    surface_water = state.water_grid[sub_pos]
 
     elev_m = units_to_meters(get_subsquare_elevation(tile, sub_pos[0] % 3, sub_pos[1] % 3))
 
     desc = [f"Tile {x},{y}", f"Sub {sub_pos[0]%3},{sub_pos[1]%3}", f"elev={elev_m:.2f}m",
-            f"surf={subsquare.surface_water / 10:.1f}L"]
+            f"surf={surface_water / 10:.1f}L"]
     if tile.water.total_subsurface_water() > 0:
         desc.append(f"subsrf={tile.water.total_subsurface_water() / 10:.1f}L")
     desc.append(f"topsoil={units_to_meters(tile.terrain.topsoil_depth):.1f}m")
     desc.append(f"organics={units_to_meters(tile.terrain.organics_depth):.1f}m")
     if tile.wellspring_output > 0:
         desc.append(f"wellspring={tile.wellspring_output / 10:.2f}L/t")
-    if subsquare.has_trench:
+    if state.trench_grid[sub_pos]:
         desc.append("trench")
     if structure:
         desc.append(structure.get_survey_string())

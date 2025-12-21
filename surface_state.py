@@ -93,6 +93,7 @@ class SurfaceAppearance:
 def compute_surface_appearance(
     subsquare: "SubSquare",
     tile: "Tile",
+    surface_water: int = 0,
 ) -> SurfaceAppearance:
     """Compute the visual appearance of a sub-square from environmental factors.
 
@@ -119,20 +120,17 @@ def compute_surface_appearance(
     appearance_type = material_name
 
     # --- Populate features set ---
-    features = set()
-    if subsquare.has_trench:
-        features.add("trench")
-
+    features = set() # Trenches are now rendered from the global grid, not here.
     # Modify based on surface water
     water_tint = 0.0
-    if subsquare.surface_water > 0:
+    if surface_water > 0:
         # Light tint for small amounts, stronger for more water
-        if subsquare.surface_water > 50:
+        if surface_water > 50:
             water_tint = 0.4
             appearance_type = "flooded"
-        elif subsquare.surface_water > 20:
+        elif surface_water > 20:
             water_tint = 0.25
-        elif subsquare.surface_water > 5:
+        elif surface_water > 5:
             water_tint = 0.1
 
     # Future: modify based on organics layer depth
@@ -165,12 +163,13 @@ def compute_surface_appearance(
 def get_appearance_color(
     subsquare: "SubSquare",
     tile: "Tile",
+    surface_water: int = 0,
 ) -> Color:
     """Convenience function to get just the display color for a sub-square.
 
     Use this in rendering when you only need the color, not full appearance data.
     """
-    appearance = compute_surface_appearance(subsquare, tile)
+    appearance = compute_surface_appearance(subsquare, tile, surface_water)
     return appearance.display_color
 
 
@@ -201,7 +200,7 @@ def biome_to_appearance_type(biome: str) -> str:
 # Unified Water Access
 # =============================================================================
 
-def get_subsquare_total_water(subsquare: "SubSquare", tile: "Tile") -> int:
+def get_subsquare_total_water(subsquare: "SubSquare", tile: "Tile", surface_water: int) -> int:
     """Get total water associated with a sub-square.
 
     Combines surface water (per sub-square) with a proportional share of
@@ -215,32 +214,10 @@ def get_subsquare_total_water(subsquare: "SubSquare", tile: "Tile") -> int:
         Total water amount in units (surface + subsurface share)
     """
     # Surface water is stored per sub-square
-    surface = subsquare.surface_water
+    surface = surface_water
 
     # Subsurface water is shared across the tile (9 sub-squares)
     # Each sub-square gets 1/9 of the subsurface water
     subsurface = tile.water.total_subsurface_water() // 9
 
-    return surface + subsurface
-
-
-def get_subsquare_surface_water(subsquare: "SubSquare") -> int:
-    """Get surface water for a sub-square.
-
-    Simple accessor for consistency with unified water access pattern.
-    """
-    return subsquare.surface_water
-
-
-def get_tile_total_water(tile: "Tile") -> int:
-    """Get total water for a tile (all sub-squares + subsurface).
-
-    Args:
-        tile: The tile to query
-
-    Returns:
-        Total water in units (all surface + all subsurface)
-    """
-    surface = sum(ss.surface_water for row in tile.subgrid for ss in row)
-    subsurface = tile.water.total_subsurface_water()
     return surface + subsurface

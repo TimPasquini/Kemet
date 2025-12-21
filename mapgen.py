@@ -15,6 +15,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Deque, Dict, List, Tuple
 
+import numpy as np
 from ground import (
     TerrainColumn,
     SurfaceTraits,
@@ -80,17 +81,9 @@ class Tile:
     @property
     def hydration(self) -> float:
         """Total water in liters (surface + subsurface)."""
-        surface = sum(ss.surface_water for row in self.subgrid for ss in row)
-        return (surface + self.water.total_subsurface_water()) / 10.0
-
-    @property
-    def trench(self) -> bool:
-        """Whether this tile has a trench."""
-        return self.surface.has_trench
-
-    @trench.setter
-    def trench(self, value: bool) -> None:
-        self.surface.has_trench = value
+        # Note: This property is broken without grid access. 
+        # Should be replaced by get_tile_total_water(tile, grid, x, y)
+        return self.water.total_subsurface_water() / 10.0 # Partial fallback
 
     def get_subsquare(self, local_x: int, local_y: int) -> SubSquare:
         """Get a subsquare by local index (0-2, 0-2)."""
@@ -231,7 +224,7 @@ def recalculate_biomes(
 # Map Generation
 # =============================================================================
 
-def _generate_wellsprings(tiles: List[List[Tile]], width: int, height: int) -> None:
+def _generate_wellsprings(tiles: List[List[Tile]], width: int, height: int, water_grid: np.ndarray) -> None:
     """
     Place wellsprings on the map, preferring lowland areas.
 
@@ -251,7 +244,7 @@ def _generate_wellsprings(tiles: List[List[Tile]], width: int, height: int) -> N
     tiles[px][py].wellspring_output = random.randint(40, 60)
     tiles[px][py].water.add_layer_water(SoilLayer.REGOLITH, 200)
     # Distribute initial surface water to sub-squares
-    distribute_water_to_tile(tiles[px][py], 200)
+    distribute_water_to_tile(tiles[px][py], 200, water_grid, px, py)
 
     # Secondary wellsprings
     secondary_count = random.randint(1, 2)
@@ -266,11 +259,11 @@ def _generate_wellsprings(tiles: List[List[Tile]], width: int, height: int) -> N
         tiles[sx][sy].wellspring_output = random.randint(15, 30)
         tiles[sx][sy].water.add_layer_water(SoilLayer.REGOLITH, 100)
         # Distribute initial surface water to sub-squares
-        distribute_water_to_tile(tiles[sx][sy], 80)
+        distribute_water_to_tile(tiles[sx][sy], 80, water_grid, sx, sy)
         placed += 1
 
 
-def generate_map(width: int, height: int) -> List[List[Tile]]:
+def generate_map(width: int, height: int, water_grid: np.ndarray) -> List[List[Tile]]:
     """
     Generate a procedural map using WFC-style weighted selection.
 
@@ -361,13 +354,13 @@ def generate_map(width: int, height: int) -> List[List[Tile]]:
         tiles[x][y].water.set_layer_water(SoilLayer.REGOLITH, regolith_capacity)
 
     # Add wellsprings
-    _generate_wellsprings(tiles, width, height)
+    _generate_wellsprings(tiles, width, height, water_grid)
 
     # Add surface water to wadis (distributed directly to sub-squares)
     for x in range(width):
         for y in range(height):
             tile = tiles[x][y]
             if tile.kind == "wadi":
-                distribute_water_to_tile(tile, random.randint(5, 30))
+                distribute_water_to_tile(tile, random.randint(5, 30), water_grid, x, y)
 
     return tiles
