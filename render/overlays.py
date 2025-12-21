@@ -9,15 +9,10 @@ import pygame
 from render.primitives import draw_text
 from render.config import (
     LINE_HEIGHT,
-    PLAYER_RADIUS,
-    SUB_TILE_SIZE,
     COLOR_BG_PANEL,
     COLOR_TEXT_HIGHLIGHT,
     COLOR_TEXT_GRAY,
     COLOR_TEXT_DIM,
-    COLOR_PLAYER,
-    COLOR_PLAYER_ACTION_BG,
-    COLOR_PLAYER_ACTION_BAR,
 )
 
 if TYPE_CHECKING:
@@ -119,37 +114,6 @@ def render_event_log(
         draw_text(surface, font, hint, (log_x, log_y), color=COLOR_TEXT_DIM)
 
     return visible_count
-
-
-def render_player(
-    surface: pygame.Surface,
-    state: "GameState",
-    camera: "Camera",
-    player_world_pos: Tuple[float, float],
-    tile_size: int,
-) -> None:
-    """Render the player circle and action progress bar."""
-    # Transform player world position to viewport position
-    vp_x, vp_y = camera.world_to_viewport(player_world_pos[0], player_world_pos[1])
-    player_x, player_y = int(vp_x), int(vp_y)
-
-    # Draw player circle
-    pygame.draw.circle(
-        surface,
-        COLOR_PLAYER,
-        (player_x, player_y),
-        PLAYER_RADIUS,
-    )
-
-    # Draw action timer bar if busy
-    if state.is_busy():
-        bar_width = SUB_TILE_SIZE
-        bar_height = 4
-        bar_x = player_x - bar_width // 2
-        bar_y = player_y - SUB_TILE_SIZE // 2 - bar_height - 2
-        progress = state.get_action_progress()
-        pygame.draw.rect(surface, COLOR_PLAYER_ACTION_BG, (bar_x, bar_y, bar_width, bar_height))
-        pygame.draw.rect(surface, COLOR_PLAYER_ACTION_BAR, (bar_x, bar_y, int(bar_width * progress), bar_height))
 
 
 def render_night_overlay(

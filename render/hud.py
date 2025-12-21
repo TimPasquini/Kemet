@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Tuple
 
 import pygame
 
+from config import DAY_LENGTH
 from ground import SoilLayer, MATERIAL_LIBRARY, units_to_meters
 from render.primitives import draw_text, draw_section_header
 from render.config import (
@@ -29,6 +30,26 @@ if TYPE_CHECKING:
     from main import GameState
 
 
+def get_time_string(state: "GameState") -> str:
+    """Formats the current game time into a string."""
+    if state.is_night:
+        return f"Day {state.day} (Night)"
+
+    if DAY_LENGTH <= 0:
+        return f"Day {state.day}"
+
+    day_progress = state.turn_in_day / DAY_LENGTH
+    # Map 0.0-1.0 progress to 12 hours of daylight (e.g., 6:00 to 18:00)
+    total_daylight_minutes = 12 * 60
+    current_minute_of_daylight = int(day_progress * total_daylight_minutes)
+
+    start_hour = 6
+    hour = start_hour + (current_minute_of_daylight // 60)
+    minute = current_minute_of_daylight % 60
+
+    return f"Day {state.day}, {hour:02d}:{minute:02d}"
+
+
 def render_hud(
     screen,
     font,
@@ -41,9 +62,8 @@ def render_hud(
 
     # Environment section
     y_offset = draw_section_header(screen, font, "ENVIRONMENT", (hud_x, y_offset), width=130) + 4
-    draw_text(screen, font, f"Day: {state.day}", (hud_x, y_offset))
-    y_offset += LINE_HEIGHT
-    draw_text(screen, font, f"Time: {'Night' if state.is_night else 'Day'}", (hud_x, y_offset))
+    time_str = get_time_string(state)
+    draw_text(screen, font, time_str, (hud_x, y_offset))
     y_offset += LINE_HEIGHT
     draw_text(screen, font, f"Heat: {state.heat}%", (hud_x, y_offset))
     y_offset += LINE_HEIGHT

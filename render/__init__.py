@@ -16,7 +16,8 @@ from render.primitives import draw_text, draw_section_header
 from render.map import render_map_viewport, render_static_background, redraw_background_rect, render_interaction_highlights
 from render.hud import render_hud, render_inventory, render_soil_profile
 from render.toolbar import render_toolbar
-from render.overlays import render_help_overlay, render_event_log, render_player, render_night_overlay
+from render.overlays import render_help_overlay, render_event_log, render_night_overlay
+from render.player_renderer import render_player
 
 __all__ = [
     # Colors

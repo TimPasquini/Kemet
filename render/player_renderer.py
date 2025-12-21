@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Tuple
 import pygame
 
 from config import SUBGRID_SIZE
+from render.config import COLOR_PLAYER, COLOR_PLAYER_ACTION_BG, COLOR_PLAYER_ACTION_BAR
 
 if TYPE_CHECKING:
     from main import GameState
@@ -29,5 +30,18 @@ def render_player(
     # We clamp it to a minimum of 2 pixels so it doesn't disappear at high zoom out
     radius = max(2, int(scaled_sub_tile_size / 2))
     
-    pygame.draw.circle(surface, (255, 255, 0), (int(vx), int(vy)), radius)
+    pygame.draw.circle(surface, COLOR_PLAYER, (int(vx), int(vy)), radius)
     pygame.draw.circle(surface, (0, 0, 0), (int(vx), int(vy)), radius, 1)
+
+    # Draw action timer bar if busy
+    if state.is_busy():
+        bar_width = max(10, int(scaled_sub_tile_size))
+        bar_height = max(2, int(scaled_sub_tile_size / 6))
+        
+        bar_x = int(vx - bar_width / 2)
+        bar_y = int(vy - radius - bar_height - 4)
+        
+        progress = state.get_action_progress()
+        
+        pygame.draw.rect(surface, COLOR_PLAYER_ACTION_BG, (bar_x, bar_y, bar_width, bar_height))
+        pygame.draw.rect(surface, COLOR_PLAYER_ACTION_BAR, (bar_x, bar_y, int(bar_width * progress), bar_height))
