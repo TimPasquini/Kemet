@@ -122,6 +122,14 @@ class GameState:
     trench_grid: np.ndarray | None = None     # Shape: (width*3, height*3), dtype=uint8
     terrain_changed: bool = True              # Flag to trigger elevation grid rebuild
 
+    # === Unified Terrain State (The Source of Truth) ===
+    # Shape: (6, width*3, height*3), dtype=int32. Index using SoilLayer enum.
+    terrain_layers: np.ndarray | None = None
+    # Shape: (width*3, height*3), dtype=int32. Base elevation of bedrock.
+    bedrock_base: np.ndarray | None = None
+    # Shape: (width*3, height*3), dtype=int32. Micro-terrain offset in depth units.
+    elevation_offset_grid: np.ndarray | None = None
+
     # === Player convenience properties for backwards compatibility ===
     @property
     def player(self) -> Point:
@@ -166,6 +174,20 @@ class GameState:
         tile = self.tiles[tile_pos[0]][tile_pos[1]]
         subsquare = tile.subgrid[local_x][local_y]
         return tile, subsquare, (local_x, local_y)
+
+    def is_subsquare_blocked(self, sub_x: int, sub_y: int) -> bool:
+        """Check if a subsquare is blocked for movement."""
+        # Bounds check
+        if not (0 <= sub_x < self.width * 3 and 0 <= sub_y < self.height * 3):
+            return True
+
+        # Check for structure (O(1) lookup)
+        if (sub_x, sub_y) in self.structures:
+            return True
+
+        # Future: Check for impassable terrain types in your new unified grid
+        
+        return False
 
     # === Weather convenience properties ===
     @property
@@ -244,6 +266,12 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
     
     # Initialize water grid early for map generation
     water_grid = np.zeros((width * SUBGRID_SIZE, height * SUBGRID_SIZE), dtype=np.int32)
+    
+    # Initialize unified terrain arrays
+    terrain_layers = np.zeros((len(SoilLayer), width * SUBGRID_SIZE, height * SUBGRID_SIZE), dtype=np.int32)
+    bedrock_base = np.zeros((width * SUBGRID_SIZE, height * SUBGRID_SIZE), dtype=np.int32)
+    elevation_offset_grid = np.zeros((width * SUBGRID_SIZE, height * SUBGRID_SIZE), dtype=np.int32)
+    
     elevation_grid = np.zeros((width * SUBGRID_SIZE, height * SUBGRID_SIZE), dtype=np.int32)
 
     tiles = generate_map(width, height, water_grid)
@@ -256,6 +284,27 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
     depot_tile.terrain = create_default_terrain(elevation_to_units(-2.0), elevation_to_units(1.0))
     depot_tile.wellspring_output = 0
     depot_tile.depot = True
+
+    # Populate unified terrain arrays from the generated object graph
+    for x in range(width):
+        for y in range(height):
+            tile = tiles[x][y]
+            for sx in range(SUBGRID_SIZE):
+                for sy in range(SUBGRID_SIZE):
+                    # Calculate global sub-grid coordinates
+                    gx, gy = x * SUBGRID_SIZE + sx, y * SUBGRID_SIZE + sy
+                    
+                    subsquare = tile.subgrid[sx][sy]
+                    # Use override if present, else tile terrain
+                    terrain = get_subsquare_terrain(subsquare, tile.terrain)
+                    
+                    # Fill bedrock base
+                    bedrock_base[gx, gy] = terrain.bedrock_base
+                    # Fill elevation offset (convert meters to units)
+                    elevation_offset_grid[gx, gy] = elevation_to_units(subsquare.elevation_offset)
+                    # Fill layers
+                    for layer in SoilLayer:
+                        terrain_layers[layer, gx, gy] = terrain.get_layer_depth(layer)
 
     # Initialize player at center of starting tile (in sub-grid coords)
     start_subsquare = tile_center_subsquare(start_tile[0], start_tile[1])
@@ -286,6 +335,9 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
         water_pool=water_pool,
         moisture_grid=moisture_grid,
         trench_grid=trench_grid,
+        terrain_layers=terrain_layers,
+        bedrock_base=bedrock_base,
+        elevation_offset_grid=elevation_offset_grid,
     )
 
 
@@ -304,33 +356,29 @@ def dig_trench(state: GameState) -> None:
     state.messages.append("Dug a trench; flow improves, evap drops here.")
 
 
-def terrain_action(state: GameState, action: str) -> None:
+def terrain_action(state: GameState, action: str, args: List[str]) -> None:
     """Dispatch terrain tool actions (shovel submenu)."""
     if action == "trench":
         dig_trench(state)
     elif action == "lower":
-        lower_ground(state)
+        # args[0] should be the limit layer name (e.g. "topsoil")
+        limit = args[0] if args else "bedrock"
+        lower_ground(state, limit)
     elif action == "raise":
-        raise_ground(state)
+        # args[0] should be the target layer name (e.g. "topsoil")
+        target = args[0] if args else "topsoil"
+        raise_ground(state, target)
     else:
         state.messages.append(f"Unknown terrain action: {action}")
 
 
-def lower_ground(state: GameState) -> None:
+def lower_ground(state: GameState, min_layer_name: str = "bedrock") -> None:
     tile, subsquare, _ = state.get_target_tile_and_subsquare()
     # Get or create terrain override for this sub-square
     terrain = ensure_terrain_override(subsquare, tile.terrain)
     # Find the exposed layer and remove from it
     exposed = terrain.get_exposed_layer()
-    if exposed == SoilLayer.BEDROCK:
-        state.messages.append("Can't dig further - hit bedrock!")
-        return
-    if exposed == SoilLayer.REGOLITH:
-        state.messages.append("Can't dig further - regolith too hard!")
-        return
-    if terrain.get_layer_depth(exposed) <= MIN_LAYER_THICKNESS:
-        state.messages.append("Layer too thin to dig more.")
-        return
+
     sub_pos = state.get_action_target_subsquare()
     subsquare.invalidate_appearance()
     state.dirty_subsquares.add(sub_pos)
@@ -342,25 +390,32 @@ def lower_ground(state: GameState) -> None:
     state.messages.append(f"Removed {units_to_meters(removed):.2f}m {material_name}. Elev: {new_elev:.2f}m")
 
 
-def raise_ground(state: GameState) -> None:
-    if state.inventory.scrap < 1:
-        state.messages.append("Need 1 scrap to raise ground.")
-        return
+def raise_ground(state: GameState, target_layer_name: str = "topsoil") -> None:
     tile, subsquare, _ = state.get_target_tile_and_subsquare()
     sub_pos = state.get_action_target_subsquare()
     # Get or create terrain override for this sub-square
     terrain = ensure_terrain_override(subsquare, tile.terrain)
-    state.inventory.scrap -= 1
+
+    cost = 0
+    if state.inventory.scrap > 0:
+        state.inventory.scrap -= 1
+        cost = 1
+
     subsquare.invalidate_appearance()
     state.dirty_subsquares.add(sub_pos)
     state.invalidate_elevation_range()  # Terrain changed
     state.terrain_changed = True
-    # Add to exposed layer (which becomes the new surface)
-    exposed = terrain.get_exposed_layer()
-    terrain.add_material_to_layer(exposed, 2)
-    material_name = terrain.get_layer_material(exposed)
+    
+    # Resolve target string to enum
+    try:
+        target_layer = SoilLayer[target_layer_name.upper()]
+    except KeyError:
+        target_layer = SoilLayer.TOPSOIL
+
+    terrain.add_material_to_layer(target_layer, 2)
+    material_name = terrain.get_layer_material(target_layer)
     new_elev = units_to_meters(terrain.get_surface_elevation()) + subsquare.elevation_offset
-    state.messages.append(f"Added {material_name} (cost 1 scrap). Elev: {new_elev:.2f}m")
+    state.messages.append(f"Added {material_name} (cost {cost} scrap). Elev: {new_elev:.2f}m")
 
 
 def collect_water(state: GameState) -> None:
@@ -520,7 +575,7 @@ def survey_tile(state: GameState) -> None:
 def handle_command(state: GameState, cmd: str, args: List[str]) -> bool:
     """Process a player command. Returns True if the game should quit."""
     command_map = {
-        "terrain": lambda s, a: terrain_action(s, a[0] if a else ""),
+        "terrain": lambda s, a: terrain_action(s, a[0] if a else "", a[1:]),
         "build": lambda s, a: build_structure(s, a[0]) if a else s.messages.append("Usage: build <type>"),
         "collect": lambda s, a: collect_water(s),
         "pour": lambda s, a: pour_water(s, float(a[0])) if a else s.messages.append("Usage: pour <liters>"),

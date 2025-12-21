@@ -33,6 +33,7 @@ class ToolOption:
     description: str
     cost: Dict[str, int] = field(default_factory=dict)  # Resource costs
     icon: str = "?"
+    action_args: List[str] = field(default_factory=list) # Extra args for the action
 
 
 @dataclass
@@ -80,7 +81,7 @@ class Tool:
         if self.options:
             opt = self.get_current_option()
             if opt:
-                return self.action, [opt.id]
+                return self.action, [opt.id] + opt.action_args
         return self.action, self.action_args
 
 
@@ -95,11 +96,25 @@ TOOL_SHOVEL = Tool(
     category=ToolCategory.TERRAIN,
     icon="⌁",
     options=[
-        ToolOption("trench", "Dig Trench", "Reduces evaporation, improves flow"),
-        ToolOption("lower", "Lower Ground", "Remove topsoil to lower elevation"),
-        ToolOption("raise", "Raise Ground", "Add topsoil (1 scrap)", cost={"scrap": 1}),
+        ToolOption("trench", "Dig Trench", "Reduces evaporation, improves flow", action_args=["topsoil"]),
+        ToolOption("lower", "Lower Ground", "Remove topsoil/organics", action_args=["topsoil"]),
+        ToolOption("raise", "Raise Ground", "Add topsoil (1 scrap)", cost={"scrap": 1}, action_args=["topsoil"]),
     ],
     action="terrain",  # Will dispatch based on selected option
+)
+
+TOOL_PICKAXE = Tool(
+    id="pickaxe",
+    name="Pickaxe",
+    description="Break hard rock and compact soil",
+    category=ToolCategory.TERRAIN,
+    icon="⛏",
+    options=[
+        ToolOption("trench", "Dig Trench", "Dig trench in hard ground", action_args=["regolith"]),
+        ToolOption("lower", "Break Ground", "Dig regolith/subsoil", action_args=["regolith"]),
+        ToolOption("raise", "Pile Gravel", "Add gravel/regolith (1 scrap)", cost={"scrap": 1}, action_args=["regolith"]),
+    ],
+    action="terrain",
 )
 
 TOOL_BUCKET = Tool(
@@ -139,6 +154,7 @@ TOOL_SURVEY = Tool(
 # Default toolbar configuration
 DEFAULT_TOOLS: List[Tool] = [
     TOOL_SHOVEL,
+    TOOL_PICKAXE,
     TOOL_BUCKET,
     TOOL_BUILD,
     TOOL_SURVEY,

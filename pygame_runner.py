@@ -181,7 +181,7 @@ def render_to_virtual_screen(
     show_help: bool,
     background_surface: pygame.Surface = None,
     map_surface: pygame.Surface = None,
-) -> None:
+) -> pygame.Surface:
     """Render everything to the virtual screen at fixed resolution."""
     virtual_screen.fill(COLOR_BG_DARK)
 
@@ -192,7 +192,7 @@ def render_to_virtual_screen(
     scaled_sub_tile_size = int(scaled_tile_size / SUBGRID_SIZE)
     
     # Ensure map surface is large enough for the viewport
-    if map_surface.get_width() != camera.viewport_width or map_surface.get_height() != camera.viewport_height:
+    if map_surface is None or map_surface.get_width() != camera.viewport_width or map_surface.get_height() != camera.viewport_height:
         # This shouldn't happen often if camera viewport is fixed to layout
         map_surface = pygame.Surface((camera.viewport_width, camera.viewport_height))
 
@@ -211,9 +211,8 @@ def render_to_virtual_screen(
     render_player(map_surface, state, camera, player_world_pos, scaled_tile_size)
     render_night_overlay(map_surface, state.heat)
 
-    # Scale map surface to fit the ui_state's map rect
-    scaled_map = pygame.transform.scale(map_surface, ui_state.map_rect.size)
-    virtual_screen.blit(scaled_map, ui_state.map_rect.topleft)
+    # Blit map surface directly (sizes match)
+    virtual_screen.blit(map_surface, ui_state.map_rect.topleft)
 
     # 2. Render sidebar elements
     # Two-column layout:
@@ -266,6 +265,8 @@ def render_to_virtual_screen(
     else:
         render_event_log(virtual_screen, font, state,
                          (log_x, log_y), LOG_PANEL_HEIGHT, ui_state.log_scroll_offset)
+
+    return map_surface
 
 
 def blit_virtual_to_screen(virtual_screen: pygame.Surface, screen: pygame.Surface) -> None:
@@ -518,27 +519,9 @@ def run(tile_size: int = TILE_SIZE) -> None:
             if keys[pygame.K_d]:
                 vx += move_speed_subsquares
 
-            def is_blocked(sub_x: int, sub_y: int) -> bool:
-                """Check if a subsquare is blocked for movement."""
-                from subgrid import subgrid_to_tile, get_subsquare_index
-
-                tile_x, tile_y = subgrid_to_tile(sub_x, sub_y)
-                tile = state.tiles[tile_x][tile_y]
-
-                # REMOVED: Block on rock tiles
-                # Rock tiles are now passable terrain
-                
-                # Check if this specific subsquare has a structure
-                local_x, local_y = get_subsquare_index(sub_x, sub_y)
-                subsquare = tile.subgrid[local_x][local_y]
-                if subsquare.structure_id is not None:
-                    return True
-
-                return False
-
             update_player_movement(
                 state.player_state, (vx, vy), dt,
-                world_sub_width, world_sub_height, is_blocked
+                world_sub_width, world_sub_height, state.is_subsquare_blocked
             )
 
         # Camera follows player (get pixel position from player state)
@@ -574,7 +557,7 @@ def run(tile_size: int = TILE_SIZE) -> None:
             visible_messages = (ui_state.log_panel_rect.height - 40) // 18
 
         # Render to virtual screen
-        render_to_virtual_screen(
+        map_surface = render_to_virtual_screen(
             virtual_screen, font, state, camera, tile_size, state.get_elevation_range(),
             (player_px, player_py),
             toolbar, ui_state, show_help, background_surface, map_surface

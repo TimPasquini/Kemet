@@ -183,8 +183,10 @@ class TerrainColumn:
     def set_layer_depth(self, layer: SoilLayer, depth: int) -> None:
         """Set the depth for a specific layer."""
         depth = max(0, depth)  # Can't have negative depth
-        
-        if layer == SoilLayer.REGOLITH:
+
+        if layer == SoilLayer.BEDROCK:
+            self.bedrock_depth = depth
+        elif layer == SoilLayer.REGOLITH:
             self.regolith_depth = depth
         elif layer == SoilLayer.SUBSOIL:
             self.subsoil_depth = depth
@@ -194,7 +196,6 @@ class TerrainColumn:
             self.topsoil_depth = depth
         elif layer == SoilLayer.ORGANICS:
             self.organics_depth = depth
-        # Bedrock depth is immutable
     
     def get_layer_elevation_range(self, layer: SoilLayer) -> Tuple[int, int]:
         """
@@ -244,9 +245,6 @@ class TerrainColumn:
     
     def add_material_to_layer(self, layer: SoilLayer, amount: int) -> None:
         """Add material to a layer (increases depth)."""
-        if layer == SoilLayer.BEDROCK:
-            return  # Can't modify bedrock
-        
         current = self.get_layer_depth(layer)
         self.set_layer_depth(layer, current + amount)
     
@@ -256,9 +254,6 @@ class TerrainColumn:
         
         Returns the actual amount removed (could be less if layer is thinner).
         """
-        if layer == SoilLayer.BEDROCK:
-            return 0  # Can't modify bedrock
-        
         current = self.get_layer_depth(layer)
         actual_removed = min(amount, current)
         self.set_layer_depth(layer, current - actual_removed)
