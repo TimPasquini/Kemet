@@ -48,6 +48,8 @@ The codebase is in transition from a pure Object-Oriented model to a Data-Orient
 2.  **Simulation (Arrays)**:
     *   Surface flow is calculated on 180x135 `int32` NumPy grids (`water_grid`, `elevation_grid`).
     *   `water_grid` and `trench_grid` are now the single source of truth for surface simulation, eliminating the object-array sync step for those properties.
+    *   **[NEW]** Unified terrain arrays (`terrain_layers`, `bedrock_base`, `elevation_offset_grid`) and `subsurface_water_grid` are initialized and populated, serving as a shadow state ready for the physics rewrite.
+    *   **[NEW]** Terrain modification tools now write to both the object graph and the unified arrays to maintain synchronization.
 
 ### Target State: Unified Grid (Data-Oriented)
 *   **Single Truth**: All simulation state lives in global NumPy arrays (180x135 currently, potentially 1024x1024 or 2048x2048).
@@ -185,6 +187,9 @@ The immediate technical goal is to complete the transition to a fully vectorized
 **Goal**: Eliminate `Tile` and `SubSquare` as primary simulation units. Move all state to global arrays.
 - **[DONE]** `has_trench` migrated to `trench_grid`.
 - **[DONE]** `surface_water` migrated to `water_grid`, eliminating `sync_objects_to_arrays`.
+- **[DONE]** Unified terrain arrays (`terrain_layers`, `bedrock_base`, `elevation_offset_grid`) initialized and populated.
+- **[DONE]** Unified `subsurface_water_grid` initialized and populated.
+- **[DONE]** Terrain modification tools sync to unified arrays.
 - **Unified Grid**: 180x135 (or larger) becomes the single source of truth.
 - **Unified Layers**: `TerrainColumn` becomes a dictionary of arrays (`bedrock_grid`, `sand_grid`, `organics_grid`).
 - **Unified Atmosphere**: Atmosphere becomes 180x135 arrays (`humidity_grid`, `wind_grid`), allowing micro-climates and occlusion.

@@ -125,6 +125,8 @@ class GameState:
     # === Unified Terrain State (The Source of Truth) ===
     # Shape: (6, width*3, height*3), dtype=int32. Index using SoilLayer enum.
     terrain_layers: np.ndarray | None = None
+    # Shape: (6, width*3, height*3), dtype=int32. Subsurface water.
+    subsurface_water_grid: np.ndarray | None = None
     # Shape: (width*3, height*3), dtype=int32. Base elevation of bedrock.
     bedrock_base: np.ndarray | None = None
     # Shape: (width*3, height*3), dtype=int32. Micro-terrain offset in depth units.
@@ -269,6 +271,7 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
     
     # Initialize unified terrain arrays
     terrain_layers = np.zeros((len(SoilLayer), width * SUBGRID_SIZE, height * SUBGRID_SIZE), dtype=np.int32)
+    subsurface_water_grid = np.zeros((len(SoilLayer), width * SUBGRID_SIZE, height * SUBGRID_SIZE), dtype=np.int32)
     bedrock_base = np.zeros((width * SUBGRID_SIZE, height * SUBGRID_SIZE), dtype=np.int32)
     elevation_offset_grid = np.zeros((width * SUBGRID_SIZE, height * SUBGRID_SIZE), dtype=np.int32)
     
@@ -289,6 +292,16 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
     for x in range(width):
         for y in range(height):
             tile = tiles[x][y]
+            
+            # Pre-calculate water distribution for this tile to ensure conservation of mass
+            # (Distribute tile's total water among its 9 sub-squares)
+            water_dist = {}
+            for layer in SoilLayer:
+                total = tile.water.get_layer_water(layer)
+                base = total // (SUBGRID_SIZE * SUBGRID_SIZE)
+                rem = total % (SUBGRID_SIZE * SUBGRID_SIZE)
+                water_dist[layer] = (base, rem)
+
             for sx in range(SUBGRID_SIZE):
                 for sy in range(SUBGRID_SIZE):
                     # Calculate global sub-grid coordinates
@@ -305,6 +318,14 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
                     # Fill layers
                     for layer in SoilLayer:
                         terrain_layers[layer, gx, gy] = terrain.get_layer_depth(layer)
+                        
+                        # Fill water
+                        base, rem = water_dist[layer]
+                        amount = base
+                        if rem > 0: # Distribute remainder to first few sub-squares
+                            amount += 1
+                            water_dist[layer] = (base, rem - 1)
+                        subsurface_water_grid[layer, gx, gy] = amount
 
     # Initialize player at center of starting tile (in sub-grid coords)
     start_subsquare = tile_center_subsquare(start_tile[0], start_tile[1])
@@ -336,6 +357,7 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
         moisture_grid=moisture_grid,
         trench_grid=trench_grid,
         terrain_layers=terrain_layers,
+        subsurface_water_grid=subsurface_water_grid,
         bedrock_base=bedrock_base,
         elevation_offset_grid=elevation_offset_grid,
     )
@@ -386,6 +408,11 @@ def lower_ground(state: GameState, min_layer_name: str = "bedrock") -> None:
     state.terrain_changed = True
     removed = terrain.remove_material_from_layer(exposed, 2)
     material_name = terrain.get_layer_material(exposed)
+
+    # Sync changes to unified terrain arrays
+    sx, sy = sub_pos
+    state.terrain_layers[exposed, sx, sy] = terrain.get_layer_depth(exposed)
+
     new_elev = units_to_meters(terrain.get_surface_elevation()) + subsquare.elevation_offset
     state.messages.append(f"Removed {units_to_meters(removed):.2f}m {material_name}. Elev: {new_elev:.2f}m")
 
@@ -414,6 +441,11 @@ def raise_ground(state: GameState, target_layer_name: str = "topsoil") -> None:
 
     terrain.add_material_to_layer(target_layer, 2)
     material_name = terrain.get_layer_material(target_layer)
+
+    # Sync changes to unified terrain arrays
+    sx, sy = sub_pos
+    state.terrain_layers[target_layer, sx, sy] = terrain.get_layer_depth(target_layer)
+
     new_elev = units_to_meters(terrain.get_surface_elevation()) + subsquare.elevation_offset
     state.messages.append(f"Added {material_name} (cost {cost} scrap). Elev: {new_elev:.2f}m")
 
