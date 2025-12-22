@@ -95,12 +95,20 @@ def render_hud(
     # Check for structure at player's sub-square position
     player_sub = state.player_subsquare
     structure = state.structures.get(player_sub)
+    sx, sy = player_sub
 
     y_offset = draw_section_header(screen, font, "CURRENT TILE", (hud_x, y_offset), width=130) + 4
     draw_text(screen, font, f"Position: ({x}, {y})", (hud_x, y_offset))
     y_offset += LINE_HEIGHT
     draw_text(screen, font, f"Type: {tile.kind.capitalize()}", (hud_x, y_offset))
     y_offset += LINE_HEIGHT
+
+    # Get exposed material from grid
+    from render.grid_helpers import get_exposed_material
+    material = get_exposed_material(state, sx, sy)
+    draw_text(screen, font, f"Material: {material.capitalize()}", (hud_x, y_offset))
+    y_offset += LINE_HEIGHT
+
     draw_text(screen, font, f"Elevation: {tile.elevation:.2f}m", (hud_x, y_offset))
     y_offset += LINE_HEIGHT
 
@@ -171,32 +179,33 @@ def render_inventory(
 def render_soil_profile(
     screen,
     font,
-    tile,
-    subsquare,
+    state: "GameState",
+    sx: int,
+    sy: int,
     pos: Tuple[int, int],
     width: int,
     height: int,
     surface_water: int = 0,
 ) -> None:
-    """Render the soil profile visualization for a sub-square.
+    """Render the soil profile visualization for a grid cell (array-based).
 
-    Shows terrain from the sub-square's override if present, otherwise from tile.
-    Also shows sub-square-specific data like surface water and elevation offset.
+    Shows terrain layers, water, and elevation from grids.
     Includes an elevation gauge on the left showing depth relative to sea level.
-    """
-    from subgrid import get_subsquare_terrain
-    x, y = pos
-    # Use sub-square terrain if it has an override, otherwise tile terrain
-    terrain = get_subsquare_terrain(subsquare, tile.terrain)
-    water = tile.water
-    
-    # Offset in meters (from sub-square micro-terrain)
-    offset_m = subsquare.elevation_offset
 
-    # Calculate elevations for the gauge
-    surface_elev = terrain.get_surface_elevation()
-    # Add subsquare offset (convert from meters to depth units)
-    surface_elev_with_offset = surface_elev + int(subsquare.elevation_offset * 10)
+    Args:
+        state: Game state with grids
+        sx, sy: Grid cell coordinates
+        surface_water: Surface water amount (from water_grid)
+    """
+    x, y = pos
+
+    # Get elevation components from grids
+    bedrock = state.bedrock_base[sx, sy]
+    offset_units = state.elevation_offset_grid[sx, sy]
+    offset_m = units_to_meters(offset_units)
+
+    # Calculate surface elevation: bedrock + sum of layers + offset
+    surface_elev = bedrock + np.sum(state.terrain_layers[:, sx, sy]) + offset_units
 
     # Layout: gauge on left (40px), soil profile on right
     gauge_width = 40
@@ -219,7 +228,8 @@ def render_soil_profile(
 
     # --- 1. Draw Sky ---
     # Sky goes from top of panel down to surface elevation
-    surface_m = units_to_meters(surface_elev) + offset_m
+    # Note: surface_elev already includes offset_units, so don't add offset_m again
+    surface_m = units_to_meters(surface_elev)
     surface_y = elev_to_y(surface_m)
     
     # Draw sky background
@@ -227,47 +237,60 @@ def render_soil_profile(
         sky_rect = pygame.Rect(profile_x, y, profile_width, surface_y - y)
         pygame.draw.rect(screen, COLOR_SKY, sky_rect)
 
-    # --- 2. Draw Layers ---
+    # --- 2. Draw Layers (from grids) ---
+    # Calculate cumulative elevations for layers
+    layer_bottoms = {}
+    cumulative = bedrock
+    layer_bottoms[SoilLayer.BEDROCK] = bedrock
+    for layer in SoilLayer:
+        if layer != SoilLayer.BEDROCK:
+            layer_bottoms[layer] = cumulative
+            cumulative += state.terrain_layers[layer, sx, sy]
+
     # Iterate layers from top (Organics) to bottom (Bedrock)
     for layer in reversed(SoilLayer):
-        depth = terrain.get_layer_depth(layer)
+        depth = state.terrain_layers[layer, sx, sy]
         if depth == 0 and layer != SoilLayer.BEDROCK:
             continue
 
         # Get layer range in absolute meters (relative to sea level)
-        bot_units, top_units = terrain.get_layer_elevation_range(layer)
-        top_m = units_to_meters(top_units) + offset_m
-        bot_m = units_to_meters(bot_units) + offset_m
-        
+        # Layer positions need offset added since layer_bottoms are relative to bedrock
+        bot_units = layer_bottoms[layer]
+        top_units = bot_units + depth if layer != SoilLayer.BEDROCK else bot_units
+        top_m = units_to_meters(top_units + offset_units)
+        bot_m = units_to_meters(bot_units + offset_units)
+
         # For bedrock, extend visually to bottom of panel
         if layer == SoilLayer.BEDROCK:
             bot_m = -100.0  # Arbitrary deep value
 
         layer_top_y = elev_to_y(top_m)
         layer_bot_y = elev_to_y(bot_m)
-        
+
         # Skip if off screen
         if layer_bot_y < y or layer_top_y > y + height:
             continue
-            
+
         # Clamp to panel
         draw_top = max(y, layer_top_y)
         draw_h = min(y + height, layer_bot_y) - draw_top
-        
+
         if draw_h > 0:
-            props = MATERIAL_LIBRARY.get(terrain.get_layer_material(layer))
+            material_name = state.terrain_materials[layer, sx, sy]
+            props = MATERIAL_LIBRARY.get(material_name)
             color = props.display_color if props else (150, 150, 150)
             pygame.draw.rect(screen, color, (profile_x, draw_top, profile_width, draw_h))
-            
-            # Draw water fill overlay
-            water_in_layer = water.get_layer_water(layer)
-            max_storage = terrain.get_max_water_storage(layer)
+
+            # Draw water fill overlay from grids
+            water_in_layer = state.subsurface_water_grid[layer, sx, sy]
+            porosity = state.porosity_grid[layer, sx, sy]
+            max_storage = (depth * porosity) // 100
             if water_in_layer > 0 and max_storage > 0:
                 fill_pct = min(100, (water_in_layer * 100) // max_storage)
                 # Water fills from bottom of layer up
                 water_h = int((layer_bot_y - layer_top_y) * fill_pct / 100)
                 water_top = layer_bot_y - water_h
-                
+
                 # Clamp water rect
                 w_draw_top = max(y, water_top)
                 w_draw_bot = min(y + height, layer_bot_y)
@@ -327,5 +350,5 @@ def render_soil_profile(
     pygame.draw.rect(screen, COLOR_BG_PANEL, (x, header_y, width, 22), 0, border_radius=3)
     # Draw border around entire panel
     pygame.draw.rect(screen, COLOR_BORDER_LIGHT, (x, header_y, width, height + 22), 1, border_radius=3)
-    header_text = f"Elev: {units_to_meters(surface_elev_with_offset):.1f}m"
+    header_text = f"Elev: {units_to_meters(surface_elev):.1f}m"
     draw_section_header(screen, font, header_text, (x + 8, header_y + 2), width=width - 16)

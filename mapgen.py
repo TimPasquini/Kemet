@@ -364,3 +364,209 @@ def generate_map(width: int, height: int, water_grid: np.ndarray) -> List[List[T
                 distribute_water_to_tile(tile, random.randint(5, 30), water_grid, x, y)
 
     return tiles
+
+
+# =============================================================================
+# Grid-Based Map Generation (Direct Array Generation)
+# =============================================================================
+
+def generate_grids_direct(grid_width: int, grid_height: int) -> Dict:
+    """
+    Generate map data directly as NumPy arrays (array-first approach).
+
+    Creates a varied desert landscape at grid resolution without intermediate
+    Tile objects. Uses WFC-style biome generation for natural clustering.
+
+    Args:
+        grid_width: Grid width (e.g., 180 for 60 tiles × 3)
+        grid_height: Grid height (e.g., 135 for 45 tiles × 3)
+
+    Returns:
+        Dictionary with all grid arrays:
+            - terrain_layers: (6, grid_w, grid_h) depth of each soil layer
+            - terrain_materials: (6, grid_w, grid_h) material names
+            - subsurface_water_grid: (6, grid_w, grid_h) water in each layer
+            - bedrock_base: (grid_w, grid_h) bedrock elevation baseline
+            - elevation_offset_grid: (grid_w, grid_h) fine elevation adjustments
+            - wellspring_grid: (grid_w, grid_h) wellspring output per cell
+            - water_grid: (grid_w, grid_h) surface water
+            - kind_grid: (grid_w, grid_h) biome type (temporary, for tile compatibility)
+    """
+    from ground import MATERIAL_LIBRARY
+
+    # Initialize arrays
+    terrain_layers = np.zeros((len(SoilLayer), grid_width, grid_height), dtype=np.int32)
+    terrain_materials = np.zeros((len(SoilLayer), grid_width, grid_height), dtype='U20')
+    subsurface_water_grid = np.zeros((len(SoilLayer), grid_width, grid_height), dtype=np.int32)
+    bedrock_base = np.zeros((grid_width, grid_height), dtype=np.int32)
+    elevation_offset_grid = np.zeros((grid_width, grid_height), dtype=np.int32)
+    wellspring_grid = np.zeros((grid_width, grid_height), dtype=np.int32)
+    water_grid = np.zeros((grid_width, grid_height), dtype=np.int32)
+    kind_grid = np.full((grid_width, grid_height), "flat", dtype='U20')
+
+    # Base biome weights for WFC
+    base_weights = {"dune": 4, "flat": 5, "wadi": 2, "rock": 2, "salt": 2}
+
+    # Adjacency preferences (biome -> neighbor biome -> bonus weight)
+    adjacency = {
+        "dune": {"dune": 3, "flat": 2, "rock": 1},
+        "flat": {"flat": 3, "wadi": 2, "dune": 2, "salt": 1},
+        "wadi": {"flat": 3, "wadi": 2, "dune": 1},
+        "rock": {"rock": 2, "dune": 2, "flat": 1},
+        "salt": {"salt": 2, "flat": 2, "dune": 1},
+    }
+
+    # Depth variations by biome (in meters)
+    depth_map = {
+        "dune": (1.5, 2.5),
+        "flat": (1.0, 2.0),
+        "wadi": (0.5, 1.2),
+        "rock": (0.2, 0.6),
+        "salt": (0.8, 1.5),
+    }
+
+    # Random bedrock baseline
+    bedrock_base_elev = elevation_to_units(random.uniform(-2.5, -2.0))
+    bedrock_base[:] = bedrock_base_elev
+
+    # Generate biomes using WFC (at grid resolution)
+    # Process in random order for more natural results
+    positions = [(gx, gy) for gx in range(grid_width) for gy in range(grid_height)]
+    random.shuffle(positions)
+
+    for gx, gy in positions:
+        # Get neighbor biomes for context (4-connected)
+        neighbor_types = []
+        for dx, dy in [(0, -1), (0, 1), (-1, 0), (1, 0)]:
+            nx, ny = gx + dx, gy + dy
+            if 0 <= nx < grid_width and 0 <= ny < grid_height:
+                neighbor_types.append(kind_grid[nx, ny])
+
+        # Calculate weighted probabilities
+        weighted: Dict[str, int] = {}
+        for kind, base_w in base_weights.items():
+            weight = base_w
+            for n in neighbor_types:
+                weight += adjacency.get(n, {}).get(kind, 0)
+            weighted[kind] = weight
+
+        # Select biome
+        choice = random.choices(
+            list(weighted.keys()),
+            weights=list(weighted.values()),
+            k=1
+        )[0]
+        kind_grid[gx, gy] = choice
+
+        # Create terrain layers for this cell
+        depth_range = depth_map[choice]
+        bedrock_var = elevation_to_units(random.uniform(-0.3, 0.3))
+        bedrock_base[gx, gy] = bedrock_base_elev + bedrock_var
+
+        total_soil_depth = elevation_to_units(random.uniform(*depth_range))
+
+        # Distribute soil depth across layers (simplified distribution)
+        # Regolith: 30%, Subsoil: 40%, Topsoil: 25%, Organics: 5%
+        terrain_layers[SoilLayer.REGOLITH, gx, gy] = int(total_soil_depth * 0.30)
+        terrain_layers[SoilLayer.SUBSOIL, gx, gy] = int(total_soil_depth * 0.40)
+        terrain_layers[SoilLayer.TOPSOIL, gx, gy] = int(total_soil_depth * 0.25)
+        terrain_layers[SoilLayer.ORGANICS, gx, gy] = int(total_soil_depth * 0.05)
+
+        # Assign materials based on biome
+        if choice == "dune":
+            terrain_materials[SoilLayer.TOPSOIL, gx, gy] = "sand"
+            terrain_materials[SoilLayer.SUBSOIL, gx, gy] = "sand"
+            terrain_materials[SoilLayer.REGOLITH, gx, gy] = "gravel"
+        elif choice == "rock":
+            terrain_materials[SoilLayer.TOPSOIL, gx, gy] = "rock"
+            terrain_materials[SoilLayer.SUBSOIL, gx, gy] = "rock"
+            terrain_materials[SoilLayer.REGOLITH, gx, gy] = "rock"
+        elif choice == "wadi":
+            terrain_materials[SoilLayer.TOPSOIL, gx, gy] = "silt"
+            terrain_materials[SoilLayer.SUBSOIL, gx, gy] = "clay"
+            terrain_materials[SoilLayer.REGOLITH, gx, gy] = "gravel"
+        elif choice == "salt":
+            terrain_materials[SoilLayer.TOPSOIL, gx, gy] = "sand"
+            terrain_materials[SoilLayer.SUBSOIL, gx, gy] = "silt"
+            terrain_materials[SoilLayer.REGOLITH, gx, gy] = "gravel"
+        else:  # flat
+            terrain_materials[SoilLayer.TOPSOIL, gx, gy] = "dirt"
+            terrain_materials[SoilLayer.SUBSOIL, gx, gy] = "clay"
+            terrain_materials[SoilLayer.REGOLITH, gx, gy] = "gravel"
+
+        terrain_materials[SoilLayer.ORGANICS, gx, gy] = "humus"
+        terrain_materials[SoilLayer.BEDROCK, gx, gy] = "bedrock"
+
+        # Add fine elevation variation (sub-tile resolution)
+        offset = random.choice([-1, 0, 1])  # ±0.1m in units (1 unit = 0.1m)
+        elevation_offset_grid[gx, gy] = offset
+
+        # Saturate regolith layer to create water table
+        regolith_depth = terrain_layers[SoilLayer.REGOLITH, gx, gy]
+        material_name = terrain_materials[SoilLayer.REGOLITH, gx, gy]
+        props = MATERIAL_LIBRARY.get(material_name)
+        if props and regolith_depth > 0:
+            porosity = props.porosity
+            max_water = (regolith_depth * porosity) // 100
+            subsurface_water_grid[SoilLayer.REGOLITH, gx, gy] = max_water
+
+    # Generate wellsprings at tile centers (prefer lowland areas)
+    # Calculate elevations for all tile center cells
+    tile_width = grid_width // 3
+    tile_height = grid_height // 3
+    elev_list = []
+    for tx in range(tile_width):
+        for ty in range(tile_height):
+            # Get center cell of this tile's 3x3 region
+            center_gx = tx * 3 + 1
+            center_gy = ty * 3 + 1
+            if center_gx < grid_width and center_gy < grid_height:
+                elev = bedrock_base[center_gx, center_gy] + np.sum(terrain_layers[:, center_gx, center_gy]) + elevation_offset_grid[center_gx, center_gy]
+                elev_list.append((elev, center_gx, center_gy, tx, ty))
+    elev_list.sort(key=lambda e: e[0])
+
+    # Primary wellspring in lowest quarter
+    lowland_count = max(1, len(elev_list) // 4)
+    lowland_candidates = elev_list[:lowland_count]
+    _, px, py, tile_x, tile_y = random.choice(lowland_candidates)
+    # Mark entire tile region as wadi
+    for dx in range(3):
+        for dy in range(3):
+            gx = tile_x * 3 + dx
+            gy = tile_y * 3 + dy
+            if gx < grid_width and gy < grid_height:
+                kind_grid[gx, gy] = "wadi"
+    wellspring_grid[px, py] = random.randint(40, 60)  # Strong output
+    subsurface_water_grid[SoilLayer.REGOLITH, px, py] += 100
+    water_grid[px, py] += 20
+
+    # Secondary wellsprings (1-2)
+    secondary_count = random.randint(1, 2)
+    attempts, placed = 0, 0
+    center_tile_x, center_tile_y = tile_width // 2, tile_height // 2
+    while placed < secondary_count and attempts < 20:
+        rand_tile_x = random.randrange(tile_width)
+        rand_tile_y = random.randrange(tile_height)
+        sx = rand_tile_x * 3 + 1
+        sy = rand_tile_y * 3 + 1
+        attempts += 1
+        # Don't place on existing wellspring or near center (depot location)
+        if wellspring_grid[sx, sy] > 0 or (abs(rand_tile_x - center_tile_x) < 2 and abs(rand_tile_y - center_tile_y) < 2):
+            continue
+        wellspring_grid[sx, sy] = random.randint(15, 30)  # Moderate output
+        subsurface_water_grid[SoilLayer.REGOLITH, sx, sy] += 50
+        water_grid[sx, sy] += 10
+        placed += 1
+
+    # Don't add surface water to wadi cells - let wellsprings fill them naturally
+
+    return {
+        "terrain_layers": terrain_layers,
+        "terrain_materials": terrain_materials,
+        "subsurface_water_grid": subsurface_water_grid,
+        "bedrock_base": bedrock_base,
+        "elevation_offset_grid": elevation_offset_grid,
+        "wellspring_grid": wellspring_grid,
+        "water_grid": water_grid,
+        "kind_grid": kind_grid,
+    }

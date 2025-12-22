@@ -28,11 +28,16 @@ from config import (
 )
 from ground import (
     SoilLayer,
+    MATERIAL_LIBRARY,
+    TerrainColumn,
+    SurfaceTraits,
     create_default_terrain,
     elevation_to_units,
     units_to_meters,
 )
+from water import WaterColumn
 from subgrid import (
+    SubSquare,
     subgrid_to_tile,
     get_subsquare_index,
     ensure_terrain_override,
@@ -57,7 +62,8 @@ from simulation.surface import (
     get_subsquare_elevation,
     remove_water_proportionally,
 )
-from simulation.subsurface import simulate_subsurface_tick, apply_tile_evaporation
+from simulation.subsurface import apply_tile_evaporation
+from simulation.subsurface_vectorized import simulate_subsurface_tick_vectorized
 from simulation.erosion import apply_overnight_erosion, accumulate_wind_exposure
 from weather import WeatherSystem
 from atmosphere import AtmosphereLayer, simulate_atmosphere_tick
@@ -116,21 +122,35 @@ class GameState:
     _cached_elevation_range: Tuple[float, float] | None = None
 
     # === Vectorized Simulation State ===
-    water_grid: np.ndarray | None = None      # Shape: (width*3, height*3), dtype=int32
-    elevation_grid: np.ndarray | None = None  # Shape: (width*3, height*3), dtype=int32
-    moisture_grid: np.ndarray | None = None   # Shape: (width, height), dtype=float64 (EMA)
-    trench_grid: np.ndarray | None = None     # Shape: (width*3, height*3), dtype=uint8
+    water_grid: np.ndarray | None = None      # Shape: (GRID_WIDTH, GRID_HEIGHT), dtype=int32
+    elevation_grid: np.ndarray | None = None  # Shape: (GRID_WIDTH, GRID_HEIGHT), dtype=int32
+    moisture_grid: np.ndarray | None = None   # Shape: (GRID_WIDTH, GRID_HEIGHT), dtype=float64 (EMA)
+    trench_grid: np.ndarray | None = None     # Shape: (GRID_WIDTH, GRID_HEIGHT), dtype=uint8
     terrain_changed: bool = True              # Flag to trigger elevation grid rebuild
 
     # === Unified Terrain State (The Source of Truth) ===
-    # Shape: (6, width*3, height*3), dtype=int32. Index using SoilLayer enum.
+    # Shape: (6, GRID_WIDTH, GRID_HEIGHT), dtype=int32. Index using SoilLayer enum.
     terrain_layers: np.ndarray | None = None
-    # Shape: (6, width*3, height*3), dtype=int32. Subsurface water.
+    # Shape: (6, GRID_WIDTH, GRID_HEIGHT), dtype=int32. Subsurface water.
     subsurface_water_grid: np.ndarray | None = None
-    # Shape: (width*3, height*3), dtype=int32. Base elevation of bedrock.
+    # Shape: (GRID_WIDTH, GRID_HEIGHT), dtype=int32. Base elevation of bedrock.
     bedrock_base: np.ndarray | None = None
-    # Shape: (width*3, height*3), dtype=int32. Micro-terrain offset in depth units.
+    # Shape: (GRID_WIDTH, GRID_HEIGHT), dtype=int32. Micro-terrain offset in depth units.
     elevation_offset_grid: np.ndarray | None = None
+
+    # === Material Property Grids (for physics calculations) ===
+    # Shape: (6, GRID_WIDTH, GRID_HEIGHT), dtype='U20'. Material name for each layer.
+    terrain_materials: np.ndarray | None = None
+    # Shape: (6, GRID_WIDTH, GRID_HEIGHT), dtype=int32. Vertical permeability (0-100).
+    permeability_vert_grid: np.ndarray | None = None
+    # Shape: (6, GRID_WIDTH, GRID_HEIGHT), dtype=int32. Horizontal permeability (0-100).
+    permeability_horiz_grid: np.ndarray | None = None
+    # Shape: (6, GRID_WIDTH, GRID_HEIGHT), dtype=int32. Porosity (0-100).
+    porosity_grid: np.ndarray | None = None
+
+    # === Wellspring Grid ===
+    # Shape: (GRID_WIDTH, GRID_HEIGHT), dtype=int32. Water output rate per grid cell.
+    wellspring_grid: np.ndarray | None = None
 
     # === Player convenience properties for backwards compatibility ===
     @property
@@ -263,69 +283,106 @@ class GameState:
 
 
 def build_initial_state(width: int = 10, height: int = 10) -> GameState:
-    """Create a new game state with generated map."""
+    """Create a new game state with generated map (grid-first approach)."""
     from subgrid import tile_center_subsquare
-    
-    # Initialize water grid early for map generation
-    water_grid = np.zeros((width * SUBGRID_SIZE, height * SUBGRID_SIZE), dtype=np.int32)
-    
-    # Initialize unified terrain arrays
-    terrain_layers = np.zeros((len(SoilLayer), width * SUBGRID_SIZE, height * SUBGRID_SIZE), dtype=np.int32)
-    subsurface_water_grid = np.zeros((len(SoilLayer), width * SUBGRID_SIZE, height * SUBGRID_SIZE), dtype=np.int32)
-    bedrock_base = np.zeros((width * SUBGRID_SIZE, height * SUBGRID_SIZE), dtype=np.int32)
-    elevation_offset_grid = np.zeros((width * SUBGRID_SIZE, height * SUBGRID_SIZE), dtype=np.int32)
-    
-    elevation_grid = np.zeros((width * SUBGRID_SIZE, height * SUBGRID_SIZE), dtype=np.int32)
+    from mapgen import generate_grids_direct
 
-    tiles = generate_map(width, height, water_grid)
+    # Generate all grid data directly (array-first approach)
+    grid_width = width * SUBGRID_SIZE
+    grid_height = height * SUBGRID_SIZE
+    grids = generate_grids_direct(grid_width, grid_height)
+
+    # Extract grids from returned dict
+    terrain_layers = grids["terrain_layers"]
+    terrain_materials = grids["terrain_materials"]
+    subsurface_water_grid = grids["subsurface_water_grid"]
+    bedrock_base = grids["bedrock_base"]
+    elevation_offset_grid = grids["elevation_offset_grid"]
+    wellspring_grid = grids["wellspring_grid"]
+    water_grid = grids["water_grid"]
+    kind_grid = grids["kind_grid"]
+
+    # Calculate material property grids from terrain_materials
+    permeability_vert_grid = np.zeros((len(SoilLayer), grid_width, grid_height), dtype=np.int32)
+    permeability_horiz_grid = np.zeros((len(SoilLayer), grid_width, grid_height), dtype=np.int32)
+    porosity_grid = np.zeros((len(SoilLayer), grid_width, grid_height), dtype=np.int32)
+
+    for layer in SoilLayer:
+        for gx in range(grid_width):
+            for gy in range(grid_height):
+                material_name = terrain_materials[layer, gx, gy]
+                material_props = MATERIAL_LIBRARY.get(material_name)
+                if material_props:
+                    permeability_vert_grid[layer, gx, gy] = material_props.permeability_vertical
+                    permeability_horiz_grid[layer, gx, gy] = material_props.permeability_horizontal
+                    porosity_grid[layer, gx, gy] = material_props.porosity
+
+    # Create minimal stub tile objects for backwards compatibility
+    # Note: Real terrain data is in grids. Tiles are legacy and will be removed.
+    tiles: List[List[Tile]] = []
+    for x in range(width):
+        column = []
+        for y in range(height):
+            # Get representative values from center cell of the 3x3 tile region
+            center_gx = x * SUBGRID_SIZE + 1
+            center_gy = y * SUBGRID_SIZE + 1
+
+            # Create stub terrain (just for compatibility, not accurate)
+            stub_terrain = create_default_terrain(elevation_to_units(-2.0), elevation_to_units(1.0))
+
+            # Create stub water column
+            stub_water = WaterColumn()
+
+            # Create subgrid with elevation offsets from grid
+            subgrid = []
+            for sx in range(SUBGRID_SIZE):
+                row = []
+                for sy in range(SUBGRID_SIZE):
+                    gx = x * SUBGRID_SIZE + sx
+                    gy = y * SUBGRID_SIZE + sy
+                    offset_units = elevation_offset_grid[gx, gy]
+                    offset_m = units_to_meters(offset_units)
+                    row.append(SubSquare(elevation_offset=offset_m))
+                subgrid.append(row)
+
+            # Get biome kind from grid
+            kind = str(kind_grid[center_gx, center_gy])
+
+            # Check wellspring from center cell
+            wellspring_output = wellspring_grid[center_gx, center_gy]
+
+            # Create minimal stub tile
+            tile = Tile(
+                kind=kind,
+                terrain=stub_terrain,  # Stub only - real data in grids
+                water=stub_water,  # Stub only - real data in grids
+                surface=SurfaceTraits(),
+                wellspring_output=wellspring_output,
+                depot=False,
+                subgrid=subgrid,
+            )
+            column.append(tile)
+        tiles.append(column)
+
     start_tile = (width // 2, height // 2)
 
-    # Set up depot at player start location
+    # Set up depot at player start location (in grids)
     depot_tile = tiles[start_tile[0]][start_tile[1]]
     depot_tile.kind = "flat"
-    depot_tile.surface.has_trench = False
-    depot_tile.terrain = create_default_terrain(elevation_to_units(-2.0), elevation_to_units(1.0))
-    depot_tile.wellspring_output = 0
     depot_tile.depot = True
 
-    # Populate unified terrain arrays from the generated object graph
-    for x in range(width):
-        for y in range(height):
-            tile = tiles[x][y]
-            
-            # Pre-calculate water distribution for this tile to ensure conservation of mass
-            # (Distribute tile's total water among its 9 sub-squares)
-            water_dist = {}
+    # Update grids for depot location
+    depot_terrain = create_default_terrain(elevation_to_units(-2.0), elevation_to_units(1.0))
+    for sx in range(SUBGRID_SIZE):
+        for sy in range(SUBGRID_SIZE):
+            gx = start_tile[0] * SUBGRID_SIZE + sx
+            gy = start_tile[1] * SUBGRID_SIZE + sy
+            kind_grid[gx, gy] = "flat"
+            wellspring_grid[gx, gy] = 0
+            bedrock_base[gx, gy] = depot_terrain.bedrock_base
             for layer in SoilLayer:
-                total = tile.water.get_layer_water(layer)
-                base = total // (SUBGRID_SIZE * SUBGRID_SIZE)
-                rem = total % (SUBGRID_SIZE * SUBGRID_SIZE)
-                water_dist[layer] = (base, rem)
-
-            for sx in range(SUBGRID_SIZE):
-                for sy in range(SUBGRID_SIZE):
-                    # Calculate global sub-grid coordinates
-                    gx, gy = x * SUBGRID_SIZE + sx, y * SUBGRID_SIZE + sy
-                    
-                    subsquare = tile.subgrid[sx][sy]
-                    # Use override if present, else tile terrain
-                    terrain = get_subsquare_terrain(subsquare, tile.terrain)
-                    
-                    # Fill bedrock base
-                    bedrock_base[gx, gy] = terrain.bedrock_base
-                    # Fill elevation offset (convert meters to units)
-                    elevation_offset_grid[gx, gy] = elevation_to_units(subsquare.elevation_offset)
-                    # Fill layers
-                    for layer in SoilLayer:
-                        terrain_layers[layer, gx, gy] = terrain.get_layer_depth(layer)
-                        
-                        # Fill water
-                        base, rem = water_dist[layer]
-                        amount = base
-                        if rem > 0: # Distribute remainder to first few sub-squares
-                            amount += 1
-                            water_dist[layer] = (base, rem - 1)
-                        subsurface_water_grid[layer, gx, gy] = amount
+                terrain_layers[layer, gx, gy] = depot_terrain.get_layer_depth(layer)
+                terrain_materials[layer, gx, gy] = depot_terrain.get_layer_material(layer)
 
     # Initialize player at center of starting tile (in sub-grid coords)
     start_subsquare = tile_center_subsquare(start_tile[0], start_tile[1])
@@ -345,6 +402,9 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
     # Initialize trench grid
     trench_grid = np.zeros((width * SUBGRID_SIZE, height * SUBGRID_SIZE), dtype=np.uint8)
 
+    # Initialize elevation_grid (calculated from other grids)
+    elevation_grid = bedrock_base + np.sum(terrain_layers, axis=0) + elevation_offset_grid
+
     return GameState(
         width=width,
         height=height,
@@ -360,6 +420,11 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
         subsurface_water_grid=subsurface_water_grid,
         bedrock_base=bedrock_base,
         elevation_offset_grid=elevation_offset_grid,
+        terrain_materials=terrain_materials,
+        permeability_vert_grid=permeability_vert_grid,
+        permeability_horiz_grid=permeability_horiz_grid,
+        porosity_grid=porosity_grid,
+        wellspring_grid=wellspring_grid,
     )
 
 
@@ -395,59 +460,94 @@ def terrain_action(state: GameState, action: str, args: List[str]) -> None:
 
 
 def lower_ground(state: GameState, min_layer_name: str = "bedrock") -> None:
+    """Lower ground by removing material from exposed layer (array-based)."""
     tile, subsquare, _ = state.get_target_tile_and_subsquare()
-    # Get or create terrain override for this sub-square
-    terrain = ensure_terrain_override(subsquare, tile.terrain)
-    # Find the exposed layer and remove from it
-    exposed = terrain.get_exposed_layer()
-
     sub_pos = state.get_action_target_subsquare()
+    sx, sy = sub_pos
+
+    # Find the topmost non-zero layer (exposed layer)
+    exposed = None
+    for layer in [SoilLayer.ORGANICS, SoilLayer.TOPSOIL, SoilLayer.ELUVIATION,
+                  SoilLayer.SUBSOIL, SoilLayer.REGOLITH]:
+        if state.terrain_layers[layer, sx, sy] > 0:
+            exposed = layer
+            break
+
+    # If no soil layers remain, allow lowering bedrock if min_layer is "bedrock"
+    if exposed is None:
+        if min_layer_name.lower() == "bedrock":
+            # Lower bedrock base (permanent terrain change)
+            # TODO: Pickaxe currently shows shovel message instead of bedrock message.
+            # This will be fixed during tool system rewrite.
+            state.bedrock_base[sx, sy] -= 2
+            state.invalidate_elevation_range()
+            state.terrain_changed = True
+            new_elev_units = state.bedrock_base[sx, sy] + np.sum(state.terrain_layers[:, sx, sy])
+            new_elev = units_to_meters(new_elev_units) + units_to_meters(state.elevation_offset_grid[sx, sy])
+            state.messages.append(f"Lowered bedrock by 0.2m. Elev: {new_elev:.2f}m")
+            subsquare.invalidate_appearance()
+            state.dirty_subsquares.add(sub_pos)
+            return
+        else:
+            state.messages.append("Hit bedrock. Use pickaxe to break through.")
+            return
+
+    # Remove 2 units (0.2m) from the exposed layer
+    current_depth = state.terrain_layers[exposed, sx, sy]
+    removed = min(2, current_depth)
+    state.terrain_layers[exposed, sx, sy] -= removed
+
+    material_name = state.terrain_materials[exposed, sx, sy]
+
+    # Update visual and terrain flags
     subsquare.invalidate_appearance()
     state.dirty_subsquares.add(sub_pos)
-    state.invalidate_elevation_range()  # Terrain changed
+    state.invalidate_elevation_range()
     state.terrain_changed = True
-    removed = terrain.remove_material_from_layer(exposed, 2)
-    material_name = terrain.get_layer_material(exposed)
 
-    # Sync changes to unified terrain arrays
-    sx, sy = sub_pos
-    state.terrain_layers[exposed, sx, sy] = terrain.get_layer_depth(exposed)
-
-    new_elev = units_to_meters(terrain.get_surface_elevation()) + subsquare.elevation_offset
+    # Calculate new elevation (simplified - use grid bedrock_base + layers)
+    new_elev_units = state.bedrock_base[sx, sy] + np.sum(state.terrain_layers[:, sx, sy])
+    new_elev = units_to_meters(new_elev_units) + units_to_meters(state.elevation_offset_grid[sx, sy])
     state.messages.append(f"Removed {units_to_meters(removed):.2f}m {material_name}. Elev: {new_elev:.2f}m")
 
 
 def raise_ground(state: GameState, target_layer_name: str = "topsoil") -> None:
+    """Raise ground by adding material to the exposed (topmost) layer (array-based)."""
     tile, subsquare, _ = state.get_target_tile_and_subsquare()
     sub_pos = state.get_action_target_subsquare()
-    # Get or create terrain override for this sub-square
-    terrain = ensure_terrain_override(subsquare, tile.terrain)
+    sx, sy = sub_pos
 
     cost = 0
     if state.inventory.scrap > 0:
         state.inventory.scrap -= 1
         cost = 1
 
+    # Find the topmost non-zero layer (exposed layer)
+    exposed = None
+    for layer in [SoilLayer.ORGANICS, SoilLayer.TOPSOIL, SoilLayer.ELUVIATION,
+                  SoilLayer.SUBSOIL, SoilLayer.REGOLITH]:
+        if state.terrain_layers[layer, sx, sy] > 0:
+            exposed = layer
+            break
+
+    # If no soil layers exist, add to regolith (base layer)
+    if exposed is None:
+        exposed = SoilLayer.REGOLITH
+
+    # Add 2 units (0.2m) to the exposed layer
+    state.terrain_layers[exposed, sx, sy] += 2
+    material_name = state.terrain_materials[exposed, sx, sy]
+
+    # Update visual and terrain flags
     subsquare.invalidate_appearance()
     state.dirty_subsquares.add(sub_pos)
-    state.invalidate_elevation_range()  # Terrain changed
+    state.invalidate_elevation_range()
     state.terrain_changed = True
-    
-    # Resolve target string to enum
-    try:
-        target_layer = SoilLayer[target_layer_name.upper()]
-    except KeyError:
-        target_layer = SoilLayer.TOPSOIL
 
-    terrain.add_material_to_layer(target_layer, 2)
-    material_name = terrain.get_layer_material(target_layer)
-
-    # Sync changes to unified terrain arrays
-    sx, sy = sub_pos
-    state.terrain_layers[target_layer, sx, sy] = terrain.get_layer_depth(target_layer)
-
-    new_elev = units_to_meters(terrain.get_surface_elevation()) + subsquare.elevation_offset
-    state.messages.append(f"Added {material_name} (cost {cost} scrap). Elev: {new_elev:.2f}m")
+    # Calculate new elevation (simplified - use grid bedrock_base + layers)
+    new_elev_units = state.bedrock_base[sx, sy] + np.sum(state.terrain_layers[:, sx, sy])
+    new_elev = units_to_meters(new_elev_units) + units_to_meters(state.elevation_offset_grid[sx, sy])
+    state.messages.append(f"Added {material_name} to surface (cost {cost} scrap). Elev: {new_elev:.2f}m")
 
 
 def collect_water(state: GameState) -> None:
@@ -534,7 +634,7 @@ def simulate_tick(state: GameState) -> None:
             state.moisture_grid = (1 - MOISTURE_EMA_ALPHA) * state.moisture_grid + MOISTURE_EMA_ALPHA * current_moisture
 
     if tick % 4 == 1:
-        simulate_subsurface_tick(state)
+        simulate_subsurface_tick_vectorized(state)
 
     apply_tile_evaporation(state)
 
@@ -580,24 +680,43 @@ def show_status(state: GameState) -> None:
         state.messages.append(f"Cisterns: {summaries['stored_water'] / 10:.1f}L stored across {num_cisterns} cistern(s)")
 
 def survey_tile(state: GameState) -> None:
+    """Survey tool - display grid cell information (array-based)."""
     tile, subsquare, _ = state.get_target_tile_and_subsquare()
-    lx, ly = state.get_action_target_subsquare()
     x, y = state.get_action_target_tile()
     sub_pos = state.get_action_target_subsquare()
+    sx, sy = sub_pos
     structure = state.structures.get(sub_pos)
-    surface_water = state.water_grid[sub_pos]
+    surface_water = state.water_grid[sx, sy]
 
-    elev_m = units_to_meters(get_subsquare_elevation(tile, sub_pos[0] % 3, sub_pos[1] % 3))
+    # Calculate elevation from grids
+    # For now, still use get_subsquare_elevation as it's a helper (will be migrated with rendering)
+    elev_m = units_to_meters(get_subsquare_elevation(tile, sx % 3, sy % 3))
 
-    desc = [f"Tile {x},{y}", f"Sub {sub_pos[0]%3},{sub_pos[1]%3}", f"elev={elev_m:.2f}m",
+    desc = [f"Tile {x},{y}", f"Sub {sx%3},{sy%3}", f"elev={elev_m:.2f}m",
             f"surf={surface_water / 10:.1f}L"]
-    if tile.water.total_subsurface_water() > 0:
-        desc.append(f"subsrf={tile.water.total_subsurface_water() / 10:.1f}L")
-    desc.append(f"topsoil={units_to_meters(tile.terrain.topsoil_depth):.1f}m")
-    desc.append(f"organics={units_to_meters(tile.terrain.organics_depth):.1f}m")
-    if tile.wellspring_output > 0:
-        desc.append(f"wellspring={tile.wellspring_output / 10:.2f}L/t")
-    if state.trench_grid[sub_pos]:
+
+    # Get subsurface water from grid
+    subsurface_total = int(np.sum(state.subsurface_water_grid[:, sx, sy]))
+    if subsurface_total > 0:
+        desc.append(f"subsrf={subsurface_total / 10:.1f}L")
+
+    # Get exposed material (what the player sees on the surface)
+    from render.grid_helpers import get_exposed_material
+    material = get_exposed_material(state, sx, sy)
+    desc.append(f"material={material}")
+
+    # Get layer depths from terrain_layers grid
+    topsoil_depth = state.terrain_layers[SoilLayer.TOPSOIL, sx, sy]
+    organics_depth = state.terrain_layers[SoilLayer.ORGANICS, sx, sy]
+    desc.append(f"topsoil={units_to_meters(topsoil_depth):.1f}m")
+    desc.append(f"organics={units_to_meters(organics_depth):.1f}m")
+
+    # Get wellspring from wellspring_grid
+    wellspring_output = state.wellspring_grid[sx, sy]
+    if wellspring_output > 0:
+        desc.append(f"wellspring={wellspring_output / 10:.2f}L/t")
+
+    if state.trench_grid[sx, sy]:
         desc.append("trench")
     if structure:
         desc.append(structure.get_survey_string())

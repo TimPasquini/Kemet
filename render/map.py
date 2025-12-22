@@ -16,9 +16,12 @@ from ground import TILE_TYPES
 from surface_state import compute_surface_appearance
 from render.colors import color_for_tile, color_for_subsquare
 from render.primitives import draw_text
+from render.grid_helpers import get_grid_cell_color, get_grid_elevation
 from config import (
     SUBGRID_SIZE,
     INTERACTION_RANGE,
+    GRID_WIDTH,
+    GRID_HEIGHT,
 )
 from render.config import (
     STRUCTURE_INSET,
@@ -120,20 +123,21 @@ def render_map_viewport(
     start_tx, start_ty, end_tx, end_ty = camera.get_visible_tile_range()
 
     # Draw structures (keyed by sub-square coords, rendered at sub-square position)
-    sub_size = tile_size // SUBGRID_SIZE
+    # Use SUB_TILE_SIZE directly to match background scaling
+    scaled_sub_size = max(1, int(SUB_TILE_SIZE * camera.zoom))
     for (sub_x, sub_y), structure in state.structures.items():
         # Convert sub-square to tile for visibility check
         tile_x, tile_y = subgrid_to_tile(sub_x, sub_y)
         if not camera.is_tile_visible(tile_x, tile_y):
             continue
-        # Get world position for sub-square (using sub-square coords directly)
-        world_x = sub_x * (tile_size / SUBGRID_SIZE)
-        world_y = sub_y * (tile_size / SUBGRID_SIZE)
+        # Get world position for sub-square using camera method
+        world_x, world_y = camera.subsquare_to_world(sub_x, sub_y)
         vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
-        rect = pygame.Rect(int(vp_x), int(vp_y), sub_size - 1, sub_size - 1)
+        rect = pygame.Rect(int(vp_x), int(vp_y), scaled_sub_size, scaled_sub_size)
         pygame.draw.rect(surface, COLOR_STRUCTURE, rect.inflate(-2, -2))
         # Draw structure initial centered in sub-square
-        draw_text(surface, font, structure.kind[0].upper(), (rect.x + sub_size // 3, rect.y + sub_size // 4))
+        if scaled_sub_size >= 8:  # Only draw letter if big enough
+            draw_text(surface, font, structure.kind[0].upper(), (rect.x + scaled_sub_size // 3, rect.y + scaled_sub_size // 4))
 
     # Draw special features (wellsprings, depots) - only visible tiles
     for ty in range(start_ty, end_ty):
@@ -143,8 +147,11 @@ def render_map_viewport(
             vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
             rect = pygame.Rect(int(vp_x), int(vp_y), tile_size - 1, tile_size - 1)
 
-            if tile.wellspring_output > 0:
-                spring_color = COLOR_WELLSPRING_STRONG if tile.wellspring_output / 10 > 0.5 else COLOR_WELLSPRING_WEAK
+            # Check wellspring from wellspring_grid (center cell of tile's 3x3 region)
+            center_sx, center_sy = tx * SUBGRID_SIZE + 1, ty * SUBGRID_SIZE + 1
+            wellspring_output = state.wellspring_grid[center_sx, center_sy] if state.wellspring_grid is not None else 0
+            if wellspring_output > 0:
+                spring_color = COLOR_WELLSPRING_STRONG if wellspring_output / 10 > 0.5 else COLOR_WELLSPRING_WEAK
                 pygame.draw.circle(surface, spring_color, rect.center, WELLSPRING_RADIUS * camera.zoom)
             if tile.depot:
                 pygame.draw.rect(surface, COLOR_DEPOT, rect.inflate(-TRENCH_INSET, -TRENCH_INSET), border_radius=3)
@@ -238,74 +245,54 @@ def render_subgrid_water(
 
 def render_static_background(state: "GameState", font) -> pygame.Surface:
     """
-    Render the entire static world (terrain) to a single surface.
+    Render the entire static world (terrain) to a single surface (grid-based).
     This is a one-time operation, and the surface is cached for performance.
     """
-    world_pixel_width = state.width * TILE_SIZE
-    world_pixel_height = state.height * TILE_SIZE
+    world_pixel_width = GRID_WIDTH * SUB_TILE_SIZE
+    world_pixel_height = GRID_HEIGHT * SUB_TILE_SIZE
     background_surface = pygame.Surface((world_pixel_width, world_pixel_height))
     background_surface.fill(COLOR_BG_DARK)
 
     # Get cached elevation range for brightness scaling
     elevation_range = state.get_elevation_range()
 
-    world_sub_width = state.width * SUBGRID_SIZE
-    world_sub_height = state.height * SUBGRID_SIZE
-
-    for sub_y in range(world_sub_height):
-        for sub_x in range(world_sub_width):
-            tile_x, tile_y = subgrid_to_tile(sub_x, sub_y)
-            local_x, local_y = get_subsquare_index(sub_x, sub_y)
-
-            tile = state.tiles[tile_x][tile_y]
-            subsquare = tile.subgrid[local_x][local_y]
-
-            # Get elevation for this sub-square
-            sub_elevation = tile.get_subsquare_elevation(local_x, local_y)
-
-            # Use same color logic as per-frame rendering (includes elevation brightness)
-            color = color_for_subsquare(subsquare, sub_elevation, tile, elevation_range, 0) # Static bg has no water
+    # Render all grid cells
+    for sy in range(GRID_HEIGHT):
+        for sx in range(GRID_WIDTH):
+            # Get color from grids (no water on static background)
+            color = get_grid_cell_color(state, sx, sy, elevation_range)
 
             # Position on the large background surface
-            px = sub_x * SUB_TILE_SIZE
-            py = sub_y * SUB_TILE_SIZE
+            px = sx * SUB_TILE_SIZE
+            py = sy * SUB_TILE_SIZE
             rect = pygame.Rect(px, py, SUB_TILE_SIZE, SUB_TILE_SIZE)
             pygame.draw.rect(background_surface, color, rect)
 
             # Draw trench border from the global grid
-            if state.trench_grid is not None and state.trench_grid[sub_x, sub_y]:
+            if state.trench_grid is not None and state.trench_grid[sx, sy]:
                 pygame.draw.rect(background_surface, COLOR_TRENCH, rect, 2)
 
     return background_surface
 
 
 def redraw_background_rect(background_surface: pygame.Surface, state: "GameState", font, rect: pygame.Rect) -> None:
-    """Redraw a single sub-square onto the cached background surface."""
-    sub_x = rect.x // SUB_TILE_SIZE
-    sub_y = rect.y // SUB_TILE_SIZE
+    """Redraw a single grid cell onto the cached background surface (grid-based)."""
+    sx = rect.x // SUB_TILE_SIZE
+    sy = rect.y // SUB_TILE_SIZE
 
     # Bounds check
-    world_sub_width = state.width * SUBGRID_SIZE
-    world_sub_height = state.height * SUBGRID_SIZE
-    if not (0 <= sub_x < world_sub_width and 0 <= sub_y < world_sub_height):
+    if not (0 <= sx < GRID_WIDTH and 0 <= sy < GRID_HEIGHT):
         return
 
-    tile_x, tile_y = subgrid_to_tile(sub_x, sub_y)
-    local_x, local_y = get_subsquare_index(sub_x, sub_y)
-    tile = state.tiles[tile_x][tile_y]
-    subsquare = tile.subgrid[local_x][local_y]
-
-    # Get cached elevation range and calculate color with brightness
+    # Get cached elevation range and calculate color from grids
     elevation_range = state.get_elevation_range()
-    sub_elevation = tile.get_subsquare_elevation(local_x, local_y)
-    water_amt = state.water_grid[sub_x, sub_y]
-    color = color_for_subsquare(subsquare, sub_elevation, tile, elevation_range, water_amt)
+    color = get_grid_cell_color(state, sx, sy, elevation_range)
 
-    # Draw the updated sub-square directly onto the background surface
+    # Draw the updated grid cell directly onto the background surface
     pygame.draw.rect(background_surface, color, rect)
 
     # Draw trench indicator from the global grid
-    if state.trench_grid is not None and state.trench_grid[sub_x, sub_y]:
+    if state.trench_grid is not None and state.trench_grid[sx, sy]:
         pygame.draw.rect(background_surface, COLOR_TRENCH, rect, 2)
 
 

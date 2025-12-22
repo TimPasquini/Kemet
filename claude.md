@@ -18,6 +18,32 @@ The player can place anything anywhere, but natural systems respond realisticall
 
 This creates emergent gameplay where understanding the systems lets you work with nature rather than against it.
 
+### Procedural Generation Philosophy
+
+When implementing procedural generation or algorithmic systems, prioritize approaches in this order:
+
+1. **Wave Function Collapse (WFC)** - First choice when possible
+   - Excellent for constraint-based generation
+   - Produces coherent, locally-consistent results
+   - Good for terrain features, biome transitions, structure placement
+
+2. **Generative Grammars** - Second choice when WFC isn't suitable
+   - L-systems for organic growth patterns (plants, rivers, erosion patterns)
+   - Shape grammars for structures and settlements
+   - Context-free grammars for hierarchical generation
+
+3. **Graph Grammars** - For relational and network-based systems
+   - Road/path networks
+   - Water drainage systems
+   - Ecosystem relationships
+
+4. **Other Algorithms** - Use when the above don't fit
+   - Perlin/Simplex noise for continuous fields
+   - Cellular automata for local interactions
+   - Physics simulations for realistic behavior
+
+The goal is to create systems that generate believable, emergent complexity from simple rules rather than relying on hand-crafted content or pure randomness.
+
 ---
 
 ## Known Issues & Watchlist

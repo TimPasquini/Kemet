@@ -175,15 +175,15 @@ def simulate_surface_flow(state: "GameState") -> int:
 
 
 def simulate_surface_seepage(state: "GameState") -> None:
-    """Simulate surface water seeping into the topmost soil layer.
+    """Simulate surface water seeping into the topmost soil layer (array-based).
 
-    Water on each sub-square seeps down into the tile's soil based on
-    the permeability of the exposed material.
+    Water on each grid cell seeps down into the topmost non-bedrock soil layer
+    based on the permeability of the exposed material.
 
     Args:
         state: The main game state.
     """
-    from ground import MATERIAL_LIBRARY, SoilLayer
+    from ground import SoilLayer
 
     # Only iterate active water subsquares for efficiency
     # We need a copy because we might modify the set (though seepage usually just reduces water)
@@ -192,38 +192,45 @@ def simulate_surface_seepage(state: "GameState") -> None:
         if water_amt <= 0:
             continue
 
-        tx, ty = sx // SUBGRID_SIZE, sy // SUBGRID_SIZE
-        lx, ly = sx % SUBGRID_SIZE, sy % SUBGRID_SIZE
-        tile = state.tiles[tx][ty]
+        # Find the topmost non-bedrock soil layer (exposed layer)
+        exposed_layer = None
+        for layer in [SoilLayer.ORGANICS, SoilLayer.TOPSOIL, SoilLayer.ELUVIATION,
+                      SoilLayer.SUBSOIL, SoilLayer.REGOLITH]:
+            if state.terrain_layers[layer, sx, sy] > 0:
+                exposed_layer = layer
+                break
 
-        # Get the topmost soil layer for this tile
-        exposed_layer = tile.terrain.get_exposed_layer()
-        if exposed_layer == SoilLayer.BEDROCK:
-            continue  # Can't seep into bedrock
+        if exposed_layer is None:
+            continue  # Only bedrock exposed, can't seep
 
-        material = tile.terrain.get_layer_material(exposed_layer)
-        props = MATERIAL_LIBRARY.get(material)
-        if not props or props.permeability_vertical <= 0:
+        # Get permeability from material property grid
+        permeability = state.permeability_vert_grid[exposed_layer, sx, sy]
+        if permeability <= 0:
             continue
 
         # Calculate capacity remaining in the topmost layer
-        max_storage = tile.terrain.get_max_water_storage(exposed_layer)
-        current_water = tile.water.get_layer_water(exposed_layer)
+        layer_depth = state.terrain_layers[exposed_layer, sx, sy]
+        porosity = state.porosity_grid[exposed_layer, sx, sy]
+        max_storage = (layer_depth * porosity) // 100
+        current_water = state.subsurface_water_grid[exposed_layer, sx, sy]
         available_capacity = max_storage - current_water
 
         if available_capacity <= 0:
             continue  # Layer is saturated
 
         # Calculate seepage amount based on permeability
-        seep_rate = (SURFACE_SEEPAGE_RATE * props.permeability_vertical) // 100
+        seep_rate = (SURFACE_SEEPAGE_RATE * permeability) // 100
         seep_amount = (water_amt * seep_rate) // 100
         seep_amount = min(seep_amount, available_capacity)
 
         if seep_amount > 0:
             state.water_grid[sx, sy] -= seep_amount
-            tile.water.add_layer_water(exposed_layer, seep_amount)
+            state.subsurface_water_grid[exposed_layer, sx, sy] += seep_amount
 
-            # Update visual if threshold crossed
+            # Update visual if threshold crossed (temporary until rendering migration)
+            tx, ty = sx // SUBGRID_SIZE, sy // SUBGRID_SIZE
+            lx, ly = sx % SUBGRID_SIZE, sy % SUBGRID_SIZE
+            tile = state.tiles[tx][ty]
             tile.subgrid[lx][ly].check_water_threshold(state.water_grid[sx, sy])
 
 

@@ -112,6 +112,7 @@ TOOL_PICKAXE = Tool(
     options=[
         ToolOption("trench", "Dig Trench", "Dig trench in hard ground", action_args=["regolith"]),
         ToolOption("lower", "Break Ground", "Dig regolith/subsoil", action_args=["regolith"]),
+        ToolOption("lower", "Break Bedrock", "Lower bedrock (permanent)", action_args=["bedrock"]),
         ToolOption("raise", "Pile Gravel", "Add gravel/regolith (1 scrap)", cost={"scrap": 1}, action_args=["regolith"]),
     ],
     action="terrain",

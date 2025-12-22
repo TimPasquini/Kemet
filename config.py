@@ -14,9 +14,16 @@ from typing import Dict, Tuple
 # =============================================================================
 # CORE GAME DESIGN
 # =============================================================================
-SUBGRID_SIZE = 3              # 3x3 sub-squares per tile. The ONE constant to rule them all.
-INTERACTION_RANGE = 2         # Sub-squares player can reach (1-2 squares out)
-MAP_SIZE: Tuple[int, int] = (60, 45)  # Large world for exploration
+# THE simulation grid resolution (unified for all systems)
+GRID_WIDTH = 180
+GRID_HEIGHT = 135
+
+# TEMPORARY: Tile subdivision constant (will be removed after tile removal)
+SUBGRID_SIZE = 3  # Each tile subdivides into 3×3 grid cells
+MAP_SIZE: Tuple[int, int] = (GRID_WIDTH // SUBGRID_SIZE, GRID_HEIGHT // SUBGRID_SIZE)  # (60, 45) tiles - TEMPORARY
+
+# Player interaction range in grid cells
+INTERACTION_RANGE = 2  # Grid cells player can reach (1-2 cells out)
 
 # =============================================================================
 # UNITS & SCALE

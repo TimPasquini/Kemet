@@ -23,9 +23,17 @@ Color = Tuple[int, int, int]
 
 
 def calculate_elevation_range(state: "GameState") -> Tuple[float, float]:
-    """Calculate min/max elevation across all tiles."""
-    elevations = [state.tiles[x][y].elevation for x in range(state.width) for y in range(state.height)]
-    return (min(elevations), max(elevations)) if elevations else (0, 0)
+    """Calculate min/max elevation across all grid cells (array-based)."""
+    import numpy as np
+    from config import GRID_WIDTH, GRID_HEIGHT
+
+    # Calculate elevation for all cells: bedrock_base + sum(layers) + offset
+    elevations = state.bedrock_base + np.sum(state.terrain_layers, axis=0) + state.elevation_offset_grid
+
+    min_elev = int(np.min(elevations))
+    max_elev = int(np.max(elevations))
+
+    return (min_elev, max_elev)
 
 
 def elevation_brightness(elevation: float, min_elev: float, max_elev: float) -> float:

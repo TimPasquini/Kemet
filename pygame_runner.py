@@ -233,18 +233,15 @@ def render_to_virtual_screen(
     hud_bottom = render_hud(virtual_screen, font, state, col1_x, y_offset + minimap_height + 10)
     render_inventory(virtual_screen, font, state, col1_x, hud_bottom)
 
-    # Column 2: Soil profile (show sub-square at cursor target, or player position if no target)
+    # Column 2: Soil profile (show grid cell at cursor target, or player position if no target)
     soil_y = y_offset + 22  # Offset to align top of header box with text in col 1
     profile_sub_pos = state.target_subsquare if state.target_subsquare else state.player_state.position
-    profile_tile_pos = subgrid_to_tile(profile_sub_pos[0], profile_sub_pos[1])
-    profile_tile = state.tiles[profile_tile_pos[0]][profile_tile_pos[1]]
-    local_x, local_y = get_subsquare_index(profile_sub_pos[0], profile_sub_pos[1])
-    profile_subsquare = profile_tile.subgrid[local_x][local_y]
-    
+    sx, sy = profile_sub_pos
+
     # Calculate available height for the soil profile (fill down to bottom margin)
     soil_height = ui_state.log_panel_rect.y - soil_y - 12  # Stop at log panel line, -12 margin
-    profile_water = state.water_grid[profile_sub_pos]
-    render_soil_profile(virtual_screen, font, profile_tile, profile_subsquare, (col2_x, soil_y), PROFILE_WIDTH, soil_height, profile_water)
+    profile_water = state.water_grid[sx, sy]
+    render_soil_profile(virtual_screen, font, state, sx, sy, (col2_x, soil_y), PROFILE_WIDTH, soil_height, profile_water)
 
     # 3. Render toolbar
     render_toolbar(virtual_screen, font, toolbar, ui_state.toolbar_rect.topleft,
@@ -529,10 +526,15 @@ def run(tile_size: int = TILE_SIZE) -> None:
         player_py = state.player_state.smooth_y * SUB_TILE_SIZE
         camera.follow(player_px, player_py)
 
-        # Update cursor tracking only when mouse has moved (avoids per-frame recalculation)
+        # Update cursor tracking when mouse moves OR when player moves
+        # (ensures target stays clamped to player's interaction range)
         mouse_screen_pos = pygame.mouse.get_pos()
-        if mouse_screen_pos != last_mouse_pos:
-            last_mouse_pos = mouse_screen_pos
+        player_moved = state.player_state.position != getattr(update_player_movement, 'last_player_pos', None)
+        update_player_movement.last_player_pos = state.player_state.position
+
+        if mouse_screen_pos != last_mouse_pos or player_moved:
+            if mouse_screen_pos != last_mouse_pos:
+                last_mouse_pos = mouse_screen_pos
             virtual_pos = screen_to_virtual(mouse_screen_pos, screen.get_size())
             ui_state.update_cursor(
                 virtual_pos,
