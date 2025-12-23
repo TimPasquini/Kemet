@@ -7,7 +7,7 @@ Flow crosses tile boundaries seamlessly - sub-squares are independent units.
 Key concepts:
 - Each sub-square has its own surface_water amount
 - Flow is 8-directional (cardinal + diagonal)
-- Elevation = tile base elevation + sub-square elevation_offset
+- Elevation = bedrock_base + sum(terrain_layers)
 - Water flows from high to low, distributed proportionally
 """
 from __future__ import annotations
@@ -34,12 +34,12 @@ Point = Tuple[int, int]
 
 
 def get_subsquare_elevation(tile: "Tile", local_x: int, local_y: int) -> int:
-    """Get absolute elevation of a sub-square in depth units."""
-    # Tile's terrain surface elevation (in depth units) + sub-square offset
-    base_elev = tile.terrain.get_surface_elevation()
-    # Convert offset from meters to depth units (1 unit = 0.1m = 100mm)
-    offset_units = int(tile.subgrid[local_x][local_y].elevation_offset * 10)
-    return base_elev + offset_units
+    """Get absolute elevation of a sub-square in depth units.
+
+    DEPRECATED: This function is legacy. Use elevation_grid[sx, sy] directly.
+    """
+    # Legacy function - returns tile's terrain surface elevation
+    return tile.terrain.get_surface_elevation()
 
 
 def get_subsquare_water_height(tile: "Tile", local_x: int, local_y: int) -> float:
@@ -54,11 +54,10 @@ def simulate_surface_flow(state: "GameState") -> int:
     """Simulate surface water flow using vectorized NumPy operations."""
     # 1. Ensure Elevation Grid is up to date
     if state.terrain_changed:
-        # Vectorized rebuild: bedrock + all terrain layers + elevation offsets
+        # Vectorized rebuild: bedrock + all terrain layers
         state.elevation_grid = (
             state.bedrock_base +
-            np.sum(state.terrain_layers, axis=0) +
-            state.elevation_offset_grid
+            np.sum(state.terrain_layers, axis=0)
         )
         state.terrain_changed = False
 

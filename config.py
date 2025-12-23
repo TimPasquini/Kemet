@@ -34,15 +34,10 @@ INTERACTION_RANGE = 2  # Grid cells player can reach (1-2 cells out)
 # - SEA_LEVEL (0) is the reference point
 # - Typical bedrock_base: -25 to -20 units (2.0-2.5m below sea level)
 #
-# SUBSQUARE MICRO-TERRAIN:
-# - SubSquare.elevation_offset is stored in METERS (not depth units)
-# - Convert to depth units: offset_units = int(elevation_offset * 10)
-# - Typical range: -0.05 to +0.05 meters (-0.5 to +0.5 depth units)
-#
-# ELEVATION HIERARCHY:
-# - Tile surface elevation = bedrock_base + sum(all layer depths)
-# - Subsquare elevation = tile surface + offset_units
-# - Water surface height = subsquare elevation + surface_water amount
+# ELEVATION CALCULATION (single source of truth):
+# - elevation_grid[sx, sy] = bedrock_base[sx, sy] + sum(terrain_layers[:, sx, sy])
+# - Water surface height = elevation + surface_water amount
+# - All terrain variation represented in terrain_layers at 180×135 resolution
 
 DEPTH_UNIT_MM = 100  # 1 depth unit = 100mm (10cm)
 SEA_LEVEL = 0        # Reference elevation

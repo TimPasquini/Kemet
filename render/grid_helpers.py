@@ -15,12 +15,11 @@ if TYPE_CHECKING:
 def get_grid_elevation(state: "GameState", sx: int, sy: int) -> int:
     """Get absolute elevation of a grid cell in depth units.
 
-    Elevation = bedrock_base + sum(all layer depths) + elevation_offset
+    Elevation = bedrock_base + sum(all layer depths)
     """
     bedrock = state.bedrock_base[sx, sy]
     layers_total = np.sum(state.terrain_layers[:, sx, sy])
-    offset = state.elevation_offset_grid[sx, sy]
-    return bedrock + layers_total + offset
+    return bedrock + layers_total
 
 
 def get_tile_elevation_range(state: "GameState", tile_x: int, tile_y: int) -> Tuple[int, int]:

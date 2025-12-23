@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 def get_grid_elevation(state: "GameState", sx: int, sy: int) -> int:
     """Get absolute elevation of a grid cell in depth units from arrays.
 
-    Elevation = bedrock_base + sum(all layer depths) + elevation_offset
+    Elevation = bedrock_base + sum(all layer depths)
     """
     # This is faster than np.sum on a slice for a single cell
     layers_total = (
@@ -26,7 +26,7 @@ def get_grid_elevation(state: "GameState", sx: int, sy: int) -> int:
         state.terrain_layers[2, sx, sy] + state.terrain_layers[3, sx, sy] +
         state.terrain_layers[4, sx, sy] + state.terrain_layers[5, sx, sy]
     )
-    return state.bedrock_base[sx, sy] + layers_total + state.elevation_offset_grid[sx, sy]
+    return state.bedrock_base[sx, sy] + layers_total
 
 
 def get_total_elevation(state: "GameState", sx: int, sy: int) -> float:
@@ -41,8 +41,7 @@ def get_total_elevation(state: "GameState", sx: int, sy: int) -> float:
     """
     return units_to_meters(
         state.bedrock_base[sx, sy] +
-        np.sum(state.terrain_layers[:, sx, sy]) +
-        state.elevation_offset_grid[sx, sy]
+        np.sum(state.terrain_layers[:, sx, sy])
     )
 
 

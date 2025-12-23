@@ -27,8 +27,8 @@ def calculate_elevation_range(state: "GameState") -> Tuple[float, float]:
     import numpy as np
     from config import GRID_WIDTH, GRID_HEIGHT
 
-    # Calculate elevation for all cells: bedrock_base + sum(layers) + offset
-    elevations = state.bedrock_base + np.sum(state.terrain_layers, axis=0) + state.elevation_offset_grid
+    # Calculate elevation for all cells: bedrock_base + sum(layers)
+    elevations = state.bedrock_base + np.sum(state.terrain_layers, axis=0)
 
     min_elev = int(np.min(elevations))
     max_elev = int(np.max(elevations))

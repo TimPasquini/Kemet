@@ -71,8 +71,7 @@ def get_grid_elevation(state: "GameState", sx: int, sy: int) -> int:
     """Get absolute elevation of a grid cell in depth units from arrays."""
     return (
         state.bedrock_base[sx, sy] +
-        np.sum(state.terrain_layers[:, sx, sy]) +
-        state.elevation_offset_grid[sx, sy]
+        np.sum(state.terrain_layers[:, sx, sy])
     )
 
 
@@ -237,25 +236,8 @@ def apply_overnight_erosion(
 
 def apply_erosion(state: "GameState", sx: int, sy: int, amount: float) -> None:
     """Apply erosion to a grid cell's terrain (Arrays)."""
-    # 1. Micro-erosion: adjust elevation offset
-    # amount is roughly in depth units (0.1m). 
-    # 0.01 factor in original code implies 1 unit erosion = 1cm drop?
-    # We will accumulate integer drops.
-    
-    # Probabilistic rounding to handle small erosion amounts on integer grid
-    int_drop = int(amount)
-    remainder = amount - int_drop
-    if np.random.random() < remainder:
-        int_drop += 1
-        
-    if int_drop > 0:
-        # Lower the micro-terrain offset
-        state.elevation_offset_grid[sx, sy] -= int_drop
-        state.terrain_changed = True
-        state.dirty_subsquares.add((sx, sy))
-
-    # 2. Material Removal: if erosion is significant, remove actual soil
-    if amount > 0.1:
+    # Material Removal: remove actual soil from terrain layers
+    if amount > 0:
         layer, _ = get_exposed_layer_and_material(state, sx, sy)
         if layer != SoilLayer.BEDROCK:
             depth_to_remove = max(1, int(amount))

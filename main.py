@@ -134,8 +134,6 @@ class GameState:
     subsurface_water_grid: np.ndarray | None = None
     # Shape: (GRID_WIDTH, GRID_HEIGHT), dtype=int32. Base elevation of bedrock.
     bedrock_base: np.ndarray | None = None
-    # Shape: (GRID_WIDTH, GRID_HEIGHT), dtype=int32. Micro-terrain offset in depth units.
-    elevation_offset_grid: np.ndarray | None = None
 
     # === Material Property Grids (for physics calculations) ===
     # Shape: (6, GRID_WIDTH, GRID_HEIGHT), dtype='U20'. Material name for each layer.
@@ -296,7 +294,6 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
     terrain_materials = grids["terrain_materials"]
     subsurface_water_grid = grids["subsurface_water_grid"]
     bedrock_base = grids["bedrock_base"]
-    elevation_offset_grid = grids["elevation_offset_grid"]
     wellspring_grid = grids["wellspring_grid"]
     water_grid = grids["water_grid"]
     kind_grid = grids["kind_grid"]
@@ -336,11 +333,7 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
             for sx in range(SUBGRID_SIZE):
                 row = []
                 for sy in range(SUBGRID_SIZE):
-                    gx = x * SUBGRID_SIZE + sx
-                    gy = y * SUBGRID_SIZE + sy
-                    offset_units = elevation_offset_grid[gx, gy]
-                    offset_m = units_to_meters(offset_units)
-                    row.append(SubSquare(elevation_offset=offset_m))
+                    row.append(SubSquare())
                 subgrid.append(row)
 
             # Get biome kind from grid
@@ -376,7 +369,6 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
             kind_grid[gx, gy] = "flat"
             wellspring_grid[gx, gy] = 0
             bedrock_base[gx, gy] = depot_terrain.bedrock_base
-            elevation_offset_grid[gx, gy] = 0  # Set flat micro-terrain for depot
             for layer in SoilLayer:
                 terrain_layers[layer, gx, gy] = depot_terrain.get_layer_depth(layer)
                 terrain_materials[layer, gx, gy] = depot_terrain.get_layer_material(layer)
@@ -400,7 +392,7 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
     trench_grid = np.zeros((width * SUBGRID_SIZE, height * SUBGRID_SIZE), dtype=np.uint8)
 
     # Initialize elevation_grid (calculated from other grids)
-    elevation_grid = bedrock_base + np.sum(terrain_layers, axis=0) + elevation_offset_grid
+    elevation_grid = bedrock_base + np.sum(terrain_layers, axis=0)
 
     # Create game state
     state = GameState(
@@ -417,7 +409,6 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
         terrain_layers=terrain_layers,
         subsurface_water_grid=subsurface_water_grid,
         bedrock_base=bedrock_base,
-        elevation_offset_grid=elevation_offset_grid,
         terrain_materials=terrain_materials,
         permeability_vert_grid=permeability_vert_grid,
         permeability_horiz_grid=permeability_horiz_grid,
@@ -495,7 +486,7 @@ def lower_ground(state: GameState, min_layer_name: str = "bedrock") -> None:
             state.invalidate_elevation_range()
             state.terrain_changed = True
             new_elev_units = state.bedrock_base[sx, sy] + np.sum(state.terrain_layers[:, sx, sy])
-            new_elev = units_to_meters(new_elev_units) + units_to_meters(state.elevation_offset_grid[sx, sy])
+            new_elev = units_to_meters(new_elev_units)
             state.messages.append(f"Lowered bedrock by 0.2m. Elev: {new_elev:.2f}m")
             subsquare.invalidate_appearance()
             state.dirty_subsquares.add(sub_pos)
@@ -523,7 +514,7 @@ def lower_ground(state: GameState, min_layer_name: str = "bedrock") -> None:
 
     # Calculate new elevation (simplified - use grid bedrock_base + layers)
     new_elev_units = state.bedrock_base[sx, sy] + np.sum(state.terrain_layers[:, sx, sy])
-    new_elev = units_to_meters(new_elev_units) + units_to_meters(state.elevation_offset_grid[sx, sy])
+    new_elev = units_to_meters(new_elev_units)
     state.messages.append(f"Removed {units_to_meters(removed):.2f}m {material_name}. Elev: {new_elev:.2f}m")
 
 
@@ -565,7 +556,7 @@ def raise_ground(state: GameState, target_layer_name: str = "topsoil") -> None:
 
     # Calculate new elevation (simplified - use grid bedrock_base + layers)
     new_elev_units = state.bedrock_base[sx, sy] + np.sum(state.terrain_layers[:, sx, sy])
-    new_elev = units_to_meters(new_elev_units) + units_to_meters(state.elevation_offset_grid[sx, sy])
+    new_elev = units_to_meters(new_elev_units)
     state.messages.append(f"Added {material_name} to surface (cost {cost} scrap). Elev: {new_elev:.2f}m")
 
 

@@ -39,14 +39,12 @@ Point = Tuple[int, int]
 # =============================================================================
 
 def _create_default_subgrid() -> List[List[SubSquare]]:
-    """Create a 3x3 subgrid with slight elevation variation."""
+    """Create a 3x3 subgrid."""
     subgrid = []
     for sx in range(SUBGRID_SIZE):
         row = []
         for sy in range(SUBGRID_SIZE):
-            # Quantize to 0.1m steps so physics engine (1 unit = 0.1m) sees the variation
-            offset = random.choice([-0.1, 0.0, 0.1])
-            row.append(SubSquare(elevation_offset=offset))
+            row.append(SubSquare())
         subgrid.append(row)
     return subgrid
 
@@ -86,10 +84,6 @@ class Tile:
     def get_subsquare(self, local_x: int, local_y: int) -> SubSquare:
         """Get a subsquare by local index (0-2, 0-2)."""
         return self.subgrid[local_x][local_y]
-
-    def get_subsquare_elevation(self, local_x: int, local_y: int) -> float:
-        """Get absolute elevation of a subsquare in meters."""
-        return self.elevation + self.subgrid[local_x][local_y].elevation_offset
 
 
 # =============================================================================
@@ -385,7 +379,6 @@ def generate_grids_direct(grid_width: int, grid_height: int) -> Dict:
             - terrain_materials: (6, grid_w, grid_h) material names
             - subsurface_water_grid: (6, grid_w, grid_h) water in each layer
             - bedrock_base: (grid_w, grid_h) bedrock elevation baseline
-            - elevation_offset_grid: (grid_w, grid_h) fine elevation adjustments
             - wellspring_grid: (grid_w, grid_h) wellspring output per cell
             - water_grid: (grid_w, grid_h) surface water
             - kind_grid: (grid_w, grid_h) biome type (temporary, for tile compatibility)
@@ -397,7 +390,6 @@ def generate_grids_direct(grid_width: int, grid_height: int) -> Dict:
     terrain_materials = np.zeros((len(SoilLayer), grid_width, grid_height), dtype='U20')
     subsurface_water_grid = np.zeros((len(SoilLayer), grid_width, grid_height), dtype=np.int32)
     bedrock_base = np.zeros((grid_width, grid_height), dtype=np.int32)
-    elevation_offset_grid = np.zeros((grid_width, grid_height), dtype=np.int32)
     wellspring_grid = np.zeros((grid_width, grid_height), dtype=np.int32)
     water_grid = np.zeros((grid_width, grid_height), dtype=np.int32)
     kind_grid = np.full((grid_width, grid_height), "flat", dtype='U20')
@@ -501,10 +493,6 @@ def generate_grids_direct(grid_width: int, grid_height: int) -> Dict:
         terrain_materials[SoilLayer.ORGANICS, gx, gy] = "humus"
         terrain_materials[SoilLayer.BEDROCK, gx, gy] = "bedrock"
 
-        # Add fine elevation variation (sub-tile resolution)
-        offset = random.choice([-1, 0, 1])  # ±0.1m in units (1 unit = 0.1m)
-        elevation_offset_grid[gx, gy] = offset
-
         # Saturate regolith layer to create water table
         regolith_depth = terrain_layers[SoilLayer.REGOLITH, gx, gy]
         material_name = terrain_materials[SoilLayer.REGOLITH, gx, gy]
@@ -525,7 +513,7 @@ def generate_grids_direct(grid_width: int, grid_height: int) -> Dict:
             center_gx = tx * 3 + 1
             center_gy = ty * 3 + 1
             if center_gx < grid_width and center_gy < grid_height:
-                elev = bedrock_base[center_gx, center_gy] + np.sum(terrain_layers[:, center_gx, center_gy]) + elevation_offset_grid[center_gx, center_gy]
+                elev = bedrock_base[center_gx, center_gy] + np.sum(terrain_layers[:, center_gx, center_gy])
                 elev_list.append((elev, center_gx, center_gy, tx, ty))
     elev_list.sort(key=lambda e: e[0])
 
@@ -569,7 +557,6 @@ def generate_grids_direct(grid_width: int, grid_height: int) -> Dict:
         "terrain_materials": terrain_materials,
         "subsurface_water_grid": subsurface_water_grid,
         "bedrock_base": bedrock_base,
-        "elevation_offset_grid": elevation_offset_grid,
         "wellspring_grid": wellspring_grid,
         "water_grid": water_grid,
         "kind_grid": kind_grid,

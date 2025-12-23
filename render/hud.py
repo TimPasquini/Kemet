@@ -215,11 +215,9 @@ def render_soil_profile(
 
     # Get elevation components from grids
     bedrock = state.bedrock_base[sx, sy]
-    offset_units = state.elevation_offset_grid[sx, sy]
-    offset_m = units_to_meters(offset_units)
 
-    # Calculate surface elevation: bedrock + sum of layers + offset
-    surface_elev = bedrock + np.sum(state.terrain_layers[:, sx, sy]) + offset_units
+    # Calculate surface elevation: bedrock + sum of layers
+    surface_elev = bedrock + np.sum(state.terrain_layers[:, sx, sy])
 
     # Layout: gauge on left (40px), soil profile on right
     gauge_width = 40
@@ -270,11 +268,10 @@ def render_soil_profile(
             continue
 
         # Get layer range in absolute meters (relative to sea level)
-        # Layer positions need offset added since layer_bottoms are relative to bedrock
         bot_units = layer_bottoms[layer]
         top_units = bot_units + depth
-        top_m = units_to_meters(top_units + offset_units)
-        bot_m = units_to_meters(bot_units + offset_units)
+        top_m = units_to_meters(top_units)
+        bot_m = units_to_meters(bot_units)
 
         # For bedrock, extend visually to bottom of panel
         if layer == SoilLayer.BEDROCK:

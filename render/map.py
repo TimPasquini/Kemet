@@ -196,7 +196,9 @@ def _render_terrain_per_frame(
             tile = state.tiles[tile_x][tile_y]
             subsquare = tile.subgrid[local_x][local_y]
 
-            sub_elevation = tile.get_subsquare_elevation(local_x, local_y)
+            # Get elevation from grid (in depth units, convert to meters for compatibility)
+            from ground import units_to_meters
+            sub_elevation = units_to_meters(state.elevation_grid[sub_x, sub_y])
             water_amt = state.water_grid[sub_x, sub_y]
             color = color_for_subsquare(subsquare, sub_elevation, tile, elevation_range, water_amt)
 

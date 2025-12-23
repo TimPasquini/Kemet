@@ -22,10 +22,7 @@ class SubSquare:
     """A single sub-square within a tile.
 
     Attributes:
-        elevation_offset: Height relative to tile base elevation (enables slopes within tile)
-        surface_water: Water pooled on this sub-square (in same units as tile water)
         structure_id: Reference to structure occupying this sub-square, if any
-        has_trench: Whether this sub-square has a trench dug (reduces evaporation)
         terrain_override: Optional independent terrain column for this sub-square.
             When None, the sub-square inherits terrain from its parent tile.
             When set, this sub-square has been modified independently.
@@ -34,7 +31,6 @@ class SubSquare:
     (exposed material, water state, organics). Call invalidate_appearance()
     when these factors change, or it will be recalculated at day end.
     """
-    elevation_offset: float = 0.0
     structure_id: Optional[int] = None
     terrain_override: Optional["TerrainColumn"] = None
     # Erosion system fields (sediment for immediate feedback)
