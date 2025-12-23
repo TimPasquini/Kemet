@@ -54,16 +54,12 @@ def simulate_surface_flow(state: "GameState") -> int:
     """Simulate surface water flow using vectorized NumPy operations."""
     # 1. Ensure Elevation Grid is up to date
     if state.terrain_changed:
-        # This iteration is slow but only happens on terrain modification events
-        for x in range(state.width):
-            for y in range(state.height):
-                tile = state.tiles[x][y]
-                base_elev = tile.terrain.get_surface_elevation()
-                for lx in range(SUBGRID_SIZE):
-                    for ly in range(SUBGRID_SIZE):
-                        ss = tile.subgrid[lx][ly]
-                        val = base_elev + int(ss.elevation_offset * 10)
-                        state.elevation_grid[x * 3 + lx, y * 3 + ly] = val
+        # Vectorized rebuild: bedrock + all terrain layers + elevation offsets
+        state.elevation_grid = (
+            state.bedrock_base +
+            np.sum(state.terrain_layers, axis=0) +
+            state.elevation_offset_grid
+        )
         state.terrain_changed = False
 
     water = state.water_grid

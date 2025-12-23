@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import Deque, Dict, List, Set, Tuple
 
 import numpy as np
-from config import SUBGRID_SIZE
+from config import SUBGRID_SIZE, GRID_WIDTH, GRID_HEIGHT
 from config import (
     MAX_POUR_AMOUNT,
     MIN_LAYER_THICKNESS,
@@ -25,6 +25,7 @@ from config import (
     STARTING_SEEDS,
     STARTING_BIOMASS,
     MOISTURE_EMA_ALPHA,
+    MIN_BEDROCK_ELEVATION,
 )
 from ground import (
     SoilLayer,
@@ -35,7 +36,6 @@ from ground import (
     elevation_to_units,
     units_to_meters,
 )
-from water import WaterColumn
 from subgrid import (
     SubSquare,
     subgrid_to_tile,
@@ -330,8 +330,7 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
             # Create stub terrain (just for compatibility, not accurate)
             stub_terrain = create_default_terrain(elevation_to_units(-2.0), elevation_to_units(1.0))
 
-            # Create stub water column
-            stub_water = WaterColumn()
+            # Note: WaterColumn no longer needed - all water data in grids
 
             # Create subgrid with elevation offsets from grid
             subgrid = []
@@ -355,10 +354,9 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
             tile = Tile(
                 kind=kind,
                 terrain=stub_terrain,  # Stub only - real data in grids
-                water=stub_water,  # Stub only - real data in grids
+                water=None,  # No longer used - real data in subsurface_water_grid
                 surface=SurfaceTraits(),
                 wellspring_output=wellspring_output,
-                depot=False,
                 subgrid=subgrid,
             )
             column.append(tile)
@@ -369,9 +367,8 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
     # Set up depot at player start location (in grids)
     depot_tile = tiles[start_tile[0]][start_tile[1]]
     depot_tile.kind = "flat"
-    depot_tile.depot = True
 
-    # Update grids for depot location
+    # Update grids for depot location - create good starting terrain
     depot_terrain = create_default_terrain(elevation_to_units(-2.0), elevation_to_units(1.0))
     for sx in range(SUBGRID_SIZE):
         for sy in range(SUBGRID_SIZE):
@@ -380,6 +377,7 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
             kind_grid[gx, gy] = "flat"
             wellspring_grid[gx, gy] = 0
             bedrock_base[gx, gy] = depot_terrain.bedrock_base
+            elevation_offset_grid[gx, gy] = 0  # Set flat micro-terrain for depot
             for layer in SoilLayer:
                 terrain_layers[layer, gx, gy] = depot_terrain.get_layer_depth(layer)
                 terrain_materials[layer, gx, gy] = depot_terrain.get_layer_material(layer)
@@ -396,8 +394,8 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
     from config import INITIAL_WATER_POOL
     water_pool = GlobalWaterPool(total_volume=INITIAL_WATER_POOL)
 
-    # Initialize moisture grid
-    moisture_grid = np.zeros((width, height), dtype=float)
+    # Initialize moisture grid at grid resolution
+    moisture_grid = np.zeros((GRID_WIDTH, GRID_HEIGHT), dtype=float)
 
     # Initialize trench grid
     trench_grid = np.zeros((width * SUBGRID_SIZE, height * SUBGRID_SIZE), dtype=np.uint8)
@@ -405,7 +403,8 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
     # Initialize elevation_grid (calculated from other grids)
     elevation_grid = bedrock_base + np.sum(terrain_layers, axis=0) + elevation_offset_grid
 
-    return GameState(
+    # Create game state
+    state = GameState(
         width=width,
         height=height,
         tiles=tiles,
@@ -426,6 +425,15 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
         porosity_grid=porosity_grid,
         wellspring_grid=wellspring_grid,
     )
+
+    # Create depot structure at starting subsquare
+    from structures import Depot
+    from subgrid import get_subsquare_index
+    state.structures[start_subsquare] = Depot()
+    local_x, local_y = get_subsquare_index(start_subsquare[0], start_subsquare[1])
+    depot_tile.subgrid[local_x][local_y].structure_id = 1
+
+    return state
 
 
 def dig_trench(state: GameState) -> None:
@@ -476,10 +484,15 @@ def lower_ground(state: GameState, min_layer_name: str = "bedrock") -> None:
     # If no soil layers remain, allow lowering bedrock if min_layer is "bedrock"
     if exposed is None:
         if min_layer_name.lower() == "bedrock":
+            # Check if we've hit minimum bedrock depth
+            if state.bedrock_base[sx, sy] <= MIN_BEDROCK_ELEVATION:
+                state.messages.append(f"Cannot dig deeper - bedrock floor reached ({units_to_meters(MIN_BEDROCK_ELEVATION):.1f}m)")
+                return
+
             # Lower bedrock base (permanent terrain change)
             # TODO: Pickaxe currently shows shovel message instead of bedrock message.
             # This will be fixed during tool system rewrite.
-            state.bedrock_base[sx, sy] -= 2
+            state.bedrock_base[sx, sy] = max(MIN_BEDROCK_ELEVATION, state.bedrock_base[sx, sy] - 2)
             state.invalidate_elevation_range()
             state.terrain_changed = True
             new_elev_units = state.bedrock_base[sx, sy] + np.sum(state.terrain_layers[:, sx, sy])
@@ -498,6 +511,10 @@ def lower_ground(state: GameState, min_layer_name: str = "bedrock") -> None:
     state.terrain_layers[exposed, sx, sy] -= removed
 
     material_name = state.terrain_materials[exposed, sx, sy]
+
+    # Clear material name if layer is now empty
+    if state.terrain_layers[exposed, sx, sy] == 0:
+        state.terrain_materials[exposed, sx, sy] = ""
 
     # Update visual and terrain flags
     subsquare.invalidate_appearance()
@@ -533,6 +550,9 @@ def raise_ground(state: GameState, target_layer_name: str = "topsoil") -> None:
     # If no soil layers exist, add to regolith (base layer)
     if exposed is None:
         exposed = SoilLayer.REGOLITH
+        # Ensure material name is set for new layer
+        if not state.terrain_materials[exposed, sx, sy]:
+            state.terrain_materials[exposed, sx, sy] = "gravel"  # Default regolith material
 
     # Add 2 units (0.2m) to the exposed layer
     state.terrain_layers[exposed, sx, sy] += 2
@@ -553,7 +573,21 @@ def raise_ground(state: GameState, target_layer_name: str = "topsoil") -> None:
 def collect_water(state: GameState) -> None:
     tx, ty = state.get_action_target_tile()
     tile = state.tiles[tx][ty]
-    if tile.depot:
+
+    # Check if any subsquare on this tile has a depot structure
+    from subgrid import tile_to_subgrid
+    has_depot = False
+    sx_base, sy_base = tile_to_subgrid(tx, ty)
+    for dx in range(SUBGRID_SIZE):
+        for dy in range(SUBGRID_SIZE):
+            sub_pos = (sx_base + dx, sy_base + dy)
+            if sub_pos in state.structures and state.structures[sub_pos].kind == "depot":
+                has_depot = True
+                break
+        if has_depot:
+            break
+
+    if has_depot:
         state.inventory.water += DEPOT_WATER_AMOUNT
         state.inventory.scrap += DEPOT_SCRAP_AMOUNT
         state.inventory.seeds += DEPOT_SEEDS_AMOUNT
@@ -614,24 +648,16 @@ def simulate_tick(state: GameState) -> None:
         # Could be optimized further by tracking active surface water tiles.
         simulate_surface_seepage(state)
         
-        # Update moisture history using Vectorized/EMA approach
-        # Calculate current total water (surface + subsurface)
-        # Note: We iterate to bridge the object gap until subsurface is fully vectorized
-        current_moisture = np.zeros((state.width, state.height), dtype=float)
-        for x in range(state.width):
-            for y in range(state.height):
-                tile = state.tiles[x][y]
-                # Surface water sum
-                surf = get_tile_surface_water(tile, state.water_grid, x, y)
-                # Subsurface water sum
-                sub = tile.water.total_subsurface_water()
-                current_moisture[x, y] = surf + sub
+        # Update moisture history using fully vectorized approach
+        # Calculate current total water (surface + subsurface) at grid resolution
+        subsurface_total = np.sum(state.subsurface_water_grid, axis=0)  # Sum all 6 layers -> (180, 135)
+        current_moisture_grid = state.water_grid + subsurface_total  # Both (180, 135)
 
         if state.moisture_grid is None:
-            state.moisture_grid = current_moisture
+            state.moisture_grid = current_moisture_grid.astype(float)
         else:
             # Apply Exponential Moving Average
-            state.moisture_grid = (1 - MOISTURE_EMA_ALPHA) * state.moisture_grid + MOISTURE_EMA_ALPHA * current_moisture
+            state.moisture_grid = (1 - MOISTURE_EMA_ALPHA) * state.moisture_grid + MOISTURE_EMA_ALPHA * current_moisture_grid
 
     if tick % 4 == 1:
         simulate_subsurface_tick_vectorized(state)
@@ -651,7 +677,16 @@ def end_day(state: GameState) -> None:
         erosion_messages = apply_overnight_erosion(state)
         state.messages.extend(erosion_messages)
 
-        biome_messages = recalculate_biomes(state.tiles, state.width, state.height, state.moisture_grid)
+        # Aggregate grid-resolution moisture (180x135) to tile resolution (60x45)
+        if state.moisture_grid is not None:
+            # Reshape to (60, 3, 45, 3) and average over the 3x3 subgrids
+            tile_moisture = state.moisture_grid.reshape(
+                state.width, SUBGRID_SIZE, state.height, SUBGRID_SIZE
+            ).mean(axis=(1, 3))
+        else:
+            tile_moisture = np.zeros((state.width, state.height), dtype=float)
+
+        biome_messages = recalculate_biomes(state.tiles, state.width, state.height, tile_moisture)
         state.messages.extend(biome_messages)
 
         for row in state.tiles:

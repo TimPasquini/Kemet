@@ -180,7 +180,7 @@ class UIState:
                 return
 
             tile = state.tiles[tile_x][tile_y]
-            if self.target_subsquare in state.structures or tile.kind == "rock" or tile.depot:
+            if self.target_subsquare in state.structures or tile.kind == "rock":
                 self.is_valid_target = False
 
     def update_cursor(

@@ -113,20 +113,34 @@ def render_hud(
     y_offset += LINE_HEIGHT
 
     if state.moisture_grid is not None:
-        moist = state.moisture_grid[x, y]
+        # Aggregate from grid resolution to tile
+        from config import SUBGRID_SIZE
+        gx_start, gy_start = x * SUBGRID_SIZE, y * SUBGRID_SIZE
+        tile_moisture_cells = state.moisture_grid[
+            gx_start:gx_start + SUBGRID_SIZE,
+            gy_start:gy_start + SUBGRID_SIZE
+        ]
+        moist = tile_moisture_cells.mean()
         # Light blue for moisture
         draw_text(screen, font, f"Soil Moisture: {moist:.1f}", (hud_x, y_offset), (100, 200, 255))
     y_offset += LINE_HEIGHT
-    # Get surface water from sub-squares (not tile.water which is subsurface only)
+    # Get water from grids
     surface_water = get_tile_surface_water(tile, state.water_grid, x, y)
-    total_water = surface_water + tile.water.total_subsurface_water()
+    # Get subsurface water from grid (sum all 9 grid cells for this tile, all layers)
+    gx_start, gy_start = x * SUBGRID_SIZE, y * SUBGRID_SIZE
+    tile_subsurface = state.subsurface_water_grid[
+        :,  # All layers
+        gx_start:gx_start + SUBGRID_SIZE,
+        gy_start:gy_start + SUBGRID_SIZE
+    ].sum()
+    total_water = surface_water + tile_subsurface
     draw_text(screen, font, f"Water: {total_water / 10:.1f}L total", (hud_x, y_offset))
     y_offset += LINE_HEIGHT
     draw_text(screen, font, f"  Surface: {surface_water / 10:.1f}L", (hud_x + 10, y_offset), COLOR_TEXT_GRAY)
     y_offset += LINE_HEIGHT
 
-    if tile.water.total_subsurface_water() > 0:
-        draw_text(screen, font, f"  Ground: {tile.water.total_subsurface_water() / 10:.1f}L", (hud_x + 10, y_offset), COLOR_TEXT_GRAY)
+    if tile_subsurface > 0:
+        draw_text(screen, font, f"  Ground: {tile_subsurface / 10:.1f}L", (hud_x + 10, y_offset), COLOR_TEXT_GRAY)
         y_offset += LINE_HEIGHT
 
     # Check if any subsquare in the player's tile has a trench
@@ -242,6 +256,8 @@ def render_soil_profile(
     layer_bottoms = {}
     cumulative = bedrock
     layer_bottoms[SoilLayer.BEDROCK] = bedrock
+    # Add bedrock depth to cumulative so other layers stack on top of it
+    cumulative += state.terrain_layers[SoilLayer.BEDROCK, sx, sy]
     for layer in SoilLayer:
         if layer != SoilLayer.BEDROCK:
             layer_bottoms[layer] = cumulative
@@ -256,7 +272,7 @@ def render_soil_profile(
         # Get layer range in absolute meters (relative to sea level)
         # Layer positions need offset added since layer_bottoms are relative to bedrock
         bot_units = layer_bottoms[layer]
-        top_units = bot_units + depth if layer != SoilLayer.BEDROCK else bot_units
+        top_units = bot_units + depth
         top_m = units_to_meters(top_units + offset_units)
         bot_m = units_to_meters(bot_units + offset_units)
 
@@ -277,8 +293,13 @@ def render_soil_profile(
 
         if draw_h > 0:
             material_name = state.terrain_materials[layer, sx, sy]
-            props = MATERIAL_LIBRARY.get(material_name)
-            color = props.display_color if props else (150, 150, 150)
+            # Handle empty/uninitialized material names
+            if not material_name or material_name == '':
+                # Use default gray for missing material
+                color = (150, 150, 150)
+            else:
+                props = MATERIAL_LIBRARY.get(material_name)
+                color = props.display_color if props else (150, 150, 150)
             pygame.draw.rect(screen, color, (profile_x, draw_top, profile_width, draw_h))
 
             # Draw water fill overlay from grids

@@ -153,7 +153,21 @@ def render_map_viewport(
             if wellspring_output > 0:
                 spring_color = COLOR_WELLSPRING_STRONG if wellspring_output / 10 > 0.5 else COLOR_WELLSPRING_WEAK
                 pygame.draw.circle(surface, spring_color, rect.center, WELLSPRING_RADIUS * camera.zoom)
-            if tile.depot:
+
+            # Check if any subsquare on this tile has a depot structure
+            from subgrid import tile_to_subgrid
+            has_depot = False
+            sx_base, sy_base = tile_to_subgrid(tx, ty)
+            for dx in range(SUBGRID_SIZE):
+                for dy in range(SUBGRID_SIZE):
+                    sub_pos = (sx_base + dx, sy_base + dy)
+                    if sub_pos in state.structures and state.structures[sub_pos].kind == "depot":
+                        has_depot = True
+                        break
+                if has_depot:
+                    break
+
+            if has_depot:
                 pygame.draw.rect(surface, COLOR_DEPOT, rect.inflate(-TRENCH_INSET, -TRENCH_INSET), border_radius=3)
                 draw_text(surface, font, "D", (rect.x + 18, rect.y + 12), color=(40, 40, 20))
 

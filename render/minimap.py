@@ -65,10 +65,22 @@ def render_minimap(
             if total_water > 50:  # Threshold for showing water on minimap
                 color = (60, 100, 180)
 
-            # Show depot
-            if tile.depot:
+            # Show depot - check if any subsquare on this tile has a depot structure
+            from subgrid import tile_to_subgrid
+            has_depot = False
+            sx_base, sy_base = tile_to_subgrid(x, y)
+            for dx in range(SUBGRID_SIZE):
+                for dy in range(SUBGRID_SIZE):
+                    sub_pos = (sx_base + dx, sy_base + dy)
+                    if sub_pos in state.structures and state.structures[sub_pos].kind == "depot":
+                        has_depot = True
+                        break
+                if has_depot:
+                    break
+
+            if has_depot:
                 color = (200, 50, 50)
-                
+
             # Draw pixel
             px = rect.x + int(x * scale_x)
             py = rect.y + int(y * scale_y)

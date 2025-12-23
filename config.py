@@ -46,6 +46,7 @@ INTERACTION_RANGE = 2  # Grid cells player can reach (1-2 cells out)
 
 DEPTH_UNIT_MM = 100  # 1 depth unit = 100mm (10cm)
 SEA_LEVEL = 0        # Reference elevation
+MIN_BEDROCK_ELEVATION = -100  # Minimum bedrock depth (-10m) to prevent infinite excavation
 
 # =============================================================================
 # TIME & SIMULATION

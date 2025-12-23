@@ -24,6 +24,52 @@ if TYPE_CHECKING:
     from main import GameState
 
 
+def shift_to_neighbor(flow: np.ndarray, dx: int, dy: int) -> tuple[np.ndarray, int]:
+    """Shift flow array to neighbor position without edge wrapping.
+
+    Args:
+        flow: Array to shift
+        dx, dy: Direction offset (-1, 0, or 1)
+
+    Returns:
+        (shifted_array, edge_loss) - Shifted array with edges zeroed and total lost to edges
+    """
+    result = np.zeros_like(flow)
+    edge_loss = 0
+
+    # Calculate source and destination slices
+    if dx > 0:
+        src_x = slice(dx, None)
+        dst_x = slice(None, -dx)
+        # Track water lost off the far edge (flows out to x = GRID_WIDTH)
+        edge_loss += np.sum(flow[:dx, :])
+    elif dx < 0:
+        src_x = slice(None, dx)
+        dst_x = slice(-dx, None)
+        # Track water lost off the near edge (flows out to x = -1)
+        edge_loss += np.sum(flow[dx:, :])
+    else:
+        src_x = slice(None)
+        dst_x = slice(None)
+
+    if dy > 0:
+        src_y = slice(dy, None)
+        dst_y = slice(None, -dy)
+        # Track water lost off the far edge (flows out to y = GRID_HEIGHT)
+        edge_loss += np.sum(flow[:, :dy])
+    elif dy < 0:
+        src_y = slice(None, dy)
+        dst_y = slice(-dy, None)
+        # Track water lost off the near edge (flows out to y = -1)
+        edge_loss += np.sum(flow[:, dy:])
+    else:
+        src_y = slice(None)
+        dst_y = slice(None)
+
+    result[dst_x, dst_y] = flow[src_x, src_y]
+    return result, int(edge_loss)
+
+
 def compute_layer_elevation_ranges(state: "GameState") -> tuple[np.ndarray, np.ndarray]:
     """Compute bottom and top elevations for all layers.
 
@@ -238,6 +284,9 @@ def calculate_subsurface_flow_vectorized(
         transferable = (src_water * flow_pct) // 100
         transferable = np.where(active_mask, transferable, 0)
 
+        # Track total water lost to edges
+        total_edge_loss = 0
+
         # Distribute flow to all targets proportionally
         for tgt_layer_idx, dx, dy, pressure_diff in flow_targets:
             # Fraction to this specific target
@@ -252,19 +301,14 @@ def calculate_subsurface_flow_vectorized(
             # Remove from source layer
             deltas[src_layer] -= flow
 
-            # Add to target layer at neighbor position
-            neighbor_flow = np.roll(flow, (-dx, -dy), axis=(0, 1))
-            # Zero wrapped edges
-            if dx > 0:
-                neighbor_flow[:dx, :] = 0
-            elif dx < 0:
-                neighbor_flow[dx:, :] = 0
-            if dy > 0:
-                neighbor_flow[:, :dy] = 0
-            elif dy < 0:
-                neighbor_flow[:, dy:] = 0
-
+            # Add to target layer at neighbor position (no wrapping)
+            neighbor_flow, edge_loss = shift_to_neighbor(flow, dx, dy)
             deltas[tgt_layer_idx] += neighbor_flow
+            total_edge_loss += edge_loss
+
+        # Return water lost to edges back to the pool
+        if total_edge_loss > 0:
+            state.water_pool.edge_runoff(total_edge_loss)
 
     # Apply deltas atomically
     state.subsurface_water_grid += deltas
@@ -335,21 +379,19 @@ def calculate_overflows_vectorized(
         state.subsurface_water_grid[layer] -= np.where(no_neighbors_mask, overflow_amount, 0)
 
         # Distribute to neighbors
+        total_edge_loss = 0
         for diff, dx, dy in neighbor_diffs:
             fraction = np.divide(diff, total_diff, out=np.zeros_like(diff, dtype=np.float64), where=total_diff > 0)
             flow = (overflow_amount * fraction).astype(np.int32)
 
             state.subsurface_water_grid[layer] -= flow
-            neighbor_flow = np.roll(flow, (-dx, -dy), axis=(0, 1))
-            if dx > 0:
-                neighbor_flow[:dx, :] = 0
-            elif dx < 0:
-                neighbor_flow[dx:, :] = 0
-            if dy > 0:
-                neighbor_flow[:, :dy] = 0
-            elif dy < 0:
-                neighbor_flow[:, dy:] = 0
+            neighbor_flow, edge_loss = shift_to_neighbor(flow, dx, dy)
             state.subsurface_water_grid[layer] += neighbor_flow
+            total_edge_loss += edge_loss
+
+        # Return water lost to edges back to the pool
+        if total_edge_loss > 0:
+            state.water_pool.edge_runoff(total_edge_loss)
 
     return surface_overflow
 

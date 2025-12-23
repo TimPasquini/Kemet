@@ -61,6 +61,19 @@ class Structure(ABC):
 
 
 @dataclass
+class Depot(Structure):
+    """Player's starting base/storage location."""
+    kind: str = "depot"
+
+    def tick(self, state: "GameState", tile: "Tile", subsquare: "SubSquare", tx: int, ty: int) -> None:
+        # Depot is passive - no tick behavior needed
+        pass
+
+    def get_survey_string(self) -> str:
+        return f"struct={self.kind}"
+
+
+@dataclass
 class Condenser(Structure):
     """Generates water from the air."""
     kind: str = "condenser"
@@ -113,9 +126,9 @@ class Planter(Structure):
     def tick(self, state: "GameState", tile: "Tile", subsquare: "SubSquare", tx: int, ty: int) -> None:
         from subgrid import ensure_terrain_override  # Local import
 
-        # Total water includes sub-square surface water + subsurface
-        surface_water = get_tile_surface_water(tile, state.water_grid, tx, ty)
-        total_water = surface_water + tile.water.total_subsurface_water()
+        # Total water includes sub-square surface water + subsurface (from grids)
+        from grid_helpers import get_tile_total_water
+        total_water = get_tile_total_water(state, tx, ty)
 
         if total_water >= PLANTER_WATER_REQUIREMENT:
             self.growth += PLANTER_GROWTH_RATE
@@ -161,9 +174,6 @@ def build_structure(state: "GameState", kind: str) -> None:
     if tile.kind == "rock":
         state.messages.append("Cannot build on rock.")
         return
-    if tile.depot:
-        state.messages.append("Cannot build on depot.")
-        return
 
     cost = STRUCTURE_COSTS[kind]
     if state.inventory.scrap < cost.get("scrap", 0):
@@ -177,6 +187,7 @@ def build_structure(state: "GameState", kind: str) -> None:
     state.inventory.seeds -= cost.get("seeds", 0)
 
     structure_class_map = {
+        "depot": Depot,
         "condenser": Condenser,
         "cistern": Cistern,
         "planter": Planter,

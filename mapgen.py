@@ -26,7 +26,6 @@ from ground import (
     TileType,
     TILE_TYPES,
 )
-from water import WaterColumn
 from utils import get_neighbors
 from config import SUBGRID_SIZE
 from subgrid import SubSquare
@@ -70,7 +69,6 @@ class Tile:
     water: WaterColumn                  # Water storage
     surface: SurfaceTraits              # Surface features (trench, etc.)
     wellspring_output: int = 0          # Water output per tick (0 = not a wellspring)
-    depot: bool = False                 # Is this the player's depot?
     subgrid: List[List[SubSquare]] = field(default_factory=_create_default_subgrid)
 
     @property
@@ -196,8 +194,10 @@ def recalculate_biomes(
     for x in range(width):
         for y in range(height):
             tile = tiles[x][y]
-            if tile.depot:
-                continue  # Don't change depot tile
+
+            # Don't change biome of tiles with depot structures
+            # (Check moved to structures - depot is no longer a tile property)
+            # The depot tile biome can now change naturally like any other tile
 
             neighbor_tiles = [
                 tiles[nx][ny]
@@ -242,7 +242,7 @@ def _generate_wellsprings(tiles: List[List[Tile]], width: int, height: int, wate
     tiles[px][py].kind = "wadi"
     # Primary wellspring: strong output to create visible water pooling
     tiles[px][py].wellspring_output = random.randint(40, 60)
-    tiles[px][py].water.add_layer_water(SoilLayer.REGOLITH, 200)
+    # Note: Initial subsurface water now set via subsurface_water_grid, not tile.water
     # Distribute initial surface water to sub-squares
     distribute_water_to_tile(tiles[px][py], 200, water_grid, px, py)
 
@@ -257,7 +257,7 @@ def _generate_wellsprings(tiles: List[List[Tile]], width: int, height: int, wate
             continue
         # Secondary wellsprings: moderate output
         tiles[sx][sy].wellspring_output = random.randint(15, 30)
-        tiles[sx][sy].water.add_layer_water(SoilLayer.REGOLITH, 100)
+        # Note: Initial subsurface water now set via subsurface_water_grid, not tile.water
         # Distribute initial surface water to sub-squares
         distribute_water_to_tile(tiles[sx][sy], 80, water_grid, sx, sy)
         placed += 1
@@ -297,7 +297,7 @@ def generate_map(width: int, height: int, water_grid: np.ndarray) -> List[List[T
             Tile(
                 "flat",
                 create_default_terrain(bedrock_base, elevation_to_units(1.0)),
-                WaterColumn(),
+                None,  # No longer used - data in subsurface_water_grid
                 SurfaceTraits()
             )
             for _ in range(height)
@@ -345,13 +345,11 @@ def generate_map(width: int, height: int, water_grid: np.ndarray) -> List[List[T
         tiles[x][y] = Tile(
             choice,
             create_default_terrain(bedrock_elev, total_soil),
-            WaterColumn(),
+            None,  # No longer used - data in subsurface_water_grid
             SurfaceTraits()
         )
 
-        # Saturate regolith to create base water table
-        regolith_capacity = tiles[x][y].terrain.get_max_water_storage(SoilLayer.REGOLITH)
-        tiles[x][y].water.set_layer_water(SoilLayer.REGOLITH, regolith_capacity)
+        # Note: Initial water table now set in subsurface_water_grid, not here
 
     # Add wellsprings
     _generate_wellsprings(tiles, width, height, water_grid)

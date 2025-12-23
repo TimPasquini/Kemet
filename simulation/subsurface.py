@@ -15,7 +15,7 @@ from collections import defaultdict
 from typing import TYPE_CHECKING, Dict, List, Tuple
 
 from ground import SoilLayer, MATERIAL_LIBRARY, TerrainColumn, layers_can_connect, TILE_TYPES
-from water import WaterColumn
+# WaterColumn no longer used - subsurface water stored in subsurface_water_grid
 from utils import get_neighbors
 from config import (
     RAIN_WELLSPRING_MULTIPLIER,
