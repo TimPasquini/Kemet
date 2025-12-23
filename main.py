@@ -59,7 +59,6 @@ from simulation.surface import (
     simulate_surface_flow,
     simulate_surface_seepage,
     get_tile_surface_water,
-    get_subsquare_elevation,
     remove_water_proportionally,
 )
 from simulation.subsurface import apply_tile_evaporation
@@ -716,7 +715,6 @@ def show_status(state: GameState) -> None:
 
 def survey_tile(state: GameState) -> None:
     """Survey tool - display grid cell information (array-based)."""
-    tile, subsquare, _ = state.get_target_tile_and_subsquare()
     x, y = state.get_action_target_tile()
     sub_pos = state.get_action_target_subsquare()
     sx, sy = sub_pos
@@ -724,8 +722,8 @@ def survey_tile(state: GameState) -> None:
     surface_water = state.water_grid[sx, sy]
 
     # Calculate elevation from grids
-    # For now, still use get_subsquare_elevation as it's a helper (will be migrated with rendering)
-    elev_m = units_to_meters(get_subsquare_elevation(tile, sx % 3, sy % 3))
+    from grid_helpers import get_total_elevation
+    elev_m = get_total_elevation(state, sx, sy)
 
     desc = [f"Tile {x},{y}", f"Sub {sx%3},{sy%3}", f"elev={elev_m:.2f}m",
             f"surf={surface_water / 10:.1f}L"]
@@ -736,7 +734,7 @@ def survey_tile(state: GameState) -> None:
         desc.append(f"subsrf={subsurface_total / 10:.1f}L")
 
     # Get exposed material (what the player sees on the surface)
-    from render.grid_helpers import get_exposed_material
+    from grid_helpers import get_exposed_material
     material = get_exposed_material(state, sx, sy)
     desc.append(f"material={material}")
 

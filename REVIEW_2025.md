@@ -723,4 +723,77 @@ tx, ty = sx // 3, sy // 3
 
 ---
 
+## Appendix A: Implementation Notes (Phase 1 Cleanup)
+
+### Runtime Errors Fixed (2025-12-22)
+
+After completing the Phase 1 cleanup, several runtime errors were discovered and fixed:
+
+1. **ModuleNotFoundError: No module named 'water'**
+   - Location: mapgen.py:29, simulation/subsurface.py:18
+   - Fix: Removed all `from water import WaterColumn` imports
+
+2. **NameError: name 'GRID_WIDTH' is not defined**
+   - Location: main.py:399
+   - Fix: Added `GRID_WIDTH, GRID_HEIGHT` to imports
+
+3. **WaterColumn() instantiations**
+   - Locations: mapgen.py:300, mapgen.py:348
+   - Fix: Replaced `WaterColumn()` with `None` and added comments
+
+4. **tile.water.* method calls**
+   - Locations: mapgen.py:244, mapgen.py:259
+   - Fix: Removed calls, added comments about subsurface_water_grid
+
+**Files Modified**: main.py, mapgen.py, simulation/subsurface.py
+
+### Depot Refactoring (2025-12-22)
+
+The depot was refactored from a tile property to a proper Structure:
+
+**Changes**:
+- Created `Depot` structure class in structures.py
+- Removed `depot: bool` field from Tile class
+- Updated all depot checks to look for depot structure in subsquares
+- Set `elevation_offset_grid[depot] = 0` for flat micro-terrain
+
+**Files Modified**: structures.py, main.py, mapgen.py, ui_state.py, render/map.py, render/minimap.py
+
+### Soil Meter Rendering Bug (2025-12-22)
+
+The soil meter was showing a black gap between sky and soil layers.
+
+**Root Cause**: The layer_bottoms calculation was not adding bedrock depth to the cumulative height, causing all soil layers to be positioned 1 meter too low.
+
+**Fix** (render/hud.py:260):
+```python
+cumulative = bedrock
+layer_bottoms[SoilLayer.BEDROCK] = bedrock
+# Add bedrock depth to cumulative so other layers stack on top of it
+cumulative += state.terrain_layers[SoilLayer.BEDROCK, sx, sy]
+```
+
+**Impact**: Soil profile now renders correctly without gaps
+
+### Post-Phase 1 Unification (2025-12-22)
+
+Two additional commits completed the array unification:
+
+**Commit ccdd96b - Erosion Refactor**:
+- Refactored erosion.py to operate on grid arrays
+- Added Eluviation (E) horizon to soil profile
+- Updated soil depth distribution: Regolith 30%, Subsoil 30%, Eluviation 15%, Topsoil 20%, Organics 5%
+- Updated material assignments for all biomes
+- Added separator lines in soil profile rendering
+
+**Commit 4b0bac3 - Final Unification**:
+- Refactored Planter structure to write to terrain_layers grid
+- Removed all legacy elevation helpers (get_subsquare_elevation)
+- Updated all structures to receive grid coordinates in tick()
+- Updated grid_helpers.py with complete set of accessors
+
+**Result**: All simulation systems now array-based with zero object-based physics
+
+---
+
 **End of Review**

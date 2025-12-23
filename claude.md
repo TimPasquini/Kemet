@@ -78,18 +78,25 @@ The goal is to create systems that generate believable, emergent complexity from
 
 ## Architecture Overview
 
-### Current State: Hybrid Object-Array Model
+### Current State: Unified Array Model (Data-Oriented)
 
-The codebase is in transition from a pure Object-Oriented model to a Data-Oriented (NumPy) model.
+The codebase has completed the transition to a Data-Oriented (NumPy) architecture.
 
-1.  **Storage (Objects)**:
-    *   `Tile` (60x45): Holds `TerrainColumn`, `WaterColumn`, `AtmosphereRegion`.
-    *   `SubSquare` (180x135): Holds `elevation_offset` and other transient state. `surface_water` and `has_trench` have been migrated to global NumPy arrays.
-2.  **Simulation (Arrays)**:
-    *   Surface flow is calculated on 180x135 `int32` NumPy grids (`water_grid`, `elevation_grid`).
-    *   `water_grid` and `trench_grid` are now the single source of truth for surface simulation, eliminating the object-array sync step for those properties.
-    *   **[NEW]** Unified terrain arrays (`terrain_layers`, `bedrock_base`, `elevation_offset_grid`) and `subsurface_water_grid` are initialized and populated, serving as a shadow state ready for the physics rewrite.
-    *   **[NEW]** Terrain modification tools now write to both the object graph and the unified arrays to maintain synchronization.
+1.  **Simulation (Arrays - Single Source of Truth)**:
+    *   All simulation state lives in global NumPy arrays at 180×135 resolution
+    *   `water_grid` - Surface water (int32)
+    *   `elevation_grid` - Total elevation (int32, computed from components)
+    *   `terrain_layers` - Soil layer depths (6 layers × 180 × 135, int32)
+    *   `bedrock_base` - Bedrock elevation baseline (180 × 135, int32)
+    *   `elevation_offset_grid` - Micro-terrain variation (180 × 135, int32)
+    *   `terrain_materials` - Material names per layer (6 layers × 180 × 135, str)
+    *   `subsurface_water_grid` - Underground water (6 layers × 180 × 135, int32)
+    *   `trench_grid` - Trench flags (180 × 135, bool)
+    *   All material property grids (porosity, permeability)
+2.  **Objects (Minimal Containers)**:
+    *   `Tile` (60×45): Minimal container with kind, stub terrain, subgrid references
+    *   `SubSquare` (180×135): Minimal container with terrain_override pointer
+    *   All actual simulation data accessed via grids
 
 ### Target State: Unified Grid (Data-Oriented)
 *   **Single Truth**: All simulation state lives in global NumPy arrays (180x135 currently, potentially 1024x1024 or 2048x2048).
@@ -207,10 +214,11 @@ Player moves on 180x135 grid, interaction range highlights work, cursor targetin
 - Edge runoff returns to pool
 - Evaporation routes to atmospheric reserve
 
-### Phase 5: Erosion System - PAUSED
+### Phase 5: Erosion System - COMPLETE
 - Overnight erosion using accumulated daily pressures
 - Water passage and wind exposure tracking
-- *Paused to prioritize architectural unification*
+- Fully refactored to use grid arrays (NumPy)
+- Operates directly on elevation_offset_grid and terrain_layers
 
 ### Completed Optimization
 - Refactored surface water simulation to use NumPy.
@@ -246,9 +254,15 @@ The immediate technical goal is to complete the transition to a fully vectorized
 - ✅ Edge runoff tracked to GlobalWaterPool - water conservation complete
 - ✅ WaterColumn class deleted entirely (water.py removed)
 - ✅ Grid helper functions added for clean access patterns
+- ✅ Erosion system refactored to use grid arrays (Dec 22)
+- ✅ Planter structure refactored to write to terrain_layers (Dec 22)
+- ✅ Eluviation (E) horizon added to soil profile (Dec 22)
+- ✅ All legacy elevation helpers removed (Dec 22)
+- ✅ Depot refactored to Structure class (Dec 22)
+- ✅ Soil meter rendering bug fixed (bedrock depth in cumulative) (Dec 22)
 - ⚠️ Tile/SubSquare classes still exist but minimized (can be removed in future cleanup)
 
-**Benefits Achieved**: Removed expensive sync, achieved 250× speedup on auxiliary calculations, deleted 500+ lines of dead code, complete water conservation.
+**Benefits Achieved**: Removed expensive sync, achieved 250× speedup on auxiliary calculations, deleted 500+ lines of dead code, complete water conservation, all simulation systems now array-based.
 
 ### Phase 2: Geometric Trenches
 **Goal**: Replace `has_trench` flag with actual geometry.
