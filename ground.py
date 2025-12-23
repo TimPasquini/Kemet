@@ -106,7 +106,7 @@ MATERIAL_LIBRARY = {
         permeability_horizontal=15,
         porosity=42,
         excavatable=True,
-        display_color=(140, 110, 85),
+        display_color=(180, 175, 170),
         evap_multiplier=85,
     ),
     "humus": MaterialProperties(
@@ -361,7 +361,7 @@ def create_default_terrain(bedrock_base: int, total_soil_depth: int) -> TerrainC
         bedrock_depth=10,  # Fixed bedrock thickness (1m)
         regolith_material="gravel",
         regolith_depth=(total_soil_depth * regolith_pct) // 100,
-        subsoil_material="sand",
+        subsoil_material="clay",
         subsoil_depth=(total_soil_depth * subsoil_pct) // 100,
         eluviation_material="silt",
         eluviation_depth=(total_soil_depth * eluviation_pct) // 100,

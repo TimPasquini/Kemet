@@ -463,32 +463,38 @@ def generate_grids_direct(grid_width: int, grid_height: int) -> Dict:
 
         total_soil_depth = elevation_to_units(random.uniform(*depth_range))
 
-        # Distribute soil depth across layers (simplified distribution)
-        # Regolith: 30%, Subsoil: 40%, Topsoil: 25%, Organics: 5%
+        # Distribute soil depth across layers
+        # Regolith: 30%, Subsoil: 30%, Eluviation: 15%, Topsoil: 20%, Organics: 5%
         terrain_layers[SoilLayer.REGOLITH, gx, gy] = int(total_soil_depth * 0.30)
-        terrain_layers[SoilLayer.SUBSOIL, gx, gy] = int(total_soil_depth * 0.40)
-        terrain_layers[SoilLayer.TOPSOIL, gx, gy] = int(total_soil_depth * 0.25)
+        terrain_layers[SoilLayer.SUBSOIL, gx, gy] = int(total_soil_depth * 0.30)
+        terrain_layers[SoilLayer.ELUVIATION, gx, gy] = int(total_soil_depth * 0.15)
+        terrain_layers[SoilLayer.TOPSOIL, gx, gy] = int(total_soil_depth * 0.20)
         terrain_layers[SoilLayer.ORGANICS, gx, gy] = int(total_soil_depth * 0.05)
 
         # Assign materials based on biome
         if choice == "dune":
             terrain_materials[SoilLayer.TOPSOIL, gx, gy] = "sand"
+            terrain_materials[SoilLayer.ELUVIATION, gx, gy] = "silt"
             terrain_materials[SoilLayer.SUBSOIL, gx, gy] = "sand"
             terrain_materials[SoilLayer.REGOLITH, gx, gy] = "gravel"
         elif choice == "rock":
             terrain_materials[SoilLayer.TOPSOIL, gx, gy] = "rock"
+            terrain_materials[SoilLayer.ELUVIATION, gx, gy] = "rock"
             terrain_materials[SoilLayer.SUBSOIL, gx, gy] = "rock"
             terrain_materials[SoilLayer.REGOLITH, gx, gy] = "rock"
         elif choice == "wadi":
             terrain_materials[SoilLayer.TOPSOIL, gx, gy] = "silt"
+            terrain_materials[SoilLayer.ELUVIATION, gx, gy] = "silt"
             terrain_materials[SoilLayer.SUBSOIL, gx, gy] = "clay"
             terrain_materials[SoilLayer.REGOLITH, gx, gy] = "gravel"
         elif choice == "salt":
             terrain_materials[SoilLayer.TOPSOIL, gx, gy] = "sand"
+            terrain_materials[SoilLayer.ELUVIATION, gx, gy] = "silt"
             terrain_materials[SoilLayer.SUBSOIL, gx, gy] = "silt"
             terrain_materials[SoilLayer.REGOLITH, gx, gy] = "gravel"
         else:  # flat
             terrain_materials[SoilLayer.TOPSOIL, gx, gy] = "dirt"
+            terrain_materials[SoilLayer.ELUVIATION, gx, gy] = "silt"
             terrain_materials[SoilLayer.SUBSOIL, gx, gy] = "clay"
             terrain_materials[SoilLayer.REGOLITH, gx, gy] = "gravel"
 

@@ -324,6 +324,11 @@ def render_soil_profile(
             if draw_h >= 16:
                 draw_text(screen, font, f"{layer.name.capitalize()[:3]}", (profile_x + 4, draw_top + 2), color=COLOR_TEXT_WHITE)
 
+            # Draw separator line at the bottom of the layer
+            if layer != SoilLayer.BEDROCK:
+                if y <= layer_bot_y < y + height:
+                    pygame.draw.line(screen, (0, 0, 0), (profile_x, layer_bot_y), (profile_x + profile_width, layer_bot_y), 1)
+
     # --- 3. Draw Surface Water ---
     if surface_water > 0:
         water_depth_m = units_to_meters(surface_water)

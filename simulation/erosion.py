@@ -11,7 +11,8 @@ Key concepts:
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Tuple
+import numpy as np
 
 from config import SUBGRID_SIZE
 from simulation.config import (
@@ -21,8 +22,7 @@ from simulation.config import (
     WIND_EROSION_RATE,
 )
 from atmosphere import ATMOSPHERE_REGION_SIZE
-from ground import SoilLayer, MATERIAL_LIBRARY
-from subgrid import get_subsquare_terrain, ensure_terrain_override
+from ground import SoilLayer
 
 if TYPE_CHECKING:
     from main import GameState
@@ -67,40 +67,40 @@ DIRECTION_OFFSETS: Dict[int, Tuple[int, int]] = {
 # HELPER FUNCTIONS
 # =============================================================================
 
-def get_subsquare_elevation(tile: "Tile", local_x: int, local_y: int) -> float:
-    """Get absolute elevation of a subsquare."""
-    base_elev = tile.terrain.get_surface_elevation()
-    offset_units = int(tile.subgrid[local_x][local_y].elevation_offset * 10)
-    return base_elev + offset_units
+def get_grid_elevation(state: "GameState", sx: int, sy: int) -> int:
+    """Get absolute elevation of a grid cell in depth units from arrays."""
+    return (
+        state.bedrock_base[sx, sy] +
+        np.sum(state.terrain_layers[:, sx, sy]) +
+        state.elevation_offset_grid[sx, sy]
+    )
 
 
 def get_wind_exposure(
-    sub_x: int, sub_y: int,
+    state: "GameState",
+    sx: int, sy: int,
     wind_direction: int,
-    tiles: List[List["Tile"]],
-    sub_width: int, sub_height: int,
 ) -> float:
     """Calculate wind exposure (0-1) based on upwind terrain."""
+    grid_w, grid_h = state.width * SUBGRID_SIZE, state.height * SUBGRID_SIZE
+    
     # Get upwind offset (opposite of wind direction)
     dx, dy = DIRECTION_OFFSETS[wind_direction]
-    upwind_x, upwind_y = sub_x - dx, sub_y - dy
+    upwind_x, upwind_y = sx - dx, sy - dy
 
     # Edge of map = fully exposed
-    if not (0 <= upwind_x < sub_width and 0 <= upwind_y < sub_height):
+    if not (0 <= upwind_x < grid_w and 0 <= upwind_y < grid_h):
         return 1.0
 
     # Get elevations
-    tile_x, tile_y = sub_x // SUBGRID_SIZE, sub_y // SUBGRID_SIZE
-    local_x, local_y = sub_x % SUBGRID_SIZE, sub_y % SUBGRID_SIZE
-    my_elev = get_subsquare_elevation(tiles[tile_x][tile_y], local_x, local_y)
-
-    upwind_tile_x, upwind_tile_y = upwind_x // SUBGRID_SIZE, upwind_y // SUBGRID_SIZE
-    upwind_local_x, upwind_local_y = upwind_x % SUBGRID_SIZE, upwind_y % SUBGRID_SIZE
-    upwind_elev = get_subsquare_elevation(
-        tiles[upwind_tile_x][upwind_tile_y], upwind_local_x, upwind_local_y
-    )
+    my_elev = get_grid_elevation(state, sx, sy)
+    upwind_elev = get_grid_elevation(state, upwind_x, upwind_y)
 
     # Higher upwind terrain provides shelter
+    # 1 unit = 0.1m. A 0.5m difference (5 units) provides full shelter?
+    # Original code used 5.0 (meters?) or units? 
+    # Original get_subsquare_elevation returned units.
+    # So 5 units = 0.5m.
     if upwind_elev > my_elev:
         shelter = min((upwind_elev - my_elev) / 5.0, 0.8)
         return 1.0 - shelter
@@ -108,31 +108,49 @@ def get_wind_exposure(
     return 1.0
 
 
-def get_soil_moisture(tile: "Tile", local_x: int, local_y: int, surface_water: int) -> float:
+def get_soil_moisture(state: "GameState", sx: int, sy: int) -> float:
     """Get moisture level (0-1) affecting wind erosion resistance."""
-    subsquare = tile.subgrid[local_x][local_y]
+    surface_water = state.water_grid[sx, sy]
 
     # Surface water = fully wet
     if surface_water > 10:
         return 1.0
 
     # Check soil saturation
-    terrain = get_subsquare_terrain(subsquare, tile.terrain)
-    exposed = terrain.get_exposed_layer()
-    if exposed == SoilLayer.BEDROCK:
+    # Find exposed layer
+    exposed = None
+    for layer in [SoilLayer.ORGANICS, SoilLayer.TOPSOIL, SoilLayer.ELUVIATION,
+                  SoilLayer.SUBSOIL, SoilLayer.REGOLITH]:
+        if state.terrain_layers[layer, sx, sy] > 0:
+            exposed = layer
+            break
+            
+    if exposed is None: # Bedrock
         return 0.0
 
-    max_storage = terrain.get_max_water_storage(exposed)
+    depth = state.terrain_layers[exposed, sx, sy]
+    porosity = state.porosity_grid[exposed, sx, sy]
+    max_storage = (depth * porosity) // 100
+    
     if max_storage <= 0:
         return 0.0
 
-    current = tile.water.get_layer_water(exposed)
+    current = state.subsurface_water_grid[exposed, sx, sy]
     saturation = current / max_storage
 
     # Surface water adds moisture
     surface_factor = min(surface_water / 20.0, 0.3)
 
     return min(1.0, saturation * 0.7 + surface_factor)
+
+
+def get_exposed_layer_and_material(state: "GameState", sx: int, sy: int) -> Tuple[SoilLayer, str]:
+    """Get the topmost non-empty soil layer and its material name."""
+    for layer in [SoilLayer.ORGANICS, SoilLayer.TOPSOIL, SoilLayer.ELUVIATION,
+                  SoilLayer.SUBSOIL, SoilLayer.REGOLITH]:
+        if state.terrain_layers[layer, sx, sy] > 0:
+            return layer, state.terrain_materials[layer, sx, sy]
+    return SoilLayer.BEDROCK, "bedrock"
 
 
 # =============================================================================
@@ -157,15 +175,15 @@ def apply_overnight_erosion(
     total_wind_erosion = 0.0
 
     # --- Water Erosion ---
-    for sub_x, sub_y in list(state.active_water_subsquares):
-        tile_x, tile_y = sub_x // SUBGRID_SIZE, sub_y // SUBGRID_SIZE
-        local_x, local_y = sub_x % SUBGRID_SIZE, sub_y % SUBGRID_SIZE
+    for sx, sy in list(state.active_water_subsquares):
+        tile_x, tile_y = sx // SUBGRID_SIZE, sy // SUBGRID_SIZE
+        local_x, local_y = sx % SUBGRID_SIZE, sy % SUBGRID_SIZE
         tile = state.tiles[tile_x][tile_y]
         subsquare = tile.subgrid[local_x][local_y]
 
         if subsquare.water_passage > WATER_EROSION_THRESHOLD:
-            terrain = get_subsquare_terrain(subsquare, tile.terrain)
-            exposed = terrain.get_exposed_layer()
+            exposed, _ = get_exposed_layer_and_material(state, sx, sy)
+            
             if exposed == SoilLayer.BEDROCK:
                 continue
 
@@ -173,7 +191,7 @@ def apply_overnight_erosion(
             resistance = EROSION_RESISTANCE.get(exposed, 0.5)
             erosion = excess_passage * WATER_EROSION_RATE * resistance * seasonal_modifier
             if erosion > 0.0001:
-                apply_erosion(subsquare, tile, erosion)
+                apply_erosion(state, sx, sy, erosion)
                 total_water_erosion += erosion
 
     # --- Wind Erosion ---
@@ -182,20 +200,19 @@ def apply_overnight_erosion(
         for local_x in range(SUBGRID_SIZE):
             for local_y in range(SUBGRID_SIZE):
                 subsquare = tile.subgrid[local_x][local_y]
+                sx, sy = tile_x * SUBGRID_SIZE + local_x, tile_y * SUBGRID_SIZE + local_y
+                
                 if subsquare.wind_exposure > WIND_EROSION_THRESHOLD * 10:
-                    terrain = get_subsquare_terrain(subsquare, tile.terrain)
-                    exposed = terrain.get_exposed_layer()
+                    exposed, material = get_exposed_layer_and_material(state, sx, sy)
+                    
                     if exposed == SoilLayer.BEDROCK:
                         continue
 
-                    sx, sy = tile_x * SUBGRID_SIZE + local_x, tile_y * SUBGRID_SIZE + local_y
-                    water = state.water_grid[sx, sy]
-                    moisture = get_soil_moisture(tile, local_x, local_y, water)
+                    moisture = get_soil_moisture(state, sx, sy)
                     moisture_mod = 1.0 - (moisture * 0.8)
                     if moisture_mod <= 0.1:
                         continue
 
-                    material = terrain.get_exposed_material()
                     mat_mod = WIND_MATERIAL_MODIFIER.get(material, 0.5)
                     resistance = EROSION_RESISTANCE.get(exposed, 0.5)
                     erosion = (
@@ -203,7 +220,7 @@ def apply_overnight_erosion(
                         mat_mod * resistance * WIND_EROSION_RATE * 0.01 * seasonal_modifier
                     )
                     if erosion > 0.0001:
-                        apply_erosion(subsquare, tile, erosion)
+                        apply_erosion(state, sx, sy, erosion)
                         total_wind_erosion += erosion
 
     # Reset all daily accumulators
@@ -218,16 +235,40 @@ def apply_overnight_erosion(
     return messages
 
 
-def apply_erosion(subsquare: "SubSquare", tile: "Tile", amount: float) -> None:
-    """Apply erosion to a subsquare's terrain."""
-    subsquare.elevation_offset -= amount * 0.01
+def apply_erosion(state: "GameState", sx: int, sy: int, amount: float) -> None:
+    """Apply erosion to a grid cell's terrain (Arrays)."""
+    # 1. Micro-erosion: adjust elevation offset
+    # amount is roughly in depth units (0.1m). 
+    # 0.01 factor in original code implies 1 unit erosion = 1cm drop?
+    # We will accumulate integer drops.
+    
+    # Probabilistic rounding to handle small erosion amounts on integer grid
+    int_drop = int(amount)
+    remainder = amount - int_drop
+    if np.random.random() < remainder:
+        int_drop += 1
+        
+    if int_drop > 0:
+        # Lower the micro-terrain offset
+        state.elevation_offset_grid[sx, sy] -= int_drop
+        state.terrain_changed = True
+        state.dirty_subsquares.add((sx, sy))
+
+    # 2. Material Removal: if erosion is significant, remove actual soil
     if amount > 0.1:
-        terrain = ensure_terrain_override(subsquare, tile.terrain)
-        layer = terrain.get_exposed_layer()
+        layer, _ = get_exposed_layer_and_material(state, sx, sy)
         if layer != SoilLayer.BEDROCK:
             depth_to_remove = max(1, int(amount))
-            terrain.remove_material_from_layer(layer, depth_to_remove)
-        subsquare.invalidate_appearance()
+            current_depth = state.terrain_layers[layer, sx, sy]
+            actual_remove = min(current_depth, depth_to_remove)
+            state.terrain_layers[layer, sx, sy] -= actual_remove
+            
+            # If layer depleted, clear material name
+            if state.terrain_layers[layer, sx, sy] == 0:
+                state.terrain_materials[layer, sx, sy] = ""
+            
+            state.terrain_changed = True
+            state.dirty_subsquares.add((sx, sy))
 
 
 def reset_daily_accumulators(tiles: List[List["Tile"]], width: int, height: int) -> None:
@@ -267,7 +308,7 @@ def accumulate_wind_exposure(state: "GameState") -> None:
                     tile = state.tiles[tile_x][tile_y]
                     for local_x in range(SUBGRID_SIZE):
                         for local_y in range(SUBGRID_SIZE):
-                            subsquare = tile.subgrid[local_x][local_y]
                             sx, sy = tile_x * SUBGRID_SIZE + local_x, tile_y * SUBGRID_SIZE + local_y
+                            subsquare = tile.subgrid[local_x][local_y]
                             if state.water_grid[sx, sy] < 10:
                                 subsquare.wind_exposure += region.wind_speed

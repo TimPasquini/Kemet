@@ -62,7 +62,6 @@ The goal is to create systems that generate believable, emergent complexity from
 - **[PARTIALLY OPTIMIZED] Biome Recalculation**: Moisture aggregation now vectorized; biome logic still iterates tiles but with grid data. (main.py:659-666)
 
 ### Gameplay/Simulation
-- **Water Bias**: Historical issue where water favored bottom-right flow. Mitigated by probabilistic rounding in NumPy implementation, but requires monitoring.
 - **[SOLVED] Resolution Mismatch**: Subsurface now operates at grid (180×135) resolution, same as surface.
 
 ### Code Quality
