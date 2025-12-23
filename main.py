@@ -489,8 +489,8 @@ def lower_ground(state: GameState, min_layer_name: str = "bedrock") -> None:
                 return
 
             # Lower bedrock base (permanent terrain change)
-            # TODO: Pickaxe currently shows shovel message instead of bedrock message.
-            # This will be fixed during tool system rewrite.
+            # NOTE: Pickaxe and shovel both share the same "cannot dig" message when hitting
+            # bedrock limits. Tool-specific messages will be added during tool system refactor.
             state.bedrock_base[sx, sy] = max(MIN_BEDROCK_ELEVATION, state.bedrock_base[sx, sy] - 2)
             state.invalidate_elevation_range()
             state.terrain_changed = True
