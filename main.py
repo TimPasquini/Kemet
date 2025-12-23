@@ -125,6 +125,11 @@ class GameState:
     elevation_grid: np.ndarray | None = None  # Shape: (GRID_WIDTH, GRID_HEIGHT), dtype=int32
     moisture_grid: np.ndarray | None = None   # Shape: (GRID_WIDTH, GRID_HEIGHT), dtype=float64 (EMA)
     trench_grid: np.ndarray | None = None     # Shape: (GRID_WIDTH, GRID_HEIGHT), dtype=uint8
+
+    # Daily accumulator grids for erosion
+    water_passage_grid: np.ndarray | None = None  # Shape: (GRID_WIDTH, GRID_HEIGHT), dtype=float
+    wind_exposure_grid: np.ndarray | None = None  # Shape: (GRID_WIDTH, GRID_HEIGHT), dtype=float
+
     terrain_changed: bool = True              # Flag to trigger elevation grid rebuild
 
     # === Unified Terrain State (The Source of Truth) ===
@@ -391,6 +396,10 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
     # Initialize trench grid
     trench_grid = np.zeros((width * SUBGRID_SIZE, height * SUBGRID_SIZE), dtype=np.uint8)
 
+    # Initialize daily accumulator grids for erosion
+    water_passage_grid = np.zeros((GRID_WIDTH, GRID_HEIGHT), dtype=float)
+    wind_exposure_grid = np.zeros((GRID_WIDTH, GRID_HEIGHT), dtype=float)
+
     # Initialize elevation_grid (calculated from other grids)
     elevation_grid = bedrock_base + np.sum(terrain_layers, axis=0)
 
@@ -406,6 +415,8 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
         water_pool=water_pool,
         moisture_grid=moisture_grid,
         trench_grid=trench_grid,
+        water_passage_grid=water_passage_grid,
+        wind_exposure_grid=wind_exposure_grid,
         terrain_layers=terrain_layers,
         subsurface_water_grid=subsurface_water_grid,
         bedrock_base=bedrock_base,
@@ -470,48 +481,75 @@ def _get_perpendicular_neighbors(px: int, py: int, tx: int, ty: int, grid_width:
     return (left_pos if left_valid else None, right_pos if right_valid else None)
 
 
-def dig_trench_flat(state: GameState) -> None:
-    """Dig a flat-bottomed channel by leveling target to origin elevation.
+def dig_trench(state: GameState, mode: str) -> None:
+    """Dig a trench with the specified mode: 'flat', 'slope_down', or 'slope_up'.
 
-    Creates a level channel from backward (origin) → target → forward at the
-    elevation of the backward neighbor. Material is redistributed to maintain
-    conservation of mass.
+    Common setup handles position calculation and validation.
+    Mode-specific logic handles material removal and redistribution.
+
+    Args:
+        state: Game state
+        mode: One of 'flat', 'slope_down', 'slope_up'
     """
-    from config import TRENCH_DEPTH, GRID_WIDTH, GRID_HEIGHT
+    from config import GRID_WIDTH, GRID_HEIGHT, TRENCH_SLOPE_DROP
     import math
 
+    # ========== COMMON SETUP ==========
     sub_pos = state.get_action_target_subsquare()
     sx, sy = sub_pos
-
-    # Get player position in grid coords
     px, py = state.player_subsquare
 
     # Get perpendicular neighbors (for berms)
     left_pos, right_pos = _get_perpendicular_neighbors(px, py, sx, sy, GRID_WIDTH, GRID_HEIGHT)
 
-    # Get axial neighbors (for channel direction)
-    dx = sx - px
-    dy = sy - py
+    # Get axial direction
+    dx, dy = sx - px, sy - py
     length = math.sqrt(dx**2 + dy**2)
     if length > 0:
-        dx_norm = round(dx / length)
-        dy_norm = round(dy / length)
+        dx_norm, dy_norm = round(dx / length), round(dy / length)
     else:
         state.messages.append("Cannot trench at player position.")
         return
 
-    # Backward (origin) and forward (exit)
+    # Calculate origin (backward) and exit (forward) positions
     backward_pos = (sx - dx_norm, sy - dy_norm)
     forward_pos = (sx + dx_norm, sy + dy_norm)
 
-    # Validate backward is in bounds
+    # Validate positions
     if not (0 <= backward_pos[0] < GRID_WIDTH and 0 <= backward_pos[1] < GRID_HEIGHT):
         state.messages.append("Cannot trench - invalid origin position.")
         return
+    if mode in ["slope_down", "slope_up"]:
+        if not (0 <= forward_pos[0] < GRID_WIDTH and 0 <= forward_pos[1] < GRID_HEIGHT):
+            state.messages.append("Cannot trench - invalid exit position.")
+            return
 
-    # Get target elevation of the channel (origin elevation)
+    # Get current elevations
     origin_elev = state.elevation_grid[backward_pos]
     target_elev = state.elevation_grid[sx, sy]
+    exit_elev = state.elevation_grid[forward_pos] if mode in ["slope_down", "slope_up"] else None
+
+    # ========== MODE-SPECIFIC LOGIC ==========
+    match mode:
+        case "flat":
+            _dig_trench_flat_impl(state, sx, sy, origin_elev, target_elev,
+                                 backward_pos, forward_pos, left_pos, right_pos)
+        case "slope_down":
+            _dig_trench_slope_down_impl(state, sx, sy, origin_elev, target_elev, exit_elev,
+                                       backward_pos, forward_pos, left_pos, right_pos)
+        case "slope_up":
+            _dig_trench_slope_up_impl(state, sx, sy, origin_elev, target_elev, exit_elev,
+                                     backward_pos, forward_pos, left_pos, right_pos)
+        case _:
+            state.messages.append(f"Unknown trench mode: {mode}")
+
+
+def _dig_trench_flat_impl(state: GameState, sx: int, sy: int,
+                          origin_elev: int, target_elev: int,
+                          backward_pos: tuple, forward_pos: tuple,
+                          left_pos: tuple, right_pos: tuple) -> None:
+    """Implementation of flat trenching mode."""
+    from config import GRID_WIDTH, GRID_HEIGHT
 
     # Find exposed layer at target (top to bottom)
     exposed_layer = None
@@ -600,7 +638,7 @@ def dig_trench_flat(state: GameState) -> None:
                 state.dirty_subsquares.add(recipient)
 
     # Mark changes
-    state.dirty_subsquares.add(sub_pos)
+    state.dirty_subsquares.add((sx, sy))
     state.terrain_changed = True
     state.invalidate_elevation_range()
 
@@ -626,45 +664,12 @@ def _get_or_create_layer(state: GameState, sx: int, sy: int) -> SoilLayer:
     return layer if layer is not None else SoilLayer.TOPSOIL
 
 
-def dig_trench_slope_down(state: GameState) -> None:
-    """Dig a downward-sloped trench: origin (high) > selection (mid) > exit (low).
-
-    Intelligently redistributes material to create descending gradient.
-    Pulls from higher squares to raise lower ones in the sequence.
-    """
-    from config import GRID_WIDTH, GRID_HEIGHT, TRENCH_SLOPE_DROP
-    import math
-
-    sub_pos = state.get_action_target_subsquare()
-    sx, sy = sub_pos
-    px, py = state.player_subsquare
-
-    # Get neighbors
-    left_pos, right_pos = _get_perpendicular_neighbors(px, py, sx, sy, GRID_WIDTH, GRID_HEIGHT)
-
-    # Get axial direction
-    dx, dy = sx - px, sy - py
-    length = math.sqrt(dx**2 + dy**2)
-    if length > 0:
-        dx_norm, dy_norm = round(dx / length), round(dy / length)
-    else:
-        state.messages.append("Cannot trench at player position.")
-        return
-
-    backward_pos = (sx - dx_norm, sy - dy_norm)
-    forward_pos = (sx + dx_norm, sy + dy_norm)
-
-    if not (0 <= backward_pos[0] < GRID_WIDTH and 0 <= backward_pos[1] < GRID_HEIGHT):
-        state.messages.append("Cannot trench - invalid origin position.")
-        return
-    if not (0 <= forward_pos[0] < GRID_WIDTH and 0 <= forward_pos[1] < GRID_HEIGHT):
-        state.messages.append("Cannot trench - invalid exit position.")
-        return
-
-    # Get current elevations
-    origin_elev = state.elevation_grid[backward_pos]
-    target_elev = state.elevation_grid[sx, sy]
-    exit_elev = state.elevation_grid[forward_pos]
+def _dig_trench_slope_down_impl(state: GameState, sx: int, sy: int,
+                                origin_elev: int, target_elev: int, exit_elev: int,
+                                backward_pos: tuple, forward_pos: tuple,
+                                left_pos: tuple, right_pos: tuple) -> None:
+    """Implementation of slope down trenching mode."""
+    from config import TRENCH_SLOPE_DROP
 
     material_pool = 0
 
@@ -689,7 +694,7 @@ def dig_trench_slope_down(state: GameState) -> None:
                 layer = _get_or_create_layer(state, sx, sy)
                 state.terrain_layers[layer, sx, sy] += to_remove_exit
                 state.dirty_subsquares.add(forward_pos)
-                state.dirty_subsquares.add(sub_pos)
+                state.dirty_subsquares.add((sx, sy))
 
                 # Update elevation for next check
                 target_elev += to_remove_exit
@@ -718,7 +723,7 @@ def dig_trench_slope_down(state: GameState) -> None:
                 layer = _get_or_create_layer(state, backward_pos[0], backward_pos[1])
                 state.terrain_layers[layer, backward_pos[0], backward_pos[1]] += to_origin
                 state.dirty_subsquares.add(backward_pos)
-                state.dirty_subsquares.add(sub_pos)
+                state.dirty_subsquares.add((sx, sy))
 
             # Any remaining from selection goes to material pool for sides
             remaining = state.terrain_layers[exposed_layer, sx, sy]
@@ -732,7 +737,7 @@ def dig_trench_slope_down(state: GameState) -> None:
         _distribute_to_sides(state, material_pool, left_pos, right_pos)
 
     # Mark changes
-    state.dirty_subsquares.add(sub_pos)
+    state.dirty_subsquares.add((sx, sy))
     state.terrain_changed = True
     state.invalidate_elevation_range()
     _invalidate_tile_appearance(state, sx, sy)
@@ -740,44 +745,12 @@ def dig_trench_slope_down(state: GameState) -> None:
     state.messages.append(f"Slope (Down): gradient origin>sel>exit created.")
 
 
-def dig_trench_slope_up(state: GameState) -> None:
-    """Dig an upward-sloped trench: origin (low) < selection (mid) < exit (high).
-
-    Creates upward gradient by limiting how much is taken from selection (keep it
-    above origin) and raising exit to be highest.
-    """
-    from config import GRID_WIDTH, GRID_HEIGHT, TRENCH_SLOPE_DROP
-    import math
-
-    sub_pos = state.get_action_target_subsquare()
-    sx, sy = sub_pos
-    px, py = state.player_subsquare
-
-    # Get neighbors
-    left_pos, right_pos = _get_perpendicular_neighbors(px, py, sx, sy, GRID_WIDTH, GRID_HEIGHT)
-
-    # Get axial direction
-    dx, dy = sx - px, sy - py
-    length = math.sqrt(dx**2 + dy**2)
-    if length > 0:
-        dx_norm, dy_norm = round(dx / length), round(dy / length)
-    else:
-        state.messages.append("Cannot trench at player position.")
-        return
-
-    backward_pos = (sx - dx_norm, sy - dy_norm)
-    forward_pos = (sx + dx_norm, sy + dy_norm)
-
-    if not (0 <= backward_pos[0] < GRID_WIDTH and 0 <= backward_pos[1] < GRID_HEIGHT):
-        state.messages.append("Cannot trench - invalid origin position.")
-        return
-    if not (0 <= forward_pos[0] < GRID_WIDTH and 0 <= forward_pos[1] < GRID_HEIGHT):
-        state.messages.append("Cannot trench - invalid exit position.")
-        return
-
-    # Get current elevations
-    origin_elev = state.elevation_grid[backward_pos]
-    target_elev = state.elevation_grid[sx, sy]
+def _dig_trench_slope_up_impl(state: GameState, sx: int, sy: int,
+                              origin_elev: int, target_elev: int, exit_elev: int,
+                              backward_pos: tuple, forward_pos: tuple,
+                              left_pos: tuple, right_pos: tuple) -> None:
+    """Implementation of slope up trenching mode."""
+    from config import TRENCH_SLOPE_DROP
 
     # Remove LIMITED material from selection (keep it above origin + margin)
     exposed_layer = _find_exposed_layer(state, sx, sy)
@@ -824,7 +797,7 @@ def dig_trench_slope_up(state: GameState) -> None:
         _distribute_to_sides(state, material_pool, left_pos, right_pos)
 
     # Mark changes
-    state.dirty_subsquares.add(sub_pos)
+    state.dirty_subsquares.add((sx, sy))
     state.terrain_changed = True
     state.invalidate_elevation_range()
     _invalidate_tile_appearance(state, sx, sy)
@@ -903,11 +876,11 @@ def terrain_action(state: GameState, action: str, args: List[str]) -> None:
         target = args[0] if args else "topsoil"
         raise_ground(state, target)
     elif action == "trench_flat":
-        dig_trench_flat(state)
+        dig_trench(state, "flat")
     elif action == "slope_down":
-        dig_trench_slope_down(state)
+        dig_trench(state, "slope_down")
     elif action == "slope_up":
-        dig_trench_slope_up(state)
+        dig_trench(state, "slope_up")
     else:
         state.messages.append(f"Unknown terrain action: {action}")
 

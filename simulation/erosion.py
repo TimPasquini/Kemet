@@ -175,18 +175,15 @@ def apply_overnight_erosion(
 
     # --- Water Erosion ---
     for sx, sy in list(state.active_water_subsquares):
-        tile_x, tile_y = sx // SUBGRID_SIZE, sy // SUBGRID_SIZE
-        local_x, local_y = sx % SUBGRID_SIZE, sy % SUBGRID_SIZE
-        tile = state.tiles[tile_x][tile_y]
-        subsquare = tile.subgrid[local_x][local_y]
+        water_passage = state.water_passage_grid[sx, sy]
 
-        if subsquare.water_passage > WATER_EROSION_THRESHOLD:
+        if water_passage > WATER_EROSION_THRESHOLD:
             exposed, _ = get_exposed_layer_and_material(state, sx, sy)
-            
+
             if exposed == SoilLayer.BEDROCK:
                 continue
 
-            excess_passage = subsquare.water_passage - WATER_EROSION_THRESHOLD
+            excess_passage = water_passage - WATER_EROSION_THRESHOLD
             resistance = EROSION_RESISTANCE.get(exposed, 0.5)
             erosion = excess_passage * WATER_EROSION_RATE * resistance * seasonal_modifier
             if erosion > 0.0001:
@@ -195,15 +192,14 @@ def apply_overnight_erosion(
 
     # --- Wind Erosion ---
     for tile_x, tile_y in list(state.active_wind_tiles):
-        tile = state.tiles[tile_x][tile_y]
         for local_x in range(SUBGRID_SIZE):
             for local_y in range(SUBGRID_SIZE):
-                subsquare = tile.subgrid[local_x][local_y]
                 sx, sy = tile_x * SUBGRID_SIZE + local_x, tile_y * SUBGRID_SIZE + local_y
-                
-                if subsquare.wind_exposure > WIND_EROSION_THRESHOLD * 10:
+                wind_exposure = state.wind_exposure_grid[sx, sy]
+
+                if wind_exposure > WIND_EROSION_THRESHOLD * 10:
                     exposed, material = get_exposed_layer_and_material(state, sx, sy)
-                    
+
                     if exposed == SoilLayer.BEDROCK:
                         continue
 
@@ -215,7 +211,7 @@ def apply_overnight_erosion(
                     mat_mod = WIND_MATERIAL_MODIFIER.get(material, 0.5)
                     resistance = EROSION_RESISTANCE.get(exposed, 0.5)
                     erosion = (
-                        subsquare.wind_exposure * moisture_mod *
+                        wind_exposure * moisture_mod *
                         mat_mod * resistance * WIND_EROSION_RATE * 0.01 * seasonal_modifier
                     )
                     if erosion > 0.0001:
@@ -223,7 +219,7 @@ def apply_overnight_erosion(
                         total_wind_erosion += erosion
 
     # Reset all daily accumulators
-    reset_daily_accumulators(state.tiles, state.width, state.height)
+    reset_daily_accumulators(state)
     state.active_wind_tiles.clear()
 
     if total_water_erosion > 1.0:
@@ -253,15 +249,10 @@ def apply_erosion(state: "GameState", sx: int, sy: int, amount: float) -> None:
             state.dirty_subsquares.add((sx, sy))
 
 
-def reset_daily_accumulators(tiles: List[List["Tile"]], width: int, height: int) -> None:
+def reset_daily_accumulators(state: "GameState") -> None:
     """Reset all daily accumulators without applying erosion."""
-    for tile_x in range(width):
-        for tile_y in range(height):
-            tile = tiles[tile_x][tile_y]
-            for row in tile.subgrid:
-                for subsquare in row:
-                    subsquare.water_passage = 0.0
-                    subsquare.wind_exposure = 0.0
+    state.water_passage_grid.fill(0.0)
+    state.wind_exposure_grid.fill(0.0)
 
 
 def accumulate_wind_exposure(state: "GameState") -> None:
@@ -287,10 +278,8 @@ def accumulate_wind_exposure(state: "GameState") -> None:
                         continue
 
                     state.active_wind_tiles.add((tile_x, tile_y))
-                    tile = state.tiles[tile_x][tile_y]
                     for local_x in range(SUBGRID_SIZE):
                         for local_y in range(SUBGRID_SIZE):
                             sx, sy = tile_x * SUBGRID_SIZE + local_x, tile_y * SUBGRID_SIZE + local_y
-                            subsquare = tile.subgrid[local_x][local_y]
                             if state.water_grid[sx, sy] < 10:
-                                subsquare.wind_exposure += region.wind_speed
+                                state.wind_exposure_grid[sx, sy] += region.wind_speed
