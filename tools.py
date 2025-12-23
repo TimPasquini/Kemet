@@ -96,9 +96,11 @@ TOOL_SHOVEL = Tool(
     category=ToolCategory.TERRAIN,
     icon="⌁",
     options=[
-        ToolOption("trench", "Dig Trench", "Reduces evaporation, improves flow", action_args=["topsoil"]),
         ToolOption("lower", "Lower Ground", "Remove topsoil/organics", action_args=["topsoil"]),
         ToolOption("raise", "Raise Ground", "Add topsoil (1 scrap)", cost={"scrap": 1}, action_args=["topsoil"]),
+        ToolOption("trench_flat", "Trench (Flat)", "Level channel from origin", action_args=[]),
+        ToolOption("slope_down", "Slope (Down)", "Fill origin, slope down", action_args=[]),
+        ToolOption("slope_up", "Slope (Up)", "Raise exit, slope up", action_args=[]),
     ],
     action="terrain",  # Will dispatch based on selected option
 )
@@ -110,10 +112,12 @@ TOOL_PICKAXE = Tool(
     category=ToolCategory.TERRAIN,
     icon="⛏",
     options=[
-        ToolOption("trench", "Dig Trench", "Dig trench in hard ground", action_args=["regolith"]),
         ToolOption("lower", "Break Ground", "Dig regolith/subsoil", action_args=["regolith"]),
         ToolOption("lower", "Break Bedrock", "Lower bedrock (permanent)", action_args=["bedrock"]),
         ToolOption("raise", "Pile Gravel", "Add gravel/regolith (1 scrap)", cost={"scrap": 1}, action_args=["regolith"]),
+        ToolOption("trench_flat", "Trench (Flat)", "Level channel in hard ground", action_args=[]),
+        ToolOption("slope_down", "Slope (Down)", "Fill origin in hard ground", action_args=[]),
+        ToolOption("slope_up", "Slope (Up)", "Raise exit in hard ground", action_args=[]),
     ],
     action="terrain",
 )

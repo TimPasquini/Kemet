@@ -330,6 +330,65 @@ def get_tool_highlight_color(
     return HIGHLIGHT_COLORS["default"]
 
 
+def _get_trench_affected_squares(
+    player_pos: Tuple[int, int],
+    target_pos: Tuple[int, int],
+) -> dict[str, Tuple[int, int] | None]:
+    """Calculate squares affected by trenching operation.
+
+    Returns dict with keys: 'origin', 'exit', 'left', 'right'
+    """
+    import math
+    from config import GRID_WIDTH, GRID_HEIGHT
+
+    px, py = player_pos
+    tx, ty = target_pos
+
+    # Direction vector
+    dx = tx - px
+    dy = ty - py
+    length = math.sqrt(dx**2 + dy**2)
+
+    if length == 0:
+        return {'origin': None, 'exit': None, 'left': None, 'right': None}
+
+    # Normalized direction
+    dx_norm = round(dx / length)
+    dy_norm = round(dy / length)
+
+    # Perpendicular vectors
+    left_dx, left_dy = -dy, dx
+    right_dx, right_dy = dy, -dx
+
+    # Normalize perpendicular
+    left_len = math.sqrt(left_dx**2 + left_dy**2)
+    right_len = math.sqrt(right_dx**2 + right_dy**2)
+
+    if left_len > 0:
+        left_dx = round(left_dx / left_len)
+        left_dy = round(left_dy / left_len)
+    if right_len > 0:
+        right_dx = round(right_dx / right_len)
+        right_dy = round(right_dy / right_len)
+
+    # Calculate positions
+    origin = (tx - dx_norm, ty - dy_norm)
+    exit_sq = (tx + dx_norm, ty + dy_norm)
+    left = (tx + left_dx, ty + left_dy)
+    right = (tx + right_dx, ty + right_dy)
+
+    # Validate bounds
+    def in_bounds(pos):
+        return 0 <= pos[0] < GRID_WIDTH and 0 <= pos[1] < GRID_HEIGHT
+
+    return {
+        'origin': origin if in_bounds(origin) else None,
+        'exit': exit_sq if in_bounds(exit_sq) else None,
+        'left': left if in_bounds(left) else None,
+        'right': right if in_bounds(right) else None,
+    }
+
+
 def render_interaction_highlights(
     surface: pygame.Surface,
     camera: "Camera",
@@ -344,14 +403,46 @@ def render_interaction_highlights(
         return
 
     sub_size = scaled_sub_tile_size
-    # Use the validity flag from ui_state to determine the color
-    color = get_tool_highlight_color(tool, ui_state.is_valid_target)
-    world_x, world_y = camera.subsquare_to_world(target_subsquare[0], target_subsquare[1])
-    vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
-    rect = pygame.Rect(int(vp_x), int(vp_y), sub_size, sub_size)
 
-    # Use cached highlight surface to avoid per-frame allocation
-    if sub_size > 0:
-        highlight_surface = _get_cached_highlight_surface(sub_size, color, 60)
-        surface.blit(highlight_surface, (int(vp_x), int(vp_y)))
-    pygame.draw.rect(surface, color, rect, 2)
+    # Check if this is a trench tool
+    is_trench = tool and tool.get_current_option() and tool.get_current_option().id in ["trench_flat", "slope_down", "slope_up"]
+
+    if is_trench:
+        # Render trench-affected squares with color coding
+        affected = _get_trench_affected_squares(player_pos, target_subsquare)
+
+        # Color scheme: origin=red, exit=green, sides=blue, target=yellow
+        highlights = [
+            (affected['origin'], (200, 60, 60), 40),    # Red - origin
+            (affected['exit'], (60, 200, 60), 40),      # Green - exit
+            (affected['left'], (60, 60, 200), 40),      # Blue - left side
+            (affected['right'], (60, 60, 200), 40),     # Blue - right side
+            (target_subsquare, (200, 200, 60), 60),     # Yellow - target
+        ]
+
+        for pos, color, alpha in highlights:
+            if pos is None:
+                continue
+            world_x, world_y = camera.subsquare_to_world(pos[0], pos[1])
+            vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
+
+            if sub_size > 0:
+                # Light shading
+                highlight_surface = _get_cached_highlight_surface(sub_size, color, alpha)
+                surface.blit(highlight_surface, (int(vp_x), int(vp_y)))
+
+            # Border
+            rect = pygame.Rect(int(vp_x), int(vp_y), sub_size, sub_size)
+            pygame.draw.rect(surface, color, rect, 2)
+    else:
+        # Standard single-square highlight for non-trench tools
+        color = get_tool_highlight_color(tool, ui_state.is_valid_target)
+        world_x, world_y = camera.subsquare_to_world(target_subsquare[0], target_subsquare[1])
+        vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
+        rect = pygame.Rect(int(vp_x), int(vp_y), sub_size, sub_size)
+
+        # Use cached highlight surface to avoid per-frame allocation
+        if sub_size > 0:
+            highlight_surface = _get_cached_highlight_surface(sub_size, color, 60)
+            surface.blit(highlight_surface, (int(vp_x), int(vp_y)))
+        pygame.draw.rect(surface, color, rect, 2)

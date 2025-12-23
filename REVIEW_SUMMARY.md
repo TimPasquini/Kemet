@@ -1,10 +1,10 @@
 # Kemet Post-Migration Review - Executive Summary
 **Date**: 2025-12-22 (Initial)
-**Updated**: 2025-12-22 (Cleanup Complete)
+**Updated**: 2025-12-23 (Phase 2 Complete)
 
-## Overall Status: ✅ 100% COMPLETE - PHASE 1 DONE
+## Overall Status: ✅ PHASE 2 COMPLETE - GEOMETRIC TRENCHING
 
-The array migration is **fully complete**. All core systems work correctly using NumPy arrays. All critical bugs fixed, major optimizations implemented, and dead code removed.
+Phase 1 array migration is complete. Phase 2 geometric trenching with three slope modes is now implemented and functional. Elevation model unified to single source of truth.
 
 ---
 
@@ -162,18 +162,56 @@ Add these tests to catch regressions:
 
 ---
 
+## Phase 2: Geometric Trenching - COMPLETE ✅
+
+**Updated**: 2025-12-23
+
+### Elevation Harmonization
+- ✅ Removed `elevation_offset_grid` - unified to single source of truth
+- ✅ Elevation now: `bedrock_base + sum(terrain_layers)`
+- ✅ Fixed across 11 files, -53 lines of code
+
+### Geometric Trenching Implementation
+- ✅ Replaced boolean `trench_grid` with actual terrain deformation
+- ✅ Three modes: Flat, Slope Down, Slope Up
+- ✅ Material conservation - amount removed = amount distributed
+- ✅ Elevation-aware redistribution
+
+### Trench Modes
+1. **Flat**: Levels target to origin elevation, distributes to exit/sides
+2. **Slope Down**: Creates descending gradient (origin > selection > exit)
+   - Intelligently pulls from higher squares to raise lower ones
+   - Fills origin halfway, remainder to sides
+3. **Slope Up**: Creates ascending gradient (origin < selection < exit)
+   - Limits removal to maintain gradient
+   - Raises exit above selection, remainder to sides
+
+### Visual System
+- ✅ Color-coded highlighting shows affected squares
+  - Red: Origin (backward)
+  - Green: Exit (forward)
+  - Blue: Perpendicular sides
+  - Yellow: Selected target
+
+### Technical Improvements
+- ✅ Player-relative directionality with perpendicular calculation
+- ✅ Helper functions: `_find_exposed_layer()`, `_get_or_create_layer()`, `_distribute_to_sides()`
+- ✅ Auto-complete behavior (one-click to ideal state)
+
+**Files Modified**: 7 total (main.py +479, config.py +6, tools.py +8, render/map.py +113, plus 3 documentation files)
+
+---
+
 ## Bottom Line
 
-**Phase 1 is COMPLETE!** ✅
+**Phase 2 is COMPLETE!** ✅
 
 All work finished:
-- ✅ All 5 critical bugs fixed
-- ✅ All major optimizations implemented
-- ✅ Dead code removed
-- ✅ Water conservation complete
-- ✅ 250× performance improvement
+- ✅ Phase 1: All 5 critical bugs fixed, 250× performance improvement
+- ✅ Phase 2: Geometric trenching with three modes, elevation harmonization
+- ✅ Total: ~1000 lines modified, clean architecture, ready for future phases
 
-The codebase is **ready for Phase 2: Geometric Trenches**.
+The codebase is **ready for Phase 3 or tool-focused refinements**.
 
 ---
 

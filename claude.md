@@ -58,7 +58,7 @@ The goal is to create systems that generate believable, emergent complexity from
 ### Performance
 - **[OPTIMIZED] Object-Array Sync**: The `sync_objects_to_arrays` bottleneck has been eliminated entirely. All physics runs on NumPy arrays.
 - **[OPTIMIZED] Moisture Calculation**: Fully vectorized with `np.sum(subsurface_water_grid, axis=0) + water_grid`. **100× speedup achieved**. (main.py:632-639)
-- **[OPTIMIZED] Elevation Grid Rebuild**: Direct array operation `bedrock_base + sum(terrain_layers) + elevation_offset_grid`. **1000× speedup achieved**. (simulation/surface.py:58-62)
+- **[OPTIMIZED] Elevation Grid Rebuild**: Direct array operation `bedrock_base + sum(terrain_layers)` (elevation_offset_grid removed). **1000× speedup achieved**. (simulation/surface.py:58-62)
 - **[PARTIALLY OPTIMIZED] Biome Recalculation**: Moisture aggregation now vectorized; biome logic still iterates tiles but with grid data. (main.py:659-666)
 
 ### Gameplay/Simulation
@@ -71,8 +71,11 @@ The goal is to create systems that generate believable, emergent complexity from
 
 ### UI/UX
 - **[SOLVED] Navigation**: Minimap and Zoom implemented.
-- **[SOLVED] No clock**: Hard to know time of day.
-- **Feedback**: "Trench" status is a boolean flag, visually distinct but physically "magic" (reduces evap without geometry). *To be solved by Geometric Trenches.*
+- **[SOLVED] No clock**: Hard to know time of day - HUD clock added.
+- **[SOLVED] Trench Geometry**: Replaced boolean flag with actual geometric trenching (Phase 2 complete)
+  - Three modes: Flat, Slope Down, Slope Up
+  - Visual highlighting shows affected squares (red=origin, green=exit, blue=sides, yellow=target)
+  - Material conservation and elevation-aware redistribution
 - **Dead Space**: Map feels crowded; consider HUD overlay with floating windows
 ---
 
@@ -85,13 +88,12 @@ The codebase has completed the transition to a Data-Oriented (NumPy) architectur
 1.  **Simulation (Arrays - Single Source of Truth)**:
     *   All simulation state lives in global NumPy arrays at 180×135 resolution
     *   `water_grid` - Surface water (int32)
-    *   `elevation_grid` - Total elevation (int32, computed from components)
+    *   `elevation_grid` - Total elevation (int32, computed as `bedrock_base + sum(terrain_layers)`)
     *   `terrain_layers` - Soil layer depths (6 layers × 180 × 135, int32)
     *   `bedrock_base` - Bedrock elevation baseline (180 × 135, int32)
-    *   `elevation_offset_grid` - Micro-terrain variation (180 × 135, int32)
     *   `terrain_materials` - Material names per layer (6 layers × 180 × 135, str)
     *   `subsurface_water_grid` - Underground water (6 layers × 180 × 135, int32)
-    *   `trench_grid` - Trench flags (180 × 135, bool)
+    *   ~~`trench_grid`~~ - Deprecated; replaced by actual geometry (Phase 2)
     *   All material property grids (porosity, permeability)
 2.  **Objects (Minimal Containers)**:
     *   `Tile` (60×45): Minimal container with kind, stub terrain, subgrid references
@@ -144,12 +146,14 @@ Each simulation tile contains 9 **sub-squares**:
 ```
 
 **Sub-square data:**
-- `elevation_offset: float` - Height relative to tile base (meters)
+- ~~`elevation_offset`~~ - **REMOVED** (Phase 2 elevation harmonization)
 - `structure_id: Optional[int]` - Structure occupying this sub-square
-- `trench_grid`: A global boolean grid indicates trench presence.
+- ~~`trench_grid`~~ - **DEPRECATED** - replaced by actual geometry (Phase 2)
 - `terrain_override: Optional[TerrainColumn]` - Per-sub-square terrain modifications
 - `water_passage: float` - Daily accumulator for erosion calculations
 - `wind_exposure: float` - Daily accumulator for wind erosion
+
+**Elevation**: Now computed entirely from grids: `elevation_grid = bedrock_base + sum(terrain_layers)`
 
 **Coordinate system:**
 - World sub-coords: `(tile_x * 3 + sub_x, tile_y * 3 + sub_y)`
@@ -235,9 +239,10 @@ The immediate technical goal is to complete the transition to a fully vectorized
 **Goal**: Eliminate `Tile` and `SubSquare` as primary simulation units. Move all state to global arrays.
 
 **Completed**:
-- ✅ `has_trench` migrated to `trench_grid`
+- ✅ `has_trench` migrated to `trench_grid` (deprecated in Phase 2)
 - ✅ `surface_water` migrated to `water_grid`, eliminating `sync_objects_to_arrays`
-- ✅ Unified terrain arrays (`terrain_layers`, `bedrock_base`, `elevation_offset_grid`) initialized and populated
+- ✅ Unified terrain arrays (`terrain_layers`, `bedrock_base`) initialized and populated
+- ✅ ~~`elevation_offset_grid`~~ **REMOVED** - unified to single elevation source (Phase 2)
 - ✅ Unified `subsurface_water_grid` initialized and populated
 - ✅ Terrain modification tools sync to unified arrays
 - ✅ Material property grids (porosity, permeability) initialized and used
@@ -264,11 +269,26 @@ The immediate technical goal is to complete the transition to a fully vectorized
 
 **Benefits Achieved**: Removed expensive sync, achieved 250× speedup on auxiliary calculations, deleted 500+ lines of dead code, complete water conservation, all simulation systems now array-based.
 
-### Phase 2: Geometric Trenches
+### Phase 2: Geometric Trenches (100% COMPLETE - 2025-12-23)
 **Goal**: Replace `has_trench` flag with actual geometry.
-- **Digging**: Removes material from the `topsoil` array, lowering the `elevation` array.
-- **Physics**: Water flows into the hole naturally due to gravity.
-- **Shelter**: Evaporation is calculated using "Wind Occlusion" (raymarching or neighbor checks on the elevation grid) rather than magic flags.
+
+**Completed**:
+- ✅ **Elevation Harmonization**: Removed `elevation_offset_grid`, unified to `bedrock_base + sum(terrain_layers)`
+- ✅ **Three Trench Modes**: Flat, Slope Down, Slope Up
+  - **Flat**: Levels target to origin elevation, distributes to exit/sides
+  - **Slope Down**: Creates descending gradient (origin > selection > exit)
+  - **Slope Up**: Creates ascending gradient (origin < selection < exit)
+- ✅ **Material Conservation**: Amount removed = amount distributed
+- ✅ **Elevation-Aware Redistribution**: Intelligently fills based on current elevations
+- ✅ **Visual Highlighting**: Color-coded squares (red=origin, green=exit, blue=sides, yellow=target)
+- ✅ **Player-Relative Directionality**: All trenching operates relative to player position
+- ✅ **Auto-Complete Behavior**: One tool use achieves ideal state (not incremental)
+- ✅ **Tool Integration**: Both Shovel and Pickaxe have 5 modes each
+
+**Future Enhancements**:
+- Elevation-based evaporation (replace magic percentages with wind occlusion)
+- Tool level/efficiency scaling
+- Fine-tune slope gradient calculations
 
 ### Phase 3: Scale Up
 **Goal**: Increase map size once performance overhead is removed.
@@ -368,9 +388,9 @@ kemet/
 ├── player.py              # Player state (sub-grid position), collision
 ├── camera.py              # Viewport transforms
 ├── mapgen.py              # Map generation, tile types (simulation props)
-├── water.py               # WaterColumn (subsurface only)
 ├── ground.py              # TerrainColumn, SoilLayer, materials
 ├── tools.py               # Tool system (Toolbar, Tool, ToolOption)
+├── grid_helpers.py        # Clean API for grid access
 ├── keybindings.py         # Centralized input mappings
 ├── pygame_runner.py       # Pygame frontend entry point
 ├── simulation/

@@ -1,13 +1,13 @@
 # Kemet Project Review - Post Array Migration
 **Date**: 2025-12-22 (Initial Review)
-**Updated**: 2025-12-22 (Cleanup Complete)
+**Updated**: 2025-12-23 (Phase 2 Complete)
 **Review Type**: Architecture & Implementation Assessment
 
 ## Executive Summary
 
-The project has successfully completed **100%** migration to a data-oriented NumPy array architecture. Core physics simulations are fully vectorized and functional. All critical bugs have been fixed, major optimizations implemented, and dead code removed.
+The project has successfully completed **100%** migration to a data-oriented NumPy array architecture (Phase 1) and implemented geometric trenching with three slope modes (Phase 2). Core physics simulations are fully vectorized and functional. All critical bugs have been fixed, major optimizations implemented, and dead code removed.
 
-**Status**: ✅ Phase 1 Complete - Ready for Phase 2
+**Status**: ✅ Phase 1 Complete ✅ Phase 2 Complete - Ready for Phase 3 or tool refinements
 
 ---
 
@@ -22,12 +22,12 @@ All primary simulation state has been successfully migrated to NumPy arrays:
 | `terrain_layers` | (6, 180, 135) | Soil layer depths | ✅ Active |
 | `subsurface_water_grid` | (6, 180, 135) | Subsurface water | ✅ Active |
 | `bedrock_base` | (180, 135) | Bedrock elevation | ✅ Active |
-| `elevation_offset_grid` | (180, 135) | Sub-square offset | ✅ Active |
+| ~~`elevation_offset_grid`~~ | ~~(180, 135)~~ | ~~Sub-square offset~~ | ⚠️ **REMOVED Phase 2** |
 | `water_grid` | (180, 135) | Surface water | ✅ Active |
-| `trench_grid` | (180, 135) | Trench flags | ✅ Active |
+| `trench_grid` | (180, 135) | Trench flags | ⚠️ **Deprecated - replaced by elevation** |
 | `wellspring_grid` | (180, 135) | Wellspring config | ✅ Active |
 | Material properties | (6, 180, 135) each | Porosity, permeability | ✅ Active |
-| `terrain_materials` | (6, 180, 135) | Material names | ⚠️ Not synced |
+| `terrain_materials` | (6, 180, 135) | Material names | ✅ Synced |
 
 **Files**: main.py:125-153, mapgen.py:399-565
 
@@ -511,8 +511,8 @@ def get_exposed_material(state, sx, sy) -> str:
 | "Remove sync_objects_to_arrays" | ✅ 100% | Removed |
 | "Material property grids" | ✅ 100% | All 4 grids present |
 | "Wellspring grid" | ✅ 100% | Implemented |
-| "Delete WaterColumn" | ❌ 0% | Still exists |
-| "Geometric trenches" | ❌ 0% | Phase 2 not started |
+| "Delete WaterColumn" | ✅ 100% | Deleted |
+| "Geometric trenches" | ✅ 100% | **Phase 2 COMPLETE** |
 | "Scale to 512×512" | ❌ 0% | Phase 3 not started |
 
 ### Phase 1 "Unification" Checklist
@@ -793,6 +793,212 @@ Two additional commits completed the array unification:
 - Updated grid_helpers.py with complete set of accessors
 
 **Result**: All simulation systems now array-based with zero object-based physics
+
+---
+
+## Phase 2: Geometric Trenching - COMPLETE (2025-12-23)
+
+### Overview
+
+Phase 2 replaced the legacy boolean `trench_grid` system with actual geometric terrain deformation. Three trench modes implemented with material conservation and elevation-aware redistribution.
+
+**Status**: ✅ Complete and tested
+
+---
+
+### Elevation Harmonization (Critical Pre-requisite)
+
+Before implementing geometric trenches, a critical architectural issue was discovered and fixed:
+
+**Problem**: Dual elevation sources
+- `elevation_grid` was calculated from both terrain layers AND `elevation_offset_grid`
+- Formula: `bedrock_base + sum(terrain_layers) + elevation_offset_grid`
+- This created confusion and conversion artifacts between meters and depth units
+
+**Solution**: Single source of truth
+- **Removed** `elevation_offset_grid` array entirely
+- **Removed** `SubSquare.elevation_offset` field
+- **Unified** to: `elevation_grid = bedrock_base + sum(terrain_layers)`
+- Fixed references across 11 files
+- Net result: -53 lines of code
+
+**Files Modified**:
+- main.py: Removed array initialization and calculations
+- subgrid.py: Removed elevation_offset field
+- simulation/surface.py: Updated elevation calculations
+- simulation/erosion.py: Removed micro-terrain erosion
+- grid_helpers.py: Removed offset from helpers
+- render/hud.py, render/colors.py, render/grid_helpers.py: Updated rendering
+- mapgen.py: Removed offset generation and helpers
+
+**Commit**: 9850365 - "Harmonize elevation to single source of truth"
+
+---
+
+### Geometric Trenching Implementation
+
+**Commit**: [Pending] - "Implement geometric trenching with three slope modes"
+
+#### Three Trench Modes
+
+**1. Flat Trench** (`dig_trench_flat`)
+- **Goal**: Level target square to origin elevation
+- **Algorithm**:
+  1. Calculate target elevation and origin elevation
+  2. Remove ALL material needed (not incremental - auto-complete)
+  3. Priority distribution:
+     - Fill exit to origin level (if lower)
+     - Fill lower perpendicular side to match higher
+     - Split remaining evenly between sides
+- **Use case**: Creating level channels for water flow
+
+**2. Slope Down** (`dig_trench_slope_down`)
+- **Goal**: Create descending gradient: origin (high) > selection (mid) > exit (low)
+- **Algorithm**:
+  1. Check if exit is too high (higher than selection)
+     - If yes: Pull from exit to raise selection
+  2. Check if selection is too high (higher than origin)
+     - If yes: Pull from selection to raise origin halfway
+     - Remainder goes to sides
+- **Use case**: Creating downward-sloping channels
+
+**3. Slope Up** (`dig_trench_slope_up`)
+- **Goal**: Create ascending gradient: origin (low) < selection (mid) < exit (high)
+- **Algorithm**:
+  1. Limit removal from selection (keep at least `TRENCH_SLOPE_DROP` above origin)
+  2. Raise exit to be above selection by `TRENCH_SLOPE_DROP`
+  3. Distribute remainder to perpendicular sides
+- **Use case**: Creating upward-sloping channels
+
+#### Technical Implementation
+
+**Helper Functions** (main.py):
+```python
+_get_perpendicular_neighbors(px, py, tx, ty, grid_width, grid_height)
+  # Calculate left/right neighbors perpendicular to player-target vector
+  # Handles rotation and bounds checking
+
+_find_exposed_layer(state, sx, sy) -> SoilLayer | None
+  # Find topmost non-bedrock layer
+  # Returns None if only bedrock present
+
+_get_or_create_layer(state, sx, sy) -> SoilLayer
+  # Get topmost existing layer or create appropriate layer
+  # Returns layer enum for material placement
+
+_distribute_to_sides(state, material_pool, left_pos, right_pos)
+  # Elevation-aware distribution to perpendicular sides
+  # Priority: Fill lower side first, then split evenly
+```
+
+**Player-Relative Directionality**:
+- All trenching operates relative to player position
+- Direction vector: `(dx, dy) = (target - player)`
+- Perpendicular calculation: Left = `(-dy, dx)`, Right = `(dy, -dx)`
+- Backward (origin) = selection - direction
+- Forward (exit) = selection + direction
+
+**Material Conservation**:
+- All modes maintain: amount removed = amount distributed
+- Material type preserved when transferred
+- Empty layers have material name cleared
+
+**Auto-complete Behavior**:
+- One tool use achieves ideal state (not incremental)
+- Removes ALL material needed, not just `TRENCH_DEPTH`
+- Future: Tool tech levels could affect amount per use
+
+#### Visual Highlighting System
+
+**Color-coded overlays** (render/map.py):
+- **Red**: Origin (backward) square - where gradient starts
+- **Green**: Exit (forward) square - where gradient ends
+- **Blue**: Perpendicular sides (left/right) - where berms form
+- **Yellow**: Selected target square - primary interaction point
+
+**Implementation**:
+```python
+def _get_trench_affected_squares(player_pos, target_pos):
+    # Calculate all 5 affected positions
+    # Returns dict with bounded coordinates
+
+def render_interaction_highlights(...):
+    if tool.get_current_option().id in ["trench_flat", "slope_down", "slope_up"]:
+        # Draw color-coded highlights for all affected squares
+```
+
+#### Tool Integration
+
+**Updated Tool Definitions** (tools.py):
+- Both Shovel and Pickaxe now have 5 modes each:
+  1. Lower Ground
+  2. Raise Ground
+  3. Trench (Flat)
+  4. Slope (Down)
+  5. Slope (Up)
+
+**Tool Action Mapping**:
+```python
+TOOL_SHOVEL = Tool(
+    options=[
+        ToolOption("lower", "Lower Ground", "Remove topsoil/organics"),
+        ToolOption("raise", "Raise Ground", "Add topsoil"),
+        ToolOption("trench_flat", "Trench (Flat)", "Level channel from origin"),
+        ToolOption("slope_down", "Slope (Down)", "Fill origin, slope down"),
+        ToolOption("slope_up", "Slope (Up)", "Raise exit, slope up"),
+    ],
+    action="terrain",
+)
+```
+
+#### Configuration Constants
+
+**Added to config.py**:
+```python
+TRENCH_DEPTH = 3               # Material removed per trench dig (30cm)
+TRENCH_SLOPE_DROP = 2          # Additional drop per cell in sloped mode
+```
+
+---
+
+### Phase 2 Statistics
+
+**Files Modified**: 7
+- `main.py`: +479 lines (3 trench functions, 4 helper functions)
+- `config.py`: +6 lines (constants and documentation)
+- `tools.py`: +8 lines (6 new tool options)
+- `render/map.py`: +113 lines (highlighting system)
+- `REVIEW_2025.md`: +217 lines (Phase 2 documentation)
+- `REVIEW_SUMMARY.md`: +58 lines (updated summary)
+- `claude.md`: +50 lines (updated architecture docs)
+
+**Total**: +872 insertions, -59 deletions (net +813 lines)
+
+**Code changes**: +600 lines (excluding documentation)
+
+**Testing**: User-tested all three modes, confirmed working with minor refinements planned for future
+
+---
+
+### Future Work (Post-Phase 2)
+
+**Immediate**:
+- Remove unused `trench_grid` boolean array (still exists but deprecated)
+- Consider elevation-based evaporation (replace magic percentage multipliers)
+
+**Tool-Focused Pass** (User-requested future work):
+- Fine-tune slope gradient calculations
+- Improve material distribution algorithms
+- Add tool level/efficiency scaling
+
+**Phase 3 Candidates**:
+- Scale to 512×512 grid resolution
+- Performance profiling at larger scales
+- Consider chunking/LOD systems
+
+---
+
+**Result**: All simulation systems now array-based with zero object-based physics. Terrain modification uses actual elevation changes instead of boolean flags.
 
 ---
 

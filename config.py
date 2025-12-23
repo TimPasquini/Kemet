@@ -89,8 +89,12 @@ PLANTER_WATER_COST = 3         # Units consumed on harvest
 PLANTER_WATER_REQUIREMENT = 80 # Units (8L) needed for growth
 MAX_ORGANICS_DEPTH = 10        # Cap organic layer at 1m
 
+# Trenching (geometric terrain modification)
+TRENCH_DEPTH = 3               # Material removed per trench dig (30cm)
+TRENCH_SLOPE_DROP = 2          # Additional drop per cell in sloped mode
+
 # Evaporation reduction multipliers (percentage - lower = more reduction)
-TRENCH_EVAP_REDUCTION = 85     # 85% = 15% reduction
+TRENCH_EVAP_REDUCTION = 85     # 85% = 15% reduction (legacy - will be replaced by elevation-based)
 CISTERN_EVAP_REDUCTION = 40    # 40% = 60% reduction
 
 # Structure costs
