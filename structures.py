@@ -46,7 +46,7 @@ class Structure(ABC):
     hp: int = 3
 
     @abstractmethod
-    def tick(self, state: "GameState", tile: "Tile", subsquare: "SubSquare", tx: int, ty: int) -> None:
+    def tick(self, state: "GameState", tile: "Tile", subsquare: "SubSquare", tx: int, ty: int, sx: int, sy: int) -> None:
         """Update the structure for one simulation tick."""
         pass
 
@@ -65,7 +65,7 @@ class Depot(Structure):
     """Player's starting base/storage location."""
     kind: str = "depot"
 
-    def tick(self, state: "GameState", tile: "Tile", subsquare: "SubSquare", tx: int, ty: int) -> None:
+    def tick(self, state: "GameState", tile: "Tile", subsquare: "SubSquare", tx: int, ty: int, sx: int, sy: int) -> None:
         # Depot is passive - no tick behavior needed
         pass
 
@@ -78,7 +78,7 @@ class Condenser(Structure):
     """Generates water from the air."""
     kind: str = "condenser"
 
-    def tick(self, state: "GameState", tile: "Tile", subsquare: "SubSquare", tx: int, ty: int) -> None:
+    def tick(self, state: "GameState", tile: "Tile", subsquare: "SubSquare", tx: int, ty: int, sx: int, sy: int) -> None:
         # Add water to sub-squares (distributed by elevation)
         distribute_upward_seepage(tile, CONDENSER_OUTPUT, state.active_water_subsquares, tx, ty, state)
 
@@ -92,7 +92,7 @@ class Cistern(Structure):
     kind: str = "cistern"
     stored: int = 0  # Water storage in units
 
-    def tick(self, state: "GameState", tile: "Tile", subsquare: "SubSquare", tx: int, ty: int) -> None:
+    def tick(self, state: "GameState", tile: "Tile", subsquare: "SubSquare", tx: int, ty: int, sx: int, sy: int) -> None:
         # Get total surface water from sub-squares
         surface_water = get_tile_surface_water(tile, state.water_grid, tx, ty)
 
@@ -123,7 +123,7 @@ class Planter(Structure):
     kind: str = "planter"
     growth: int = 0  # Growth progress 0-100
 
-    def tick(self, state: "GameState", tile: "Tile", subsquare: "SubSquare", tx: int, ty: int) -> None:
+    def tick(self, state: "GameState", tile: "Tile", subsquare: "SubSquare", tx: int, ty: int, sx: int, sy: int) -> None:
         from subgrid import ensure_terrain_override  # Local import
 
         # Total water includes sub-square surface water + subsurface (from grids)
@@ -142,8 +142,18 @@ class Planter(Structure):
             state.inventory.biomass += 1
             state.inventory.seeds += 1
             remove_water_proportionally(tile, PLANTER_WATER_COST, state, tx, ty)
-            terrain = ensure_terrain_override(subsquare, tile.terrain)
-            if terrain.get_layer_depth(SoilLayer.ORGANICS) < MAX_ORGANICS_DEPTH:
+            
+            # Update Array (Source of Truth)
+            current_depth = state.terrain_layers[SoilLayer.ORGANICS, sx, sy]
+            if current_depth < MAX_ORGANICS_DEPTH:
+                state.terrain_layers[SoilLayer.ORGANICS, sx, sy] += 1
+                if not state.terrain_materials[SoilLayer.ORGANICS, sx, sy]:
+                    state.terrain_materials[SoilLayer.ORGANICS, sx, sy] = "humus"
+                state.terrain_changed = True
+                state.dirty_subsquares.add((sx, sy))
+                
+                # Update Object (Legacy consistency)
+                terrain = ensure_terrain_override(subsquare, tile.terrain)
                 terrain.add_material_to_layer(SoilLayer.ORGANICS, 1)
             state.messages.append(f"Biomass harvested! (Total {state.inventory.biomass})")
 
@@ -217,4 +227,4 @@ def tick_structures(state: "GameState", heat: int) -> None:
         local_x, local_y = get_subsquare_index(sub_pos[0], sub_pos[1])
         subsquare = tile.subgrid[local_x][local_y]
 
-        structure.tick(state, tile, subsquare, tile_pos[0], tile_pos[1])
+        structure.tick(state, tile, subsquare, tile_pos[0], tile_pos[1], sub_pos[0], sub_pos[1])

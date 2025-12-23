@@ -15,6 +15,19 @@ from config import SUBGRID_SIZE
 if TYPE_CHECKING:
     from main import GameState
 
+def get_grid_elevation(state: "GameState", sx: int, sy: int) -> int:
+    """Get absolute elevation of a grid cell in depth units from arrays.
+
+    Elevation = bedrock_base + sum(all layer depths) + elevation_offset
+    """
+    # This is faster than np.sum on a slice for a single cell
+    layers_total = (
+        state.terrain_layers[0, sx, sy] + state.terrain_layers[1, sx, sy] +
+        state.terrain_layers[2, sx, sy] + state.terrain_layers[3, sx, sy] +
+        state.terrain_layers[4, sx, sy] + state.terrain_layers[5, sx, sy]
+    )
+    return state.bedrock_base[sx, sy] + layers_total + state.elevation_offset_grid[sx, sy]
+
 
 def get_total_elevation(state: "GameState", sx: int, sy: int) -> float:
     """Get total elevation at a grid cell in meters.
@@ -92,8 +105,6 @@ def get_tile_total_water(state: "GameState", tx: int, ty: int) -> int:
     Returns:
         Total water in units
     """
-    from surface_state import get_tile_surface_water
-    from mapgen import Tile  # Need to pass a dummy tile for get_tile_surface_water
     # Since get_tile_surface_water just needs tile coords, we can refactor this later
     # For now, get surface water directly
     gx_start = tx * SUBGRID_SIZE
