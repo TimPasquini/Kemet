@@ -40,13 +40,11 @@ from subgrid import (
     SubSquare,
     subgrid_to_tile,
     get_subsquare_index,
-    ensure_terrain_override,
     get_subsquare_terrain,
 )
 from mapgen import (
     Tile,
     TILE_TYPES,
-    generate_map,
     recalculate_biomes,
 )
 from player import PlayerState
@@ -1023,8 +1021,8 @@ def collect_water(state: GameState) -> None:
 
     gathered = min(100, available)
     state.water_grid[sx, sy] -= gathered
-    subsquare.check_water_threshold(state.water_grid[sx, sy])
     state.active_water_subsquares.add(state.get_action_target_subsquare())
+    state.dirty_subsquares.add((sx, sy))
     state.inventory.water += gathered
     state.messages.append(f"Collected {gathered / 10:.1f}L water.")
 
@@ -1038,13 +1036,12 @@ def pour_water(state: GameState, amount: float) -> None:
         state.messages.append("Not enough water carried.")
         return
 
-    tile, subsquare, _ = state.get_target_tile_and_subsquare()
     sx, sy = state.get_action_target_subsquare()
     state.water_grid[sx, sy] += amount_units
-    subsquare.check_water_threshold(state.water_grid[sx, sy])
-    
+
     # Add to active set for flow simulation
-    state.active_water_subsquares.add(state.get_action_target_subsquare())
+    state.active_water_subsquares.add((sx, sy))
+    state.dirty_subsquares.add((sx, sy))
 
     state.inventory.water -= amount_units
     state.messages.append(f"Poured {amount:.1f}L water.")

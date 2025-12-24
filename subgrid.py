@@ -277,24 +277,3 @@ def get_subsquare_terrain(subsquare: SubSquare, tile_terrain: "TerrainColumn") -
     return tile_terrain
 
 
-def ensure_terrain_override(subsquare: SubSquare, tile_terrain: "TerrainColumn") -> "TerrainColumn":
-    """Ensure a sub-square has its own terrain override, creating one if needed.
-
-    This is called before modifying terrain at sub-square level.
-    If the sub-square doesn't have an override, a deep copy of the
-    tile terrain is created and assigned.
-
-    Also invalidates the appearance cache since terrain affects visuals.
-
-    Args:
-        subsquare: The sub-square to ensure has terrain
-        tile_terrain: The parent tile's terrain to copy from
-
-    Returns:
-        The sub-square's terrain_override (newly created or existing)
-    """
-    if subsquare.terrain_override is None:
-        subsquare.terrain_override = deepcopy(tile_terrain)
-    # Terrain change affects appearance
-    subsquare.invalidate_appearance()
-    return subsquare.terrain_override

@@ -158,13 +158,13 @@ def simulate_surface_flow(state: "GameState") -> int:
     nz_out_rows, nz_out_cols = np.nonzero(outflow_real)
     for i in range(len(nz_out_rows)):
         sx, sy = nz_out_rows[i], nz_out_cols[i]
-        tx, ty = sx // SUBGRID_SIZE, sy // SUBGRID_SIZE
-        lx, ly = sx % SUBGRID_SIZE, sy % SUBGRID_SIZE
-        subsquare = state.tiles[tx][ty].subgrid[lx][ly]
-        subsquare.water_passage += outflow_real[sx, sy]
 
-        # Check visual threshold (using new water value)
-        subsquare.check_water_threshold(state.water_grid[sx, sy])
+        # Accumulate water passage for erosion
+        state.water_passage_grid[sx, sy] += outflow_real[sx, sy]
+
+        # Check visual threshold (using new water value) - add to active set if water visible
+        if state.water_grid[sx, sy] > 5:  # Water visible threshold
+            state.active_water_subsquares.add((sx, sy))
     
     return edge_runoff_total
 

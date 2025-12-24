@@ -124,7 +124,6 @@ class Planter(Structure):
     growth: int = 0  # Growth progress 0-100
 
     def tick(self, state: "GameState", tile: "Tile", subsquare: "SubSquare", tx: int, ty: int, sx: int, sy: int) -> None:
-        from subgrid import ensure_terrain_override  # Local import
 
         # Total water includes sub-square surface water + subsurface (from grids)
         from grid_helpers import get_tile_total_water
@@ -151,10 +150,6 @@ class Planter(Structure):
                     state.terrain_materials[SoilLayer.ORGANICS, sx, sy] = "humus"
                 state.terrain_changed = True
                 state.dirty_subsquares.add((sx, sy))
-                
-                # Update Object (Legacy consistency)
-                terrain = ensure_terrain_override(subsquare, tile.terrain)
-                terrain.add_material_to_layer(SoilLayer.ORGANICS, 1)
             state.messages.append(f"Biomass harvested! (Total {state.inventory.biomass})")
 
     def get_survey_string(self) -> str:
@@ -218,7 +213,7 @@ def tick_structures(state: "GameState", heat: int) -> None:
     Structures are keyed by sub-square coords but their effects
     (water collection, growth) operate on the parent tile.
     """
-    from subgrid import subgrid_to_tile, get_subsquare_index, ensure_terrain_override
+    from subgrid import subgrid_to_tile, get_subsquare_index
 
     for sub_pos, structure in list(state.structures.items()):
         # Get parent tile for this structure's sub-square
