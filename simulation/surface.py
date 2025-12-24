@@ -169,8 +169,30 @@ def simulate_surface_flow(state: "GameState") -> int:
     return edge_runoff_total
 
 
+def compute_exposed_layer_grid(terrain_layers: np.ndarray) -> np.ndarray:
+    """Compute which layer is topmost (exposed) for each grid cell.
+
+    Returns array of shape (grid_w, grid_h) where values are:
+    - 0-4: Layer index (ORGANICS=0, TOPSOIL=1, ELUVIATION=2, SUBSOIL=3, REGOLITH=4)
+    - -1: Bedrock only (no soil layers)
+    """
+    from ground import SoilLayer
+
+    # Start with all bedrock (-1)
+    exposed = np.full(terrain_layers.shape[1:], -1, dtype=np.int8)
+
+    # Check layers from bottom to top (so top layer overwrites)
+    # Layer indices: ORGANICS=0, TOPSOIL=1, ELUVIATION=2, SUBSOIL=3, REGOLITH=4
+    for layer_idx in [SoilLayer.REGOLITH, SoilLayer.SUBSOIL, SoilLayer.ELUVIATION,
+                      SoilLayer.TOPSOIL, SoilLayer.ORGANICS]:
+        mask = terrain_layers[layer_idx] > 0
+        exposed[mask] = layer_idx
+
+    return exposed
+
+
 def simulate_surface_seepage(state: "GameState") -> None:
-    """Simulate surface water seeping into the topmost soil layer (array-based).
+    """Simulate surface water seeping into the topmost soil layer (vectorized).
 
     Water on each grid cell seeps down into the topmost non-bedrock soil layer
     based on the permeability of the exposed material.
@@ -180,53 +202,64 @@ def simulate_surface_seepage(state: "GameState") -> None:
     """
     from ground import SoilLayer
 
-    # Only iterate active water subsquares for efficiency
-    # We need a copy because we might modify the set (though seepage usually just reduces water)
-    for sx, sy in list(state.active_water_subsquares):
-        water_amt = state.water_grid[sx, sy]
-        if water_amt <= 0:
-            continue
+    # Only process cells with surface water
+    if len(state.active_water_subsquares) == 0:
+        return
 
-        # Find the topmost non-bedrock soil layer (exposed layer)
-        exposed_layer = None
-        for layer in [SoilLayer.ORGANICS, SoilLayer.TOPSOIL, SoilLayer.ELUVIATION,
-                      SoilLayer.SUBSOIL, SoilLayer.REGOLITH]:
-            if state.terrain_layers[layer, sx, sy] > 0:
-                exposed_layer = layer
-                break
+    # Build active region mask
+    rows, cols = zip(*state.active_water_subsquares)
+    rows = np.array(rows, dtype=np.int32)
+    cols = np.array(cols, dtype=np.int32)
 
-        if exposed_layer is None:
-            continue  # Only bedrock exposed, can't seep
+    # Get water amounts for active cells
+    water_amounts = state.water_grid[rows, cols]
 
-        # Get permeability from material property grid
-        permeability = state.permeability_vert_grid[exposed_layer, sx, sy]
-        if permeability <= 0:
-            continue
+    # Compute exposed layer for all cells (cached computation)
+    exposed_grid = compute_exposed_layer_grid(state.terrain_layers)
+    exposed_layers = exposed_grid[rows, cols]
 
-        # Calculate capacity remaining in the topmost layer
-        layer_depth = state.terrain_layers[exposed_layer, sx, sy]
-        porosity = state.porosity_grid[exposed_layer, sx, sy]
-        max_storage = (layer_depth * porosity) // 100
-        current_water = state.subsurface_water_grid[exposed_layer, sx, sy]
-        available_capacity = max_storage - current_water
+    # Filter out bedrock-only cells and zero-water cells
+    valid_mask = (exposed_layers >= 0) & (water_amounts > 0)
+    if not np.any(valid_mask):
+        return
 
-        if available_capacity <= 0:
-            continue  # Layer is saturated
+    rows = rows[valid_mask]
+    cols = cols[valid_mask]
+    water_amounts = water_amounts[valid_mask]
+    exposed_layers = exposed_layers[valid_mask]
 
-        # Calculate seepage amount based on permeability
-        seep_rate = (SURFACE_SEEPAGE_RATE * permeability) // 100
-        seep_amount = (water_amt * seep_rate) // 100
-        seep_amount = min(seep_amount, available_capacity)
+    # Gather properties using fancy indexing
+    permeability = state.permeability_vert_grid[exposed_layers, rows, cols]
+    layer_depth = state.terrain_layers[exposed_layers, rows, cols]
+    porosity = state.porosity_grid[exposed_layers, rows, cols]
+    current_water = state.subsurface_water_grid[exposed_layers, rows, cols]
 
-        if seep_amount > 0:
-            state.water_grid[sx, sy] -= seep_amount
-            state.subsurface_water_grid[exposed_layer, sx, sy] += seep_amount
+    # Vectorized capacity calculation
+    max_storage = (layer_depth * porosity) // 100
+    available_capacity = max_storage - current_water
 
-            # Update visual if threshold crossed (temporary until rendering migration)
-            tx, ty = sx // SUBGRID_SIZE, sy // SUBGRID_SIZE
-            lx, ly = sx % SUBGRID_SIZE, sy % SUBGRID_SIZE
-            tile = state.tiles[tx][ty]
-            tile.subgrid[lx][ly].check_water_threshold(state.water_grid[sx, sy])
+    # Vectorized seepage calculation
+    seep_rate = (SURFACE_SEEPAGE_RATE * permeability) // 100
+    seep_amount = (water_amounts * seep_rate) // 100
+    seep_amount = np.minimum(seep_amount, available_capacity)
+
+    # Apply seepage where amount > 0 and permeability > 0
+    apply_mask = (seep_amount > 0) & (permeability > 0) & (available_capacity > 0)
+    if not np.any(apply_mask):
+        return
+
+    # Filter to cells that actually seep
+    seep_rows = rows[apply_mask]
+    seep_cols = cols[apply_mask]
+    seep_layers = exposed_layers[apply_mask]
+    seep_amounts = seep_amount[apply_mask]
+
+    # Update grids
+    state.water_grid[seep_rows, seep_cols] -= seep_amounts
+    state.subsurface_water_grid[seep_layers, seep_rows, seep_cols] += seep_amounts
+
+    # Mark dirty for rendering (legacy compatibility)
+    state.dirty_subsquares.update(zip(seep_rows, seep_cols))
 
 
 def get_tile_surface_water(tile: "Tile", water_grid: np.ndarray | None = None, tile_x: int = -1, tile_y: int = -1) -> int:

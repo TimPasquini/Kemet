@@ -160,7 +160,7 @@ def apply_overnight_erosion(
     state: "GameState",
     seasonal_modifier: float = 1.0,
 ) -> List[str]:
-    """Apply erosion based on accumulated daily pressures using active sets.
+    """Apply erosion based on accumulated daily pressures (vectorized).
 
     Args:
         state: The main game state.
@@ -169,54 +169,104 @@ def apply_overnight_erosion(
     Returns:
         List of messages about erosion events.
     """
+    from simulation.surface import compute_exposed_layer_grid
+
     messages: List[str] = []
     total_water_erosion = 0.0
     total_wind_erosion = 0.0
 
-    # --- Water Erosion ---
-    for sx, sy in list(state.active_water_subsquares):
-        water_passage = state.water_passage_grid[sx, sy]
+    # Compute exposed layer grid once
+    exposed_grid = compute_exposed_layer_grid(state.terrain_layers)
 
-        if water_passage > WATER_EROSION_THRESHOLD:
-            exposed, _ = get_exposed_layer_and_material(state, sx, sy)
+    # --- Water Erosion (Vectorized) ---
+    if len(state.active_water_subsquares) > 0:
+        # Extract active coordinates
+        rows, cols = zip(*state.active_water_subsquares)
+        rows = np.array(rows, dtype=np.int32)
+        cols = np.array(cols, dtype=np.int32)
 
-            if exposed == SoilLayer.BEDROCK:
-                continue
+        # Get water passage values
+        water_passage = state.water_passage_grid[rows, cols]
+        exposed_layers = exposed_grid[rows, cols]
 
-            excess_passage = water_passage - WATER_EROSION_THRESHOLD
-            resistance = EROSION_RESISTANCE.get(exposed, 0.5)
-            erosion = excess_passage * WATER_EROSION_RATE * resistance * seasonal_modifier
-            if erosion > 0.0001:
-                apply_erosion(state, sx, sy, erosion)
-                total_water_erosion += erosion
+        # Filter cells above threshold and not bedrock
+        mask = (water_passage > WATER_EROSION_THRESHOLD) & (exposed_layers >= 0)
+        if np.any(mask):
+            wr = rows[mask]
+            wc = cols[mask]
+            wp = water_passage[mask]
+            wl = exposed_layers[mask]
 
-    # --- Wind Erosion ---
-    for tile_x, tile_y in list(state.active_wind_tiles):
-        for local_x in range(SUBGRID_SIZE):
-            for local_y in range(SUBGRID_SIZE):
-                sx, sy = tile_x * SUBGRID_SIZE + local_x, tile_y * SUBGRID_SIZE + local_y
-                wind_exposure = state.wind_exposure_grid[sx, sy]
+            # Vectorized erosion calculation
+            excess = wp - WATER_EROSION_THRESHOLD
+            # Build resistance array from lookup
+            resistance = np.array([EROSION_RESISTANCE.get(SoilLayer(layer), 0.5) for layer in wl])
+            erosion_amounts = excess * WATER_EROSION_RATE * resistance * seasonal_modifier
 
-                if wind_exposure > WIND_EROSION_THRESHOLD * 10:
-                    exposed, material = get_exposed_layer_and_material(state, sx, sy)
+            # Apply erosion where significant
+            significant = erosion_amounts > 0.0001
+            if np.any(significant):
+                apply_erosion_vectorized(state, wr[significant], wc[significant],
+                                        wl[significant], erosion_amounts[significant])
+                total_water_erosion = float(np.sum(erosion_amounts[significant]))
 
-                    if exposed == SoilLayer.BEDROCK:
-                        continue
+    # --- Wind Erosion (Vectorized) ---
+    if len(state.active_wind_tiles) > 0:
+        # Build list of all subsquares in active wind tiles
+        wind_coords = []
+        for tile_x, tile_y in state.active_wind_tiles:
+            for lx in range(SUBGRID_SIZE):
+                for ly in range(SUBGRID_SIZE):
+                    wind_coords.append((tile_x * SUBGRID_SIZE + lx, tile_y * SUBGRID_SIZE + ly))
 
-                    moisture = get_soil_moisture(state, sx, sy)
-                    moisture_mod = 1.0 - (moisture * 0.8)
-                    if moisture_mod <= 0.1:
-                        continue
+        if len(wind_coords) > 0:
+            rows, cols = zip(*wind_coords)
+            rows = np.array(rows, dtype=np.int32)
+            cols = np.array(cols, dtype=np.int32)
 
-                    mat_mod = WIND_MATERIAL_MODIFIER.get(material, 0.5)
-                    resistance = EROSION_RESISTANCE.get(exposed, 0.5)
-                    erosion = (
-                        wind_exposure * moisture_mod *
-                        mat_mod * resistance * WIND_EROSION_RATE * 0.01 * seasonal_modifier
+            wind_exposure = state.wind_exposure_grid[rows, cols]
+            exposed_layers = exposed_grid[rows, cols]
+
+            # Filter cells above threshold and not bedrock
+            mask = (wind_exposure > WIND_EROSION_THRESHOLD * 10) & (exposed_layers >= 0)
+            if np.any(mask):
+                wr = rows[mask]
+                wc = cols[mask]
+                we = wind_exposure[mask]
+                wl = exposed_layers[mask]
+
+                # Vectorized moisture calculation
+                moisture = compute_soil_moisture_vectorized(state, wr, wc, wl)
+                moisture_mod = 1.0 - (moisture * 0.8)
+
+                # Filter out too-wet cells
+                dry_mask = moisture_mod > 0.1
+                if np.any(dry_mask):
+                    wr = wr[dry_mask]
+                    wc = wc[dry_mask]
+                    we = we[dry_mask]
+                    wl = wl[dry_mask]
+                    moisture_mod = moisture_mod[dry_mask]
+
+                    # Get material modifiers
+                    materials = state.terrain_materials[wl, wr, wc]
+                    mat_mod = np.array([WIND_MATERIAL_MODIFIER.get(mat, 0.5) for mat in materials])
+
+                    # Get resistance
+                    resistance = np.array([EROSION_RESISTANCE.get(SoilLayer(layer), 0.5) for layer in wl])
+
+                    # Calculate erosion
+                    erosion_amounts = (
+                        we * moisture_mod * mat_mod * resistance *
+                        WIND_EROSION_RATE * 0.01 * seasonal_modifier
                     )
-                    if erosion > 0.0001:
-                        apply_erosion(state, sx, sy, erosion)
-                        total_wind_erosion += erosion
+
+                    # Apply where significant
+                    significant = erosion_amounts > 0.0001
+                    if np.any(significant):
+                        apply_erosion_vectorized(state, wr[significant], wc[significant],
+                                                wl[significant], erosion_amounts[significant])
+                        total_wind_erosion = float(np.sum(erosion_amounts[significant]))
 
     # Reset all daily accumulators
     reset_daily_accumulators(state)
@@ -230,8 +280,84 @@ def apply_overnight_erosion(
     return messages
 
 
+def apply_erosion_vectorized(
+    state: "GameState",
+    rows: np.ndarray,
+    cols: np.ndarray,
+    layers: np.ndarray,
+    amounts: np.ndarray
+) -> None:
+    """Apply erosion to multiple grid cells (vectorized).
+
+    Args:
+        rows, cols: Grid coordinates
+        layers: Exposed layer indices for each cell
+        amounts: Erosion amounts for each cell
+    """
+    # Calculate depth to remove (vectorized)
+    depth_to_remove = np.maximum(1, amounts.astype(np.int32))
+    current_depths = state.terrain_layers[layers, rows, cols]
+    actual_remove = np.minimum(current_depths, depth_to_remove)
+
+    # Apply erosion
+    state.terrain_layers[layers, rows, cols] -= actual_remove
+
+    # Clear material names where layer depleted
+    depleted_mask = state.terrain_layers[layers, rows, cols] == 0
+    if np.any(depleted_mask):
+        depleted_rows = rows[depleted_mask]
+        depleted_cols = cols[depleted_mask]
+        depleted_layers = layers[depleted_mask]
+        state.terrain_materials[depleted_layers, depleted_rows, depleted_cols] = ""
+
+    state.terrain_changed = True
+    state.dirty_subsquares.update(zip(rows, cols))
+
+
+def compute_soil_moisture_vectorized(
+    state: "GameState",
+    rows: np.ndarray,
+    cols: np.ndarray,
+    exposed_layers: np.ndarray
+) -> np.ndarray:
+    """Compute soil moisture (0-1) for multiple cells (vectorized)."""
+    surface_water = state.water_grid[rows, cols]
+
+    # Surface water > 10 = fully wet
+    moisture = np.where(surface_water > 10, 1.0, 0.0)
+
+    # For cells not fully wet, check soil saturation
+    dry_mask = surface_water <= 10
+    if np.any(dry_mask):
+        dry_rows = rows[dry_mask]
+        dry_cols = cols[dry_mask]
+        dry_layers = exposed_layers[dry_mask]
+        dry_surface = surface_water[dry_mask]
+
+        depth = state.terrain_layers[dry_layers, dry_rows, dry_cols]
+        porosity = state.porosity_grid[dry_layers, dry_rows, dry_cols]
+        max_storage = (depth * porosity) // 100
+
+        # Avoid division by zero
+        saturation = np.where(
+            max_storage > 0,
+            state.subsurface_water_grid[dry_layers, dry_rows, dry_cols] / max_storage,
+            0.0
+        )
+
+        # Surface water adds moisture
+        surface_factor = np.minimum(dry_surface / 20.0, 0.3)
+
+        moisture[dry_mask] = np.minimum(1.0, saturation * 0.7 + surface_factor)
+
+    return moisture
+
+
 def apply_erosion(state: "GameState", sx: int, sy: int, amount: float) -> None:
-    """Apply erosion to a grid cell's terrain (Arrays)."""
+    """Apply erosion to a grid cell's terrain (Arrays).
+
+    DEPRECATED: Use apply_erosion_vectorized for better performance.
+    """
     # Material Removal: remove actual soil from terrain layers
     if amount > 0:
         layer, _ = get_exposed_layer_and_material(state, sx, sy)
@@ -240,11 +366,11 @@ def apply_erosion(state: "GameState", sx: int, sy: int, amount: float) -> None:
             current_depth = state.terrain_layers[layer, sx, sy]
             actual_remove = min(current_depth, depth_to_remove)
             state.terrain_layers[layer, sx, sy] -= actual_remove
-            
+
             # If layer depleted, clear material name
             if state.terrain_layers[layer, sx, sy] == 0:
                 state.terrain_materials[layer, sx, sy] = ""
-            
+
             state.terrain_changed = True
             state.dirty_subsquares.add((sx, sy))
 
