@@ -83,7 +83,6 @@ class GameState:
     """Main game state container."""
     width: int
     height: int
-    tiles: List[List[Tile]]
     structures: Dict[Point, Structure] = field(default_factory=dict)
     player_state: PlayerState = field(default_factory=PlayerState)
     inventory: Inventory = field(default_factory=Inventory)
@@ -314,47 +313,6 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
                     permeability_horiz_grid[layer, gx, gy] = material_props.permeability_horizontal
                     porosity_grid[layer, gx, gy] = material_props.porosity
 
-    # Create minimal stub tile objects for backwards compatibility
-    # Note: Real terrain data is in grids. Tiles are legacy and will be removed.
-    tiles: List[List[Tile]] = []
-    for x in range(width):
-        column = []
-        for y in range(height):
-            # Get representative values from center cell of the 3x3 tile region
-            center_gx = x * SUBGRID_SIZE + 1
-            center_gy = y * SUBGRID_SIZE + 1
-
-            # Create stub terrain (just for compatibility, not accurate)
-            stub_terrain = create_default_terrain(elevation_to_units(-2.0), elevation_to_units(1.0))
-
-            # Note: WaterColumn no longer needed - all water data in grids
-
-            # Create subgrid with elevation offsets from grid
-            subgrid = []
-            for sx in range(SUBGRID_SIZE):
-                row = []
-                for sy in range(SUBGRID_SIZE):
-                    row.append(SubSquare())
-                subgrid.append(row)
-
-            # Get biome kind from grid
-            kind = str(kind_grid[center_gx, center_gy])
-
-            # Check wellspring from center cell
-            wellspring_output = wellspring_grid[center_gx, center_gy]
-
-            # Create minimal stub tile
-            tile = Tile(
-                kind=kind,
-                terrain=stub_terrain,  # Stub only - real data in grids
-                water=None,  # No longer used - real data in subsurface_water_grid
-                surface=SurfaceTraits(),
-                wellspring_output=wellspring_output,
-                subgrid=subgrid,
-            )
-            column.append(tile)
-        tiles.append(column)
-
     start_tile = (width // 2, height // 2)
 
     # Update grids for depot location - create good starting terrain
@@ -399,7 +357,6 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
     state = GameState(
         width=width,
         height=height,
-        tiles=tiles,
         player_state=player_state,
         water_grid=water_grid,
         elevation_grid=elevation_grid,
