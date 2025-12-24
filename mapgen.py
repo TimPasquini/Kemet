@@ -325,6 +325,7 @@ def generate_grids_direct(grid_width: int, grid_height: int) -> Dict:
     positions = [(gx, gy) for gx in range(grid_width) for gy in range(grid_height)]
     random.shuffle(positions)
 
+    # Phase 1: WFC Biome Selection (sequential, inherently order-dependent)
     for gx, gy in positions:
         # Get neighbor biomes for context (4-connected)
         neighbor_types = []
@@ -349,59 +350,81 @@ def generate_grids_direct(grid_width: int, grid_height: int) -> Dict:
         )[0]
         kind_grid[gx, gy] = choice
 
-        # Create terrain layers for this cell
-        depth_range = depth_map[choice]
-        bedrock_var = elevation_to_units(random.uniform(-0.3, 0.3))
-        bedrock_base[gx, gy] = bedrock_base_elev + bedrock_var
+    # Phase 2: Vectorized terrain property assignment based on biome grid
+    # Generate random variations for each cell
+    bedrock_variation = np.random.uniform(-0.3, 0.3, (grid_width, grid_height))
+    bedrock_base[:] = bedrock_base_elev + elevation_to_units(bedrock_variation)
 
-        total_soil_depth = elevation_to_units(random.uniform(*depth_range))
+    # Depth variation per biome
+    depth_grids = {}
+    for biome, (min_depth, max_depth) in depth_map.items():
+        mask = (kind_grid == biome)
+        depth_grids[biome] = np.where(mask,
+            elevation_to_units(np.random.uniform(min_depth, max_depth, (grid_width, grid_height))),
+            0
+        )
 
-        # Distribute soil depth across layers
-        # Regolith: 30%, Subsoil: 30%, Eluviation: 15%, Topsoil: 20%, Organics: 5%
-        terrain_layers[SoilLayer.REGOLITH, gx, gy] = int(total_soil_depth * 0.30)
-        terrain_layers[SoilLayer.SUBSOIL, gx, gy] = int(total_soil_depth * 0.30)
-        terrain_layers[SoilLayer.ELUVIATION, gx, gy] = int(total_soil_depth * 0.15)
-        terrain_layers[SoilLayer.TOPSOIL, gx, gy] = int(total_soil_depth * 0.20)
-        terrain_layers[SoilLayer.ORGANICS, gx, gy] = int(total_soil_depth * 0.05)
+    # Combine depth grids
+    total_soil_depth = sum(depth_grids.values())
 
-        # Assign materials based on biome
-        if choice == "dune":
-            terrain_materials[SoilLayer.TOPSOIL, gx, gy] = "sand"
-            terrain_materials[SoilLayer.ELUVIATION, gx, gy] = "silt"
-            terrain_materials[SoilLayer.SUBSOIL, gx, gy] = "sand"
-            terrain_materials[SoilLayer.REGOLITH, gx, gy] = "gravel"
-        elif choice == "rock":
-            terrain_materials[SoilLayer.TOPSOIL, gx, gy] = "rock"
-            terrain_materials[SoilLayer.ELUVIATION, gx, gy] = "rock"
-            terrain_materials[SoilLayer.SUBSOIL, gx, gy] = "rock"
-            terrain_materials[SoilLayer.REGOLITH, gx, gy] = "rock"
-        elif choice == "wadi":
-            terrain_materials[SoilLayer.TOPSOIL, gx, gy] = "silt"
-            terrain_materials[SoilLayer.ELUVIATION, gx, gy] = "silt"
-            terrain_materials[SoilLayer.SUBSOIL, gx, gy] = "clay"
-            terrain_materials[SoilLayer.REGOLITH, gx, gy] = "gravel"
-        elif choice == "salt":
-            terrain_materials[SoilLayer.TOPSOIL, gx, gy] = "sand"
-            terrain_materials[SoilLayer.ELUVIATION, gx, gy] = "silt"
-            terrain_materials[SoilLayer.SUBSOIL, gx, gy] = "silt"
-            terrain_materials[SoilLayer.REGOLITH, gx, gy] = "gravel"
-        else:  # flat
-            terrain_materials[SoilLayer.TOPSOIL, gx, gy] = "dirt"
-            terrain_materials[SoilLayer.ELUVIATION, gx, gy] = "silt"
-            terrain_materials[SoilLayer.SUBSOIL, gx, gy] = "clay"
-            terrain_materials[SoilLayer.REGOLITH, gx, gy] = "gravel"
+    # Distribute soil depth across layers (vectorized)
+    terrain_layers[SoilLayer.REGOLITH] = (total_soil_depth * 0.30).astype(np.int32)
+    terrain_layers[SoilLayer.SUBSOIL] = (total_soil_depth * 0.30).astype(np.int32)
+    terrain_layers[SoilLayer.ELUVIATION] = (total_soil_depth * 0.15).astype(np.int32)
+    terrain_layers[SoilLayer.TOPSOIL] = (total_soil_depth * 0.20).astype(np.int32)
+    terrain_layers[SoilLayer.ORGANICS] = (total_soil_depth * 0.05).astype(np.int32)
 
-        terrain_materials[SoilLayer.ORGANICS, gx, gy] = "humus"
-        terrain_materials[SoilLayer.BEDROCK, gx, gy] = "bedrock"
+    # Assign materials based on biome (vectorized with masks)
+    # Dune biome
+    dune_mask = (kind_grid == "dune")
+    terrain_materials[SoilLayer.TOPSOIL][dune_mask] = "sand"
+    terrain_materials[SoilLayer.ELUVIATION][dune_mask] = "silt"
+    terrain_materials[SoilLayer.SUBSOIL][dune_mask] = "sand"
+    terrain_materials[SoilLayer.REGOLITH][dune_mask] = "gravel"
 
-        # Saturate regolith layer to create water table
-        regolith_depth = terrain_layers[SoilLayer.REGOLITH, gx, gy]
-        material_name = terrain_materials[SoilLayer.REGOLITH, gx, gy]
-        props = MATERIAL_LIBRARY.get(material_name)
-        if props and regolith_depth > 0:
-            porosity = props.porosity
-            max_water = (regolith_depth * porosity) // 100
-            subsurface_water_grid[SoilLayer.REGOLITH, gx, gy] = max_water
+    # Rock biome
+    rock_mask = (kind_grid == "rock")
+    terrain_materials[SoilLayer.TOPSOIL][rock_mask] = "rock"
+    terrain_materials[SoilLayer.ELUVIATION][rock_mask] = "rock"
+    terrain_materials[SoilLayer.SUBSOIL][rock_mask] = "rock"
+    terrain_materials[SoilLayer.REGOLITH][rock_mask] = "rock"
+
+    # Wadi biome
+    wadi_mask = (kind_grid == "wadi")
+    terrain_materials[SoilLayer.TOPSOIL][wadi_mask] = "silt"
+    terrain_materials[SoilLayer.ELUVIATION][wadi_mask] = "silt"
+    terrain_materials[SoilLayer.SUBSOIL][wadi_mask] = "clay"
+    terrain_materials[SoilLayer.REGOLITH][wadi_mask] = "gravel"
+
+    # Salt biome
+    salt_mask = (kind_grid == "salt")
+    terrain_materials[SoilLayer.TOPSOIL][salt_mask] = "sand"
+    terrain_materials[SoilLayer.ELUVIATION][salt_mask] = "silt"
+    terrain_materials[SoilLayer.SUBSOIL][salt_mask] = "silt"
+    terrain_materials[SoilLayer.REGOLITH][salt_mask] = "gravel"
+
+    # Flat biome (default)
+    flat_mask = (kind_grid == "flat")
+    terrain_materials[SoilLayer.TOPSOIL][flat_mask] = "dirt"
+    terrain_materials[SoilLayer.ELUVIATION][flat_mask] = "silt"
+    terrain_materials[SoilLayer.SUBSOIL][flat_mask] = "clay"
+    terrain_materials[SoilLayer.REGOLITH][flat_mask] = "gravel"
+
+    # Universal materials
+    terrain_materials[SoilLayer.ORGANICS, :, :] = "humus"
+    terrain_materials[SoilLayer.BEDROCK, :, :] = "bedrock"
+
+    # Vectorized water table saturation
+    # For each cell, saturate regolith based on material porosity
+    regolith_depths = terrain_layers[SoilLayer.REGOLITH]
+    # Build porosity grid from material names
+    porosity_values = np.zeros_like(regolith_depths, dtype=np.float32)
+    for mat_name, props in MATERIAL_LIBRARY.items():
+        mat_mask = (terrain_materials[SoilLayer.REGOLITH] == mat_name)
+        porosity_values[mat_mask] = props.porosity
+
+    max_water = ((regolith_depths * porosity_values) // 100).astype(np.int32)
+    subsurface_water_grid[SoilLayer.REGOLITH] = max_water
 
     # Generate wellsprings at tile centers (prefer lowland areas)
     # Calculate elevations for all tile center cells
