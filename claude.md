@@ -46,76 +46,65 @@ The goal is to create systems that generate believable, emergent complexity from
 
 ---
 
-## Known Issues & Watchlist
+## Known Issues & Priorities
 
-### Critical Bugs (All FIXED 2025-12-22)
-- **[FIXED] Edge Wrapping in Subsurface Flow**: Replaced `np.roll()` with `shift_to_neighbor()` helper using explicit slicing. (subsurface_vectorized.py)
-- **[FIXED] Material Grid Not Synced**: Material names now updated in `lower_ground()` and `raise_ground()`. (main.py:509-510, 547-548)
-- **[FIXED] Water Off-Map Not Tracked**: Edge runoff now properly tracked and returned to GlobalWaterPool. (subsurface_vectorized.py)
-- **[FIXED] Moisture Grid Shape Mismatch**: moisture_grid now (180,135) with aggregation for biome calc. (main.py:401, 632-639)
-- **[FIXED] Bedrock Infinite Depth**: Added MIN_BEDROCK_ELEVATION bounds check to prevent infinite excavation. (main.py:481-483, config.py:49)
+### 🔴 CRITICAL - Phase 3 Blockers
+
+#### Atmosphere System Requires Grid Vectorization
+**Priority**: HIGH - Required for Phase 3 scale-up
+**Current Issues**:
+1. **Coarse-Grained**: 4×4 tile regions (12×12 grid cells) share identical humidity/wind values
+   - Creates blocky, unnatural environmental effects
+   - Prevents fine-grained environmental interactions
+2. **Object-Oriented**: Uses `List[List[AtmosphereRegion]]` instead of NumPy arrays
+   - Inconsistent with project's grid-based architecture
+   - Prevents efficient vectorization
+3. **Iterative Logic**: Python for loops in `simulate_atmosphere_tick()`
+   - Misses massive parallelization opportunities
+   - Slow compared to vectorized alternatives
+4. **Legacy Interface**: `get_evaporation_modifier()` designed for tile-by-tile calls
+   - Encourages iterative patterns in dependent code
+   - Incompatible with vectorized simulation
+
+**Required Work**:
+- Migrate to grid-resolution NumPy arrays (180×135)
+- Vectorize atmosphere simulation with NumPy operations
+- Update evaporation to use grid-based modifiers
+- Remove AtmosphereRegion class and object collections
+
+**Files**: `atmosphere.py`, `simulation/subsurface.py`
 
 ### Performance
-- **[OPTIMIZED] Object-Array Sync**: The `sync_objects_to_arrays` bottleneck has been eliminated entirely. All physics runs on NumPy arrays.
-- **[OPTIMIZED] Moisture Calculation**: Fully vectorized with `np.sum(subsurface_water_grid, axis=0) + water_grid`. **100× speedup achieved**. (main.py:632-639)
-- **[OPTIMIZED] Elevation Grid Rebuild**: Direct array operation `bedrock_base + sum(terrain_layers)` (elevation_offset_grid removed). **1000× speedup achieved**. (simulation/surface.py:58-62)
-- **[PARTIALLY OPTIMIZED] Biome Recalculation**: Moisture aggregation now vectorized; biome logic still iterates tiles but with grid data. (main.py:659-666)
-
-### Gameplay/Simulation
-- **[SOLVED] Resolution Mismatch**: Subsurface now operates at grid (180×135) resolution, same as surface.
-
-### Code Quality
-- **[CLEANED] Dead Code**: WaterColumn class (water.py) has been **deleted** - 300+ lines removed. Physics uses `subsurface_water_grid` exclusively.
-- **[IMPROVED] Helper Functions**: Added `grid_helpers.py` with clean API for grid access.
-- **Redundant Objects**: Tile and SubSquare classes still exist as minimal containers. Can be further minimized in future cleanup.
+- **[COMPLETE]** All core simulation systems vectorized
+- **[PENDING]** Atmosphere system vectorization (see above)
 
 ### UI/UX
-- **[SOLVED] Navigation**: Minimap and Zoom implemented.
-- **[SOLVED] No clock**: Hard to know time of day - HUD clock added.
-- **[SOLVED] Trench Geometry**: Replaced boolean flag with actual geometric trenching (Phase 2 complete)
-  - Three modes: Flat, Slope Down, Slope Up
-  - Visual highlighting shows affected squares (red=origin, green=exit, blue=sides, yellow=target)
-  - Material conservation and elevation-aware redistribution
 - **Dead Space**: Map feels crowded; consider HUD overlay with floating windows
 ---
 
 ## Architecture Overview
 
-### Current State: Unified Array Model (Data-Oriented)
+### Current Architecture: Pure Grid-Based (Data-Oriented)
 
-The codebase has completed the transition to a Data-Oriented (NumPy) architecture.
+**Complete as of 2025-12-24**: All simulation state lives in NumPy arrays. Tile and SubSquare classes have been completely removed.
 
-1.  **Simulation (Arrays - Single Source of Truth)**:
-    *   All simulation state lives in global NumPy arrays at 180×135 resolution
-    *   `water_grid` - Surface water (int32)
-    *   `elevation_grid` - Total elevation (int32, computed as `bedrock_base + sum(terrain_layers)`)
-    *   `terrain_layers` - Soil layer depths (6 layers × 180 × 135, int32)
-    *   `bedrock_base` - Bedrock elevation baseline (180 × 135, int32)
-    *   `terrain_materials` - Material names per layer (6 layers × 180 × 135, str)
-    *   `subsurface_water_grid` - Underground water (6 layers × 180 × 135, int32)
-    *   ~~`trench_grid`~~ - Deprecated; replaced by actual geometry (Phase 2)
-    *   All material property grids (porosity, permeability)
-2.  **Objects (Minimal Containers)**:
-    *   `Tile` (60×45): Minimal container with kind, stub terrain, subgrid references
-    *   `SubSquare` (180×135): Minimal container with terrain_override pointer
-    *   All actual simulation data accessed via grids
+#### Core Simulation Grids (180×135 subsquare resolution)
+*   `water_grid` - Surface water (int32)
+*   `elevation_grid` - Total elevation (int32, computed as `bedrock_base + sum(terrain_layers)`)
+*   `terrain_layers` - Soil layer depths (6 layers × 180 × 135, int32)
+*   `bedrock_base` - Bedrock elevation baseline (180 × 135, int32)
+*   `terrain_materials` - Material names per layer (6 layers × 180 × 135, str)
+*   `subsurface_water_grid` - Underground water (6 layers × 180 × 135, int32)
+*   `kind_grid` - Biome types (180 × 135, str)
+*   `wellspring_grid` - Wellspring output rates (180 × 135, int32)
+*   Material property grids: `porosity_grid`, `permeability_vert_grid`, `permeability_horiz_grid`
 
-### Target State: Unified Grid (Data-Oriented)
-*   **Single Truth**: All simulation state lives in global NumPy arrays (180x135 currently, potentially 1024x1024 or 2048x2048).
-*   **No Objects**: `Tile` and `SubSquare` classes are removed or become transient render helpers.
-*   **Vectorized Physics**: All systems (Water, Wind, Erosion, Plants) run as array operations.
-*   **Geometry-First**: Features like trenches are geometric depressions, not boolean flags.
-
-### Simulation Pipeline (Staggered)
-
-Tick operations are spread across a 4-tick cycle to avoid spikes:
-
-```
-tick % 4 == 0: Surface flow (~35ms) + evaporation (~5ms)
-tick % 4 == 1: Seepage + moisture (~15ms) + SUBSURFACE (~65ms) + evaporation
-tick % 4 == 2: Surface flow (~35ms) + evaporation (~5ms)
-tick % 4 == 3: Seepage + moisture (~15ms) + evaporation (~5ms)
-```
+#### Architecture Principles
+*   **Single Truth**: All simulation state in NumPy arrays
+*   **No Object Collections**: Tile and SubSquare classes deleted (Dec 24, 2025)
+*   **Vectorized Physics**: Water, erosion, and biome systems run as array operations
+*   **Geometry-First**: All features (trenches, structures) are geometric, not boolean flags
+*   **Tile-Level Aggregation**: 3×3 grid cells per tile for organization (60×45 tiles = 180×135 grid)
 
 ### Water Conservation System
 
@@ -126,40 +115,11 @@ Wellsprings ←──── total_volume ←──── Edge Runoff
     │                                      ↑
     ↓                                      │
 Soil/Surface ──→ Evaporation ──→ atmospheric_reserve ──→ Rain
-```
 
+```
 - **Wellsprings** draw from finite pool (not infinite)
 - **Edge runoff** returns water to pool (not lost)
 - **Evaporation** moves water to atmosphere (returns via rain)
-
-### Sub-Grid Model (3x3)
-
-Each simulation tile contains 9 **sub-squares**:
-```
-+---+---+---+
-|0,0|1,0|2,0|  <- Sub-squares within one tile
-+---+---+---+
-|0,1|1,1|2,1|
-+---+---+---+
-|0,2|1,2|2,2|
-+---+---+---+
-```
-
-**Sub-square data:**
-- ~~`elevation_offset`~~ - **REMOVED** (Phase 2 elevation harmonization)
-- `structure_id: Optional[int]` - Structure occupying this sub-square
-- ~~`trench_grid`~~ - **DEPRECATED** - replaced by actual geometry (Phase 2)
-- `terrain_override: Optional[TerrainColumn]` - Per-sub-square terrain modifications
-- `water_passage: float` - Daily accumulator for erosion calculations
-- `wind_exposure: float` - Daily accumulator for wind erosion
-
-**Elevation**: Now computed entirely from grids: `elevation_grid = bedrock_base + sum(terrain_layers)`
-
-**Coordinate system:**
-- World sub-coords: `(tile_x * 3 + sub_x, tile_y * 3 + sub_y)`
-- For 60x45 tile map → 180x135 sub-square map
-- Player position: sub-square coordinates
-
 ---
 
 ## Visual Design Philosophy
@@ -176,15 +136,8 @@ This helps players categorize "things I built" vs. "ways I've shaped the land."
 
 ## Confirmed Design Decisions
 
-- [x] Sub-grid size: **3x3** per tile
-- [x] Player movement: **Sub-grid level**
-- [x] Range calculation: **Chebyshev distance** (square range)
 - [x] Actions at range: **Yes** (act on target without moving)
-- [x] Surface water: **Sub-grid level** (stored per sub-square)
-- [x] Surface flow: **8-neighbor** (cardinal + diagonal)
-- [x] Sub-squares: **Independent units** - tile boundaries invisible to flow
 - [x] Upward seepage: **Elevation-weighted** distribution
-- [x] Terrain modifications: **Per-sub-square** via `terrain_override`
 - [x] Water conservation: **Closed system** via GlobalWaterPool
 - [x] Simulation scheduling: **Staggered** to spread CPU load
 
@@ -192,124 +145,108 @@ This helps players categorize "things I built" vs. "ways I've shaped the land."
 
 ## Implementation Status
 
-### Phase 1: Sub-Grid Foundation - COMPLETE
-Player moves on 180x135 grid, interaction range highlights work, cursor targeting functional.
+### ✅ Grid Architecture Complete (Dec 2025)
+- All simulation state in NumPy arrays (180×135 grid resolution)
+- Tile and SubSquare classes completely removed
+- All physics fully vectorized (water, erosion, biomes)
+- Geometric trenching with three slope modes
+- Water conservation via GlobalWaterPool
+- Player interaction at range with cursor targeting
 
-### Phase 2: Surface Water on Sub-Grid - COMPLETE
-- Surface water stored per sub-square
-- 8-directional flow based on elevation + water depth
-- Surface-to-soil seepage implemented
-- Elevation-weighted upward seepage (capillary rise, overflow)
-
-### Phase 2.5: Unified Layer System - COMPLETE
-- Created `surface_state.py` with computed appearance system
-- Removed stored `SubSquare.biome` - now computed from terrain/water state
-- Unified water access helpers
-
-### Phase 3: Atmosphere Layer - COMPLETE
-- Created `atmosphere.py` with regional humidity/wind
-- Regions cover 4x4 tiles with humidity, wind direction/speed
-- Integrated into evaporation calculation
-- Atmosphere evolves over time based on heat
-
-### Phase 4: Water Conservation - COMPLETE
-- Created `world_state.py` with `GlobalWaterPool`
-- Wellsprings draw from finite pool
-- Edge runoff returns to pool
-- Evaporation routes to atmospheric reserve
-
-### Phase 5: Erosion System - COMPLETE
-- Overnight erosion using accumulated daily pressures
-- Water passage and wind exposure tracking
-- Fully refactored to use grid arrays (NumPy)
-- Operates directly on elevation_offset_grid and terrain_layers
-
-### Completed Optimization
-- Refactored surface water simulation to use NumPy.
-- Vectorized gradient and flow calculations
-- Migrated `surface_water` and `has_trench` state to global NumPy arrays (`water_grid`, `trench_grid`), making them the single source of truth and eliminating the object-array sync bottleneck for surface simulation.
-
+### ⚠️ Atmosphere System (Legacy - Requires Refactor)
+**Status**: Functional but incompatible with Phase 3 scale-up
+- Uses coarse 4×4 tile regions instead of grid resolution
+- Object-oriented structure (AtmosphereRegion class)
+- Iterative simulation logic
+- **See "Critical Priorities" for refactor requirements**
 
 ---
 
-## Roadmap: The Great Unification
+## Roadmap
 
-The immediate technical goal is to complete the transition to a fully vectorized system.
-### Phase 1: Unification (100% COMPLETE - 2025-12-22)
-**Goal**: Eliminate `Tile` and `SubSquare` as primary simulation units. Move all state to global arrays.
-
-**Completed**:
-- ✅ `has_trench` migrated to `trench_grid` (deprecated in Phase 2)
-- ✅ `surface_water` migrated to `water_grid`, eliminating `sync_objects_to_arrays`
-- ✅ Unified terrain arrays (`terrain_layers`, `bedrock_base`) initialized and populated
-- ✅ ~~`elevation_offset_grid`~~ **REMOVED** - unified to single elevation source (Phase 2)
-- ✅ Unified `subsurface_water_grid` initialized and populated
-- ✅ Terrain modification tools sync to unified arrays
-- ✅ Material property grids (porosity, permeability) initialized and used
-- ✅ Wellspring grid implemented
-- ✅ Subsurface physics fully vectorized
-- ✅ Map generation creates grids directly (no intermediate objects)
-
-**All Remaining Work COMPLETED**:
-- ✅ Material grid (`terrain_materials`) now synced in `lower_ground()`/`raise_ground()`
-- ✅ Moisture calculation fully vectorized with `np.sum()` (~100× speedup)
-- ✅ Biome calculation updated to aggregate grid moisture to tile resolution
-- ✅ Elevation grid rebuild now direct array math (~1000× speedup)
-- ✅ Edge flow wrapping fixed - replaced `np.roll()` with explicit slicing
-- ✅ Edge runoff tracked to GlobalWaterPool - water conservation complete
-- ✅ WaterColumn class deleted entirely (water.py removed)
-- ✅ Grid helper functions added for clean access patterns
-- ✅ Erosion system refactored to use grid arrays (Dec 22)
-- ✅ Planter structure refactored to write to terrain_layers (Dec 22)
-- ✅ Eluviation (E) horizon added to soil profile (Dec 22)
-- ✅ All legacy elevation helpers removed (Dec 22)
-- ✅ Depot refactored to Structure class (Dec 22)
-- ✅ Soil meter rendering bug fixed (bedrock depth in cumulative) (Dec 22)
-- ⚠️ Tile/SubSquare classes still exist but minimized (can be removed in future cleanup)
-
-**Benefits Achieved**: Removed expensive sync, achieved 250× speedup on auxiliary calculations, deleted 500+ lines of dead code, complete water conservation, all simulation systems now array-based.
-
-### Phase 2: Geometric Trenches (100% COMPLETE - 2025-12-23)
-**Goal**: Replace `has_trench` flag with actual geometry.
+### ✅ Phase 1: Grid Unification (COMPLETE - Dec 2025)
+**Goal**: Pure NumPy grid architecture with no object collections
 
 **Completed**:
-- ✅ **Elevation Harmonization**: Removed `elevation_offset_grid`, unified to `bedrock_base + sum(terrain_layers)`
-- ✅ **Three Trench Modes**: Flat, Slope Down, Slope Up
-  - **Flat**: Levels target to origin elevation, distributes to exit/sides
-  - **Slope Down**: Creates descending gradient (origin > selection > exit)
-  - **Slope Up**: Creates ascending gradient (origin < selection < exit)
-- ✅ **Material Conservation**: Amount removed = amount distributed
-- ✅ **Elevation-Aware Redistribution**: Intelligently fills based on current elevations
-- ✅ **Visual Highlighting**: Color-coded squares (red=origin, green=exit, blue=sides, yellow=target)
-- ✅ **Player-Relative Directionality**: All trenching operates relative to player position
-- ✅ **Auto-Complete Behavior**: One tool use achieves ideal state (not incremental)
-- ✅ **Tool Integration**: Both Shovel and Pickaxe have 5 modes each
+- All simulation state migrated to NumPy grids
+- Tile and SubSquare classes completely deleted (Dec 24)
+- All physics vectorized (water, erosion, biomes)
+- Water conservation via GlobalWaterPool
+- 250× speedup on auxiliary calculations
+- 1000+ lines of code removed
 
-**Future Enhancements**:
-- Elevation-based evaporation (replace magic percentages with wind occlusion)
-- Tool level/efficiency scaling
-- Fine-tune slope gradient calculations
+### ✅ Phase 2: Geometric Trenching (COMPLETE - Dec 2025)
+**Goal**: Replace boolean flags with actual geometry
 
-### Phase 3: Scale Up
-**Goal**: Increase map size once performance overhead is removed.
-- Target: 512x512 (approx 170m x 170m).
-- Potential for 1024x1024 or 2048x2048 with active region slicing.
+**Completed**:
+- Elevation unified to single source: `bedrock_base + sum(terrain_layers)`
+- Three trench modes: Flat, Slope Down, Slope Up
+- Material conservation with elevation-aware redistribution
+- Visual highlighting system for trenching preview
+- Player-relative directionality
 
-### Phase 4: Geological Erosion (Pre-Sim)
-**Goal**: Generate realistic starting terrain.
-- **Bulk Material**: Generate initial volume using noise functions (not perlin/simplex, but geological uplift simulation).
-- **Hydraulic Erosion**: Run `simulate_surface_flow` with `rain=True` for N cycles.
-- **Wind Erosion**: Should run against map areas that are above water.
-- **Resolution**: Where velocity is high -> `elevation -= sediment`. Where low -> `elevation += sediment`.
-- **Conversion**: Convert resulting heightmap/sediment map into soil layers.
+### 🔴 Phase 3: Atmosphere Vectorization (CRITICAL - NEXT)
+**Goal**: Migrate atmosphere to grid-based architecture
+**Priority**: HIGH - Required before scale-up
 
-### Phase 4.5: Procedural Generation Strategy
-**Goal**: Intelligent placement of features using advanced algorithms.
-- **Graph Grammars**: Use for river network generation and connecting "Locations of Note" with ancient roads.
-- **L-Systems**: Use for procedural plant growth and branching structures.
-- **Wave Function Collapse**: Use for biome texture synthesis and micro-terrain transitions (e.g., Sand -> Dunes -> Rock).
+**Current Blockers**:
+1. Coarse 4×4 tile regions instead of 180×135 grid
+2. Object-oriented `AtmosphereRegion` class
+3. Iterative Python loops instead of vectorized operations
+4. Tile-by-tile interface incompatible with vectorization
 
-### Phase 5: Persistence
+**Required Work**:
+- Create `humidity_grid` (180×135) and `wind_grid` (180×135×2 for x/y components)
+- Vectorize atmosphere simulation with NumPy operations
+- Update evaporation to use grid-based atmospheric modifiers
+- Delete `AtmosphereRegion` class and object collections
+- Integrate with existing vectorized water/erosion systems
+
+**Files to Modify**: `atmosphere.py`, `simulation/subsurface.py`, `main.py`
+**Estimated Effort**: ~6-8 hours
+**Benefits**: Enables Phase 4 scale-up, maintains architectural consistency, ~10-50× speedup
+
+### Phase 4: Scale Up (AFTER Phase 3)
+**Goal**: Increase map size to enable larger-scale gameplay
+
+**Targets**:
+- Initial: 512×512 grid (≈170m × 170m at 0.33m/cell)
+- Stretch: 1024×1024 or 2048×2048 with active region slicing
+
+**Prerequisites**:
+- ✅ All systems vectorized
+- ✅ No object collections
+- 🔴 Atmosphere vectorized (Phase 3)
+
+**Performance Strategy**:
+- Active region simulation (only update areas with activity)
+- Spatial partitioning for structure lookups
+- LOD system for distant rendering
+
+### Phase 5: Geological Erosion (Pre-Sim)
+**Goal**: Generate realistic starting terrain through simulation
+
+- Geological uplift simulation for bulk material generation
+- Hydraulic erosion via `simulate_surface_flow` with rain cycles
+- Wind erosion for exposed terrain above water
+- Sediment transport and deposition based on velocity
+- Conversion of heightmap/sediment to layered soil profiles
+
+### Phase 6: Advanced Procedural Generation
+**Goal**: Intelligent feature placement using advanced algorithms
+
+**Techniques**:
+- **Wave Function Collapse**: Biome transitions and micro-terrain patterns
+- **Graph Grammars**: River networks and road generation
+- **L-Systems**: Plant growth and branching structures
+
+**Applications**:
+- Natural-looking biome boundaries
+- Realistic drainage networks
+- Ancient road connections between points of interest
+- Organic vegetation patterns
+
+### Phase 7: Persistence
 **Goal**: Save/Load system.
 - Serialize the unified NumPy arrays (compressed).
 - Serialize Player and Weather state.
@@ -318,29 +255,11 @@ The immediate technical goal is to complete the transition to a fully vectorized
 
 ## Key Implementation Notes
 
-### Coordinate Conversion
-```python
-def tile_to_subgrid(tile_x, tile_y):
-    return (tile_x * SUBGRID_SIZE, tile_y * SUBGRID_SIZE)
-
-def subgrid_to_tile(sub_x, sub_y):
-    return (sub_x // SUBGRID_SIZE, sub_y // SUBGRID_SIZE)
-```
-
 ### Water Transfer Functions
 - `simulate_surface_flow()` - Horizontal flow between sub-squares (Vectorized)
 - `simulate_surface_seepage()` - Downward into topmost soil layer
 - `simulate_vertical_seepage()` - Between soil layers + capillary rise
 - `distribute_upward_seepage()` - Elevation-weighted distribution to sub-squares
-
-### Terrain Override Pattern
-```python
-# Get terrain for a sub-square (uses override if exists)
-terrain = get_subsquare_terrain(subsquare, tile.terrain)
-
-# Create override before modifying sub-square terrain
-ensure_terrain_override(tile, local_x, local_y)
-```
 
 ### Render Caching System
 ```python
