@@ -80,7 +80,7 @@ class Condenser(Structure):
 
     def tick(self, state: "GameState", tile: "Tile", subsquare: "SubSquare", tx: int, ty: int, sx: int, sy: int) -> None:
         # Add water to sub-squares (distributed by elevation)
-        distribute_upward_seepage(tile, CONDENSER_OUTPUT, state.active_water_subsquares, tx, ty, state)
+        distribute_upward_seepage(None, CONDENSER_OUTPUT, state.active_water_subsquares, tx, ty, state)
 
     def get_survey_string(self) -> str:
         return f"struct={self.kind}"
@@ -94,13 +94,13 @@ class Cistern(Structure):
 
     def tick(self, state: "GameState", tile: "Tile", subsquare: "SubSquare", tx: int, ty: int, sx: int, sy: int) -> None:
         # Get total surface water from sub-squares
-        surface_water = get_tile_surface_water(tile, state.water_grid, tx, ty)
+        surface_water = get_tile_surface_water(None, state.water_grid, tx, ty)
 
         # Transfer surface water into cistern storage
         if surface_water > CISTERN_TRANSFER_RATE and self.stored < CISTERN_CAPACITY:
             transfer = min(CISTERN_TRANSFER_RATE, surface_water, CISTERN_CAPACITY - self.stored)
             # Remove water proportionally from sub-squares
-            remove_water_proportionally(tile, transfer, state, tx, ty)
+            remove_water_proportionally(None, transfer, state, tx, ty)
             self.stored += transfer
 
         # Cistern slowly leaks (scales with heat)
@@ -108,7 +108,7 @@ class Cistern(Structure):
         drained = min(self.stored, loss)
         self.stored -= drained
         recovered = (drained * CISTERN_LOSS_RECOVERY) // 100
-        distribute_upward_seepage(tile, recovered, state.active_water_subsquares, tx, ty, state)
+        distribute_upward_seepage(None, recovered, state.active_water_subsquares, tx, ty, state)
 
     def get_survey_string(self) -> str:
         return f"struct={self.kind} | stored={self.stored / 10:.1f}L"
@@ -210,13 +210,11 @@ def tick_structures(state: "GameState", heat: int) -> None:
     Structures are keyed by sub-square coords but their effects
     (water collection, growth) operate on the parent tile.
     """
-    from subgrid import subgrid_to_tile, get_subsquare_index
+    from subgrid import subgrid_to_tile
 
     for sub_pos, structure in list(state.structures.items()):
-        # Get parent tile for this structure's sub-square
+        # Get parent tile coordinates for this structure's sub-square
         tile_pos = subgrid_to_tile(sub_pos[0], sub_pos[1])
-        tile = state.tiles[tile_pos[0]][tile_pos[1]]
-        local_x, local_y = get_subsquare_index(sub_pos[0], sub_pos[1])
-        subsquare = tile.subgrid[local_x][local_y]
 
-        structure.tick(state, tile, subsquare, tile_pos[0], tile_pos[1], sub_pos[0], sub_pos[1])
+        # tile and subsquare parameters are deprecated - structures use grids directly
+        structure.tick(state, None, None, tile_pos[0], tile_pos[1], sub_pos[0], sub_pos[1])

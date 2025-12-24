@@ -184,20 +184,6 @@ class GameState:
         """Get the sub-square to target for actions (cursor target or player position)."""
         return self.target_subsquare if self.target_subsquare is not None else self.player_subsquare
 
-    def get_target_tile_and_subsquare(self) -> tuple[Tile, "SubSquare", Point]:
-        """Get the tile, sub-square, and local index for the current action target.
-
-        Returns:
-            (tile, subsquare, (local_x, local_y)) for the targeted sub-square
-        """
-        from subgrid import SubSquare  # Import here to avoid circular imports
-        sub_pos = self.get_action_target_subsquare()
-        tile_pos = subgrid_to_tile(sub_pos[0], sub_pos[1])
-        local_x, local_y = get_subsquare_index(sub_pos[0], sub_pos[1])
-        tile = self.tiles[tile_pos[0]][tile_pos[1]]
-        subsquare = tile.subgrid[local_x][local_y]
-        return tile, subsquare, (local_x, local_y)
-
     def is_subsquare_blocked(self, sub_x: int, sub_y: int) -> bool:
         """Check if a subsquare is blocked for movement."""
         # Bounds check
@@ -276,12 +262,17 @@ class GameState:
         Returns (min_elevation, max_elevation) across all tiles.
         """
         if self._cached_elevation_range is None:
-            elevations = [
-                self.tiles[x][y].elevation
-                for x in range(self.width)
-                for y in range(self.height)
-            ]
-            self._cached_elevation_range = (min(elevations), max(elevations)) if elevations else (0.0, 0.0)
+            if self.elevation_grid is not None:
+                # Get elevation from center cell of each tile
+                elevations = []
+                for x in range(self.width):
+                    for y in range(self.height):
+                        center_sx = x * 3 + 1
+                        center_sy = y * 3 + 1
+                        elevations.append(self.elevation_grid[center_sx, center_sy])
+                self._cached_elevation_range = (min(elevations), max(elevations)) if elevations else (0, 0)
+            else:
+                self._cached_elevation_range = (0, 0)
         return self._cached_elevation_range
 
     def invalidate_elevation_range(self) -> None:
@@ -366,9 +357,6 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
 
     start_tile = (width // 2, height // 2)
 
-    # Set up depot at player start location (in grids)
-    depot_tile = tiles[start_tile[0]][start_tile[1]]
-
     # Update grids for depot location - create good starting terrain
     depot_terrain = create_default_terrain(elevation_to_units(-2.0), elevation_to_units(1.0))
     for sx in range(SUBGRID_SIZE):
@@ -434,10 +422,7 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
 
     # Create depot structure at starting subsquare
     from structures import Depot
-    from subgrid import get_subsquare_index
     state.structures[start_subsquare] = Depot()
-    local_x, local_y = get_subsquare_index(start_subsquare[0], start_subsquare[1])
-    depot_tile.subgrid[local_x][local_y].structure_id = 1
 
     return state
 
@@ -890,7 +875,6 @@ def terrain_action(state: GameState, action: str, args: List[str]) -> None:
 
 def lower_ground(state: GameState, min_layer_name: str = "bedrock") -> None:
     """Lower ground by removing material from exposed layer (array-based)."""
-    tile, subsquare, _ = state.get_target_tile_and_subsquare()
     sub_pos = state.get_action_target_subsquare()
     sx, sy = sub_pos
 
@@ -949,7 +933,6 @@ def lower_ground(state: GameState, min_layer_name: str = "bedrock") -> None:
 
 def raise_ground(state: GameState, target_layer_name: str = "topsoil") -> None:
     """Raise ground by adding material to the exposed (topmost) layer (array-based)."""
-    tile, subsquare, _ = state.get_target_tile_and_subsquare()
     sub_pos = state.get_action_target_subsquare()
     sx, sy = sub_pos
 
@@ -990,7 +973,6 @@ def raise_ground(state: GameState, target_layer_name: str = "topsoil") -> None:
 
 def collect_water(state: GameState) -> None:
     tx, ty = state.get_action_target_tile()
-    tile = state.tiles[tx][ty]
 
     # Check if any subsquare on this tile has a depot structure
     from subgrid import tile_to_subgrid
@@ -1013,7 +995,6 @@ def collect_water(state: GameState) -> None:
             f"Depot resupply: +{DEPOT_WATER_AMOUNT / 10:.1f}L water, +{DEPOT_SCRAP_AMOUNT} scrap, +{DEPOT_SEEDS_AMOUNT} seeds.")
         return
 
-    tile, subsquare, _ = state.get_target_tile_and_subsquare()
     sx, sy = state.get_action_target_subsquare()
     available = state.water_grid[sx, sy]
 

@@ -141,7 +141,6 @@ def render_map_viewport(
     # Draw special features (wellsprings, depots) - only visible tiles
     for ty in range(start_ty, end_ty):
         for tx in range(start_tx, end_tx):
-            tile = state.tiles[tx][ty]
             world_x, world_y = camera.tile_to_world(tx, ty)
             vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
             rect = pygame.Rect(int(vp_x), int(vp_y), tile_size - 1, tile_size - 1)

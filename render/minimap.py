@@ -40,8 +40,6 @@ def render_minimap(
 
     for x in range(map_w_tiles):
         for y in range(map_h_tiles):
-            tile = state.tiles[x][y]
-
             # Get center cell of tile's 3x3 grid region
             center_sx = x * SUBGRID_SIZE + 1
             center_sy = y * SUBGRID_SIZE + 1
