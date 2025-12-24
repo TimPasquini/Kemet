@@ -14,7 +14,6 @@ import pygame
 
 from ground import TILE_TYPES
 from surface_state import compute_surface_appearance
-from render.colors import color_for_tile, color_for_subsquare
 from render.primitives import draw_text
 from render.grid_helpers import get_grid_cell_color, get_grid_elevation
 from config import (
@@ -182,25 +181,14 @@ def _render_terrain_per_frame(
     tile_size: int,
     elevation_range: Tuple[float, float],
 ) -> None:
-    """Fallback terrain rendering - renders each visible sub-square per frame."""
+    """Fallback terrain rendering - renders each visible sub-square per frame (grid-aware)."""
     start_x, start_y, end_x, end_y = camera.get_visible_subsquare_range()
     scaled_sub_tile_size = max(1, int((TILE_SIZE / SUBGRID_SIZE) * camera.zoom))
 
     for sub_y in range(start_y, end_y):
         for sub_x in range(start_x, end_x):
-            tile_x = sub_x // SUBGRID_SIZE
-            tile_y = sub_y // SUBGRID_SIZE
-            local_x = sub_x % SUBGRID_SIZE
-            local_y = sub_y % SUBGRID_SIZE
-
-            tile = state.tiles[tile_x][tile_y]
-            subsquare = tile.subgrid[local_x][local_y]
-
-            # Get elevation from grid (in depth units, convert to meters for compatibility)
-            from ground import units_to_meters
-            sub_elevation = units_to_meters(state.elevation_grid[sub_x, sub_y])
-            water_amt = state.water_grid[sub_x, sub_y]
-            color = color_for_subsquare(subsquare, sub_elevation, tile, elevation_range, water_amt)
+            # Grid-aware color computation (no SubSquare access needed)
+            color = get_grid_cell_color(state, sub_x, sub_y, elevation_range)
 
             world_x, world_y = camera.subsquare_to_world(sub_x, sub_y)
             vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
@@ -227,10 +215,7 @@ def render_subgrid_water(
 
     for sub_y in range(start_y, end_y):
         for sub_x in range(start_x, end_x):
-            tile_x, tile_y = subgrid_to_tile(sub_x, sub_y)
-            local_x, local_y = get_subsquare_index(sub_x, sub_y)
-
-            tile = state.tiles[tile_x][tile_y]
+            # Grid-aware water rendering (no tile access needed)
             water = state.water_grid[sub_x, sub_y]
 
             if water <= 2:

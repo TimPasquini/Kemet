@@ -642,7 +642,6 @@ def _dig_trench_flat_impl(state: GameState, sx: int, sy: int,
 
     tile_x, tile_y = sx // 3, sy // 3
     local_x, local_y = sx % 3, sy % 3
-    state.tiles[tile_x][tile_y].subgrid[local_x][local_y].invalidate_appearance()
 
     state.messages.append(f"Trenched (flat): leveled to origin height, moved {units_to_meters(material_to_remove):.1f}m.")
 
@@ -850,7 +849,6 @@ def _invalidate_tile_appearance(state: GameState, sx: int, sy: int) -> None:
     """Helper to invalidate tile/subsquare appearance cache."""
     tile_x, tile_y = sx // 3, sy // 3
     local_x, local_y = sx % 3, sy % 3
-    state.tiles[tile_x][tile_y].subgrid[local_x][local_y].invalidate_appearance()
 
 
 # TODO: Future tool - Widen Trench
@@ -914,7 +912,6 @@ def lower_ground(state: GameState, min_layer_name: str = "bedrock") -> None:
             new_elev_units = state.bedrock_base[sx, sy] + np.sum(state.terrain_layers[:, sx, sy])
             new_elev = units_to_meters(new_elev_units)
             state.messages.append(f"Lowered bedrock by 0.2m. Elev: {new_elev:.2f}m")
-            subsquare.invalidate_appearance()
             state.dirty_subsquares.add(sub_pos)
             return
         else:
@@ -933,7 +930,6 @@ def lower_ground(state: GameState, min_layer_name: str = "bedrock") -> None:
         state.terrain_materials[exposed, sx, sy] = ""
 
     # Update visual and terrain flags
-    subsquare.invalidate_appearance()
     state.dirty_subsquares.add(sub_pos)
     state.invalidate_elevation_range()
     state.terrain_changed = True
@@ -975,7 +971,6 @@ def raise_ground(state: GameState, target_layer_name: str = "topsoil") -> None:
     material_name = state.terrain_materials[exposed, sx, sy]
 
     # Update visual and terrain flags
-    subsquare.invalidate_appearance()
     state.dirty_subsquares.add(sub_pos)
     state.invalidate_elevation_range()
     state.terrain_changed = True
@@ -1103,12 +1098,6 @@ def end_day(state: GameState) -> None:
 
         biome_messages = recalculate_biomes(state.tiles, state.width, state.height, tile_moisture)
         state.messages.extend(biome_messages)
-
-        for row in state.tiles:
-            for tile in row:
-                for sub_row in tile.subgrid:
-                    for subsquare in sub_row:
-                        subsquare.invalidate_appearance()
 
 
 def show_status(state: GameState) -> None:

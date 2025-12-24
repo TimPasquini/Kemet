@@ -319,7 +319,6 @@ def remove_water_proportionally(tile: "Tile", amount: int, state: "GameState", t
                 )
                 state.water_grid[sx, sy] -= take
                 remaining -= take
-                tile.subgrid[lx][ly].check_water_threshold(state.water_grid[sx, sy])
 
     return to_remove - remaining
 
@@ -421,7 +420,6 @@ def distribute_water_to_tile(tile: "Tile", amount: int, water_grid: np.ndarray, 
     for t in targets:
         if t['added'] > 0:
             water_grid[t['sx'], t['sy']] += t['added']
-            t['ss'].check_water_threshold(water_grid[t['sx'], t['sy']])
             modified_indices.append((t['lx'], t['ly']))
 
     return modified_indices
