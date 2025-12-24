@@ -29,21 +29,20 @@ def apply_tile_evaporation(state: "GameState") -> None:
     # Iterate over a copy as the set can be modified
     for sub_x, sub_y in list(state.active_water_subsquares):
         tile_x, tile_y = sub_x // 3, sub_y // 3
-        local_x, local_y = sub_x % 3, sub_y % 3
-        tile = state.tiles[tile_x][tile_y]
         water_amt = state.water_grid[sub_x, sub_y]
 
         if water_amt <= 0:
             state.active_water_subsquares.discard((sub_x, sub_y))
             continue
 
-        base_evap = (TILE_TYPES[tile.kind].evap * state.heat) // 100
+        tile_kind = state.get_tile_kind(tile_x, tile_y)
+        base_evap = (TILE_TYPES[tile_kind].evap * state.heat) // 100
         if state.atmosphere is not None:
             base_evap = int(base_evap * state.atmosphere.get_evaporation_modifier(tile_x, tile_y))
         if state.tile_has_cistern(tile_x, tile_y):
             base_evap = (base_evap * CISTERN_EVAP_REDUCTION) // 100
 
-        retention = TILE_TYPES[tile.kind].retention
+        retention = TILE_TYPES[tile_kind].retention
         tile_evap = base_evap - ((retention * base_evap) // 100)
 
         if tile_evap <= 0:

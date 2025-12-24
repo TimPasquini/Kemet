@@ -91,7 +91,6 @@ def render_hud(
 
     # Current tile section
     x, y = state.player
-    tile = state.tiles[x][y]
     # Check for structure at player's sub-square position
     player_sub = state.player_subsquare
     structure = state.structures.get(player_sub)
@@ -100,16 +99,19 @@ def render_hud(
     y_offset = draw_section_header(screen, font, "CURRENT TILE", (hud_x, y_offset), width=130) + 4
     draw_text(screen, font, f"Position: ({x}, {y})", (hud_x, y_offset))
     y_offset += LINE_HEIGHT
-    draw_text(screen, font, f"Type: {tile.kind.capitalize()}", (hud_x, y_offset))
+    tile_kind = state.get_tile_kind(x, y)
+    draw_text(screen, font, f"Type: {tile_kind.capitalize()}", (hud_x, y_offset))
     y_offset += LINE_HEIGHT
 
     # Get exposed material from grid
-    from render.grid_helpers import get_exposed_material
+    from render.grid_helpers import get_exposed_material, get_grid_elevation
+    from ground import units_to_meters
     material = get_exposed_material(state, sx, sy)
     draw_text(screen, font, f"Material: {material.capitalize()}", (hud_x, y_offset))
     y_offset += LINE_HEIGHT
 
-    draw_text(screen, font, f"Elevation: {tile.elevation:.2f}m", (hud_x, y_offset))
+    elevation_units = get_grid_elevation(state, sx, sy)
+    draw_text(screen, font, f"Elevation: {units_to_meters(elevation_units):.2f}m", (hud_x, y_offset))
     y_offset += LINE_HEIGHT
 
     if state.moisture_grid is not None:
@@ -125,9 +127,9 @@ def render_hud(
         draw_text(screen, font, f"Soil Moisture: {moist:.1f}", (hud_x, y_offset), (100, 200, 255))
     y_offset += LINE_HEIGHT
     # Get water from grids
-    surface_water = get_tile_surface_water(tile, state.water_grid, x, y)
-    # Get subsurface water from grid (sum all 9 grid cells for this tile, all layers)
     gx_start, gy_start = x * SUBGRID_SIZE, y * SUBGRID_SIZE
+    surface_water = state.water_grid[gx_start:gx_start+SUBGRID_SIZE, gy_start:gy_start+SUBGRID_SIZE].sum()
+    # Get subsurface water from grid (sum all 9 grid cells for this tile, all layers)
     tile_subsurface = state.subsurface_water_grid[
         :,  # All layers
         gx_start:gx_start + SUBGRID_SIZE,
@@ -149,8 +151,11 @@ def render_hud(
         draw_text(screen, font, "Trench: Yes", (hud_x, y_offset), COLOR_TRENCH)
         y_offset += LINE_HEIGHT
 
-    if tile.wellspring_output > 0:
-        draw_text(screen, font, f"Wellspring: {tile.wellspring_output / 10:.2f}L/tick", (hud_x, y_offset), COLOR_WELLSPRING_STRONG)
+    # Check wellspring from grid (center cell of tile)
+    center_sx, center_sy = gx_start + 1, gy_start + 1
+    wellspring_output = state.wellspring_grid[center_sx, center_sy] if state.wellspring_grid is not None else 0
+    if wellspring_output > 0:
+        draw_text(screen, font, f"Wellspring: {wellspring_output / 10:.2f}L/tick", (hud_x, y_offset), COLOR_WELLSPRING_STRONG)
         y_offset += LINE_HEIGHT
 
     if structure:

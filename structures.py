@@ -168,15 +168,12 @@ def build_structure(state: "GameState", kind: str) -> None:
     # Get sub-square position for structure placement
     sub_pos = state.get_action_target_subsquare()
     tile_pos = subgrid_to_tile(sub_pos[0], sub_pos[1])
-    tile = state.tiles[tile_pos[0]][tile_pos[1]]
-    local_x, local_y = get_subsquare_index(sub_pos[0], sub_pos[1])
-    subsquare = tile.subgrid[local_x][local_y]
 
     # Validate build location
     if sub_pos in state.structures:
         state.messages.append("Already has a structure here.")
         return
-    if tile.kind == "rock":
+    if state.get_tile_kind(tile_pos[0], tile_pos[1]) == "rock":
         state.messages.append("Cannot build on rock.")
         return
 

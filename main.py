@@ -264,6 +264,12 @@ class GameState:
         self._tiles_with_cisterns.add((tile_x, tile_y))
 
     # === Elevation Range Cache ===
+    def get_tile_kind(self, tile_x: int, tile_y: int) -> str:
+        """Get the biome kind for a tile (from center subsquare)."""
+        center_sx = tile_x * SUBGRID_SIZE + 1
+        center_sy = tile_y * SUBGRID_SIZE + 1
+        return self.kind_grid[center_sx, center_sy]
+
     def get_elevation_range(self) -> Tuple[float, float]:
         """Get cached elevation range, calculating if needed.
 
@@ -362,7 +368,6 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
 
     # Set up depot at player start location (in grids)
     depot_tile = tiles[start_tile[0]][start_tile[1]]
-    depot_tile.kind = "flat"
 
     # Update grids for depot location - create good starting terrain
     depot_terrain = create_default_terrain(elevation_to_units(-2.0), elevation_to_units(1.0))
