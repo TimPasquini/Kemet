@@ -123,6 +123,7 @@ class GameState:
     elevation_grid: np.ndarray | None = None  # Shape: (GRID_WIDTH, GRID_HEIGHT), dtype=int32
     moisture_grid: np.ndarray | None = None   # Shape: (GRID_WIDTH, GRID_HEIGHT), dtype=float64 (EMA)
     trench_grid: np.ndarray | None = None     # Shape: (GRID_WIDTH, GRID_HEIGHT), dtype=uint8
+    kind_grid: np.ndarray | None = None       # Shape: (TILE_WIDTH, TILE_HEIGHT), dtype='U20' - biome type per tile
 
     # Daily accumulator grids for erosion
     water_passage_grid: np.ndarray | None = None  # Shape: (GRID_WIDTH, GRID_HEIGHT), dtype=float
@@ -413,6 +414,7 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
         water_pool=water_pool,
         moisture_grid=moisture_grid,
         trench_grid=trench_grid,
+        kind_grid=kind_grid,
         water_passage_grid=water_passage_grid,
         wind_exposure_grid=wind_exposure_grid,
         terrain_layers=terrain_layers,
