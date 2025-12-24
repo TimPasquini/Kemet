@@ -1,9 +1,9 @@
 # mapgen.py
 """
-Map generation, tiles, and biome system for Kemet.
+Map generation and biome system for Kemet.
 
 Handles:
-- Tile and TileType definitions
+- TileType definitions
 - Procedural map generation (WFC-style)
 - Wellspring placement
 - Biome calculation and recalculation
@@ -18,12 +18,7 @@ from typing import Deque, Dict, List, Tuple, TYPE_CHECKING
 import numpy as np
 from scipy import ndimage
 from ground import (
-    TerrainColumn,
-    SurfaceTraits,
     SoilLayer,
-    create_default_terrain,
-    elevation_to_units,
-    units_to_meters,
     TileType,
     TILE_TYPES,
 )
@@ -32,62 +27,8 @@ from utils import get_neighbors
 if TYPE_CHECKING:
     from main import GameState
 from config import SUBGRID_SIZE
-from subgrid import SubSquare
-from simulation.surface import distribute_water_to_tile
 
 Point = Tuple[int, int]
-
-
-# =============================================================================
-# Tile Class
-# =============================================================================
-
-def _create_default_subgrid() -> List[List[SubSquare]]:
-    """Create a 3x3 subgrid."""
-    subgrid = []
-    for sx in range(SUBGRID_SIZE):
-        row = []
-        for sy in range(SUBGRID_SIZE):
-            row.append(SubSquare())
-        subgrid.append(row)
-    return subgrid
-
-
-@dataclass
-class Tile:
-    """
-    A single map tile containing terrain, water, and surface information.
-
-    Each tile contains a 3x3 subgrid for fine-grained surface interactions.
-    The subgrid allows water to flow at higher resolution and enables
-    buildings to span partial tiles.
-
-    The `kind` field determines simulation properties (evaporation rate,
-    water capacity) via TILE_TYPES lookup. Visual rendering is computed
-    from terrain materials and environmental state via surface_state.py.
-    """
-    kind: str                           # Tile type for simulation (evap, capacity, etc.)
-    terrain: TerrainColumn              # Soil layers and elevation
-    water: WaterColumn                  # Water storage
-    surface: SurfaceTraits              # Surface features (trench, etc.)
-    wellspring_output: int = 0          # Water output per tick (0 = not a wellspring)
-    subgrid: List[List[SubSquare]] = field(default_factory=_create_default_subgrid)
-
-    @property
-    def elevation(self) -> float:
-        """Surface elevation in meters."""
-        return units_to_meters(self.terrain.get_surface_elevation())
-
-    @property
-    def hydration(self) -> float:
-        """Total water in liters (surface + subsurface)."""
-        # Note: This property is broken without grid access. 
-        # Should be replaced by get_tile_total_water(tile, grid, x, y)
-        return self.water.total_subsurface_water() / 10.0 # Partial fallback
-
-    def get_subsquare(self, local_x: int, local_y: int) -> SubSquare:
-        """Get a subsquare by local index (0-2, 0-2)."""
-        return self.subgrid[local_x][local_y]
 
 
 # =============================================================================
@@ -190,18 +131,6 @@ def calculate_elevation_percentiles(
     return percentiles
 
 
-def invalidate_all_appearances(tiles: List[List[Tile]], width: int, height: int) -> None:
-    """Invalidate cached appearance for all sub-squares.
-
-    Called at day end to refresh visuals based on accumulated changes.
-    """
-    for x in range(width):
-        for y in range(height):
-            for row in tiles[x][y].subgrid:
-                for subsquare in row:
-                    subsquare.invalidate_appearance()
-
-
 def recalculate_biomes(
     state: "GameState", moisture_grid: np.ndarray
 ) -> List[str]:
@@ -254,47 +183,6 @@ def recalculate_biomes(
 # =============================================================================
 # Map Generation
 # =============================================================================
-
-def _generate_wellsprings(tiles: List[List[Tile]], width: int, height: int, water_grid: np.ndarray) -> None:
-    """
-    Place wellsprings on the map, preferring lowland areas.
-
-    Creates one primary wellspring in the lowest quarter of the map,
-    plus 1-2 secondary smaller wellsprings.
-    """
-    # Sort tiles by elevation to find lowlands
-    all_tiles = [(x, y, tiles[x][y].elevation) for x in range(width) for y in range(height)]
-    all_tiles.sort(key=lambda t: t[2])
-
-    # Primary wellspring in lowest quarter
-    lowland_count = max(1, len(all_tiles) // 4)
-    lowland_candidates = all_tiles[:lowland_count]
-    px, py, _ = random.choice(lowland_candidates)
-    tiles[px][py].kind = "wadi"
-    # Primary wellspring: strong output to create visible water pooling
-    tiles[px][py].wellspring_output = random.randint(40, 60)
-    # Note: Initial subsurface water now set via subsurface_water_grid, not tile.water
-    # Distribute initial surface water to sub-squares
-    distribute_water_to_tile(tiles[px][py], 200, water_grid, px, py)
-
-    # Secondary wellsprings
-    secondary_count = random.randint(1, 2)
-    attempts, placed = 0, 0
-    while placed < secondary_count and attempts < 20:
-        sx, sy = random.randrange(width), random.randrange(height)
-        attempts += 1
-        # Don't place on existing wellspring or map center (depot location)
-        if tiles[sx][sy].wellspring_output > 0 or (sx, sy) == (width // 2, height // 2):
-            continue
-        # Secondary wellsprings: moderate output
-        tiles[sx][sy].wellspring_output = random.randint(15, 30)
-        # Note: Initial subsurface water now set via subsurface_water_grid, not tile.water
-        # Distribute initial surface water to sub-squares
-        distribute_water_to_tile(tiles[sx][sy], 80, water_grid, sx, sy)
-        placed += 1
-
-
-
 
 # =============================================================================
 # Grid-Based Map Generation (Direct Array Generation)

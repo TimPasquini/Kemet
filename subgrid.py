@@ -1,87 +1,16 @@
-"""Sub-grid system for fine-grained surface interactions.
+"""Sub-grid coordinate system for fine-grained surface interactions.
 
 Each simulation tile is divided into a 3x3 grid of sub-squares.
-Sub-squares are independent units - water flows freely across tile boundaries.
-The 3x3 grouping is purely organizational (storage + relation to subsurface simulation).
+Sub-squares are independent coordinate units - water flows freely across tile boundaries.
+The 3x3 grouping is purely organizational for efficient grid array access.
+
+All game state is stored in NumPy grids at subsquare resolution.
 """
 from __future__ import annotations
 
-from copy import deepcopy
-from dataclasses import dataclass, field
-from typing import Tuple, Optional, List, TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from ground import TerrainColumn
-    from mapgen import Tile
+from typing import Tuple, List
 
 SUBGRID_SIZE = 3  # 3x3 sub-squares per tile
-
-
-@dataclass
-class SubSquare:
-    """A single sub-square within a tile.
-
-    Attributes:
-        structure_id: Reference to structure occupying this sub-square, if any
-        terrain_override: Optional independent terrain column for this sub-square.
-            When None, the sub-square inherits terrain from its parent tile.
-            When set, this sub-square has been modified independently.
-
-    Visual appearance is cached and computed from environmental factors
-    (exposed material, water state, organics). Call invalidate_appearance()
-    when these factors change, or it will be recalculated at day end.
-    """
-    structure_id: Optional[int] = None
-    terrain_override: Optional["TerrainColumn"] = None
-    # Erosion system fields (sediment for immediate feedback)
-    sediment_load: int = 0                      # Carried sediment amount (depth units)
-    sediment_material: Optional[str] = None     # Material type of sediment
-    # Daily pressure accumulators (reset on overnight processing)
-    water_passage: float = 0.0                  # Sum of water that flowed through today
-    wind_exposure: float = 0.0                  # Sum of wind pressure experienced today
-    # Cached appearance (computed lazily, invalidated on changes)
-    _cached_appearance: Optional[object] = field(default=None, repr=False)
-    # Track water level for threshold-based invalidation
-    _last_water_state: int = field(default=0, repr=False)  # 0=dry, 1=wet, 2=flooded
-
-    def get_appearance(self, tile: "Tile", surface_water: int = 0) -> object:
-        """Get cached appearance, computing if needed.
-
-        Args:
-            tile: Parent tile (for terrain data if no override)
-            surface_water: Current water level (passed in as it's now external)
-
-        Returns:
-            SurfaceAppearance instance
-        """
-        if self._cached_appearance is None:
-            from surface_state import compute_surface_appearance
-            self._cached_appearance = compute_surface_appearance(self, tile, surface_water)
-        return self._cached_appearance
-
-    def invalidate_appearance(self) -> None:
-        """Mark appearance cache as stale. Will be recomputed on next access."""
-        self._cached_appearance = None
-
-    def check_water_threshold(self, current_water: int) -> bool:
-        """Check if water crossed a visual threshold, invalidating if so.
-
-        Returns:
-            True if appearance was invalidated
-        """
-        # Determine current water state
-        if current_water > 50:
-            new_state = 2  # flooded
-        elif current_water > 5:
-            new_state = 1  # wet
-        else:
-            new_state = 0  # dry
-
-        if new_state != self._last_water_state:
-            self._last_water_state = new_state
-            self.invalidate_appearance()
-            return True
-        return False
 
 
 # =============================================================================
@@ -253,27 +182,3 @@ def is_on_range_edge(pos: Tuple[int, int], center: Tuple[int, int],
     """
     dist = chebyshev_distance(pos, center)
     return dist == interaction_range
-
-
-# =============================================================================
-# Terrain Access Utilities
-# =============================================================================
-
-def get_subsquare_terrain(subsquare: SubSquare, tile_terrain: "TerrainColumn") -> "TerrainColumn":
-    """Get the effective terrain for a sub-square.
-
-    Returns the sub-square's terrain_override if it has one,
-    otherwise returns the parent tile's terrain.
-
-    Args:
-        subsquare: The sub-square to get terrain for
-        tile_terrain: The parent tile's terrain (fallback)
-
-    Returns:
-        The effective TerrainColumn for this sub-square
-    """
-    if subsquare.terrain_override is not None:
-        return subsquare.terrain_override
-    return tile_terrain
-
-

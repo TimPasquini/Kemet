@@ -37,13 +37,10 @@ from ground import (
     units_to_meters,
 )
 from subgrid import (
-    SubSquare,
     subgrid_to_tile,
     get_subsquare_index,
-    get_subsquare_terrain,
 )
 from mapgen import (
-    Tile,
     TILE_TYPES,
     recalculate_biomes,
 )
