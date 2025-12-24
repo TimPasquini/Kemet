@@ -13,7 +13,7 @@ from __future__ import annotations
 import random
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Deque, Dict, List, Tuple
+from typing import Deque, Dict, List, Tuple, TYPE_CHECKING
 
 import numpy as np
 from scipy import ndimage
@@ -28,6 +28,9 @@ from ground import (
     TILE_TYPES,
 )
 from utils import get_neighbors
+
+if TYPE_CHECKING:
+    from main import GameState
 from config import SUBGRID_SIZE
 from subgrid import SubSquare
 from simulation.surface import distribute_water_to_tile
@@ -91,21 +94,42 @@ class Tile:
 # Biome Calculation
 # =============================================================================
 
-def calculate_biome(tile: Tile, neighbor_tiles: List[Tile], elevation_percentile: float, avg_moisture: float) -> str:
+def calculate_biome(
+    state: "GameState",
+    tile_x: int,
+    tile_y: int,
+    neighbor_positions: List[Point],
+    elevation_percentile: float,
+    avg_moisture: float
+) -> str:
     """
     Determine the biome type for a tile based on its properties.
 
     Args:
-        tile: The tile to classify
-        neighbor_tiles: Adjacent tiles for context
+        state: GameState with terrain grids
+        tile_x: Tile x coordinate
+        tile_y: Tile y coordinate
+        neighbor_positions: List of (x, y) tuples for adjacent tiles
         elevation_percentile: 0.0-1.0 ranking of elevation (0=lowest, 1=highest)
         avg_moisture: Average moisture level for this tile
 
     Returns:
         Biome key string (e.g., "dune", "wadi", "rock")
     """
-    soil_depth = tile.terrain.get_total_soil_depth()
-    topsoil_material = tile.terrain.topsoil_material
+    from ground import SoilLayer
+
+    # Get center subsquare for this tile
+    center_sx = tile_x * 3 + 1
+    center_sy = tile_y * 3 + 1
+
+    # Calculate soil depth from terrain layers
+    soil_depth = (
+        state.terrain_layers[SoilLayer.TOPSOIL, center_sx, center_sy] +
+        state.terrain_layers[SoilLayer.SUBSOIL, center_sx, center_sy]
+    )
+
+    topsoil_material = state.terrain_materials[SoilLayer.TOPSOIL, center_sx, center_sy]
+    organics_depth = state.terrain_layers[SoilLayer.ORGANICS, center_sx, center_sy]
 
     # High elevation with thin soil -> rock
     if elevation_percentile > 0.75 and soil_depth < 5:
@@ -120,12 +144,12 @@ def calculate_biome(tile: Tile, neighbor_tiles: List[Tile], elevation_percentile
         return "dune"
 
     # Low elevation, dry, no organics -> salt flat
-    if elevation_percentile < 0.4 and avg_moisture < 15 and tile.terrain.organics_depth == 0:
+    if elevation_percentile < 0.4 and avg_moisture < 15 and organics_depth == 0:
         return "salt"
 
     # Follow neighbors if strong consensus
-    if neighbor_tiles:
-        neighbor_biomes = [n.kind for n in neighbor_tiles]
+    if neighbor_positions:
+        neighbor_biomes = [state.get_tile_kind(nx, ny) for nx, ny in neighbor_positions]
         biome_counts = Counter(neighbor_biomes)
         most_common_list = biome_counts.most_common(1)
         if most_common_list:
@@ -137,17 +161,26 @@ def calculate_biome(tile: Tile, neighbor_tiles: List[Tile], elevation_percentile
 
 
 def calculate_elevation_percentiles(
-    tiles: List[List[Tile]], width: int, height: int
+    elevation_grid: np.ndarray, width: int, height: int
 ) -> Dict[Point, float]:
     """
     Calculate elevation percentile for each tile.
+
+    Args:
+        elevation_grid: Grid of elevation values at subsquare resolution
+        width: Number of tiles wide
+        height: Number of tiles tall
 
     Returns dict mapping (x, y) -> percentile (0.0 = lowest, 1.0 = highest)
     """
     elevation_data = []
     for x in range(width):
         for y in range(height):
-            elevation_data.append((tiles[x][y].elevation, (x, y)))
+            # Get elevation from center subsquare of tile
+            center_sx = x * 3 + 1
+            center_sy = y * 3 + 1
+            elev = elevation_grid[center_sx, center_sy]
+            elevation_data.append((elev, (x, y)))
     elevation_data.sort(key=lambda e: e[0])
 
     percentiles = {}
@@ -170,44 +203,47 @@ def invalidate_all_appearances(tiles: List[List[Tile]], width: int, height: int)
 
 
 def recalculate_biomes(
-    tiles: List[List[Tile]], width: int, height: int, moisture_grid: np.ndarray
+    state: "GameState", moisture_grid: np.ndarray
 ) -> List[str]:
     """
     Recalculate biomes for all tiles based on current conditions.
 
     Called daily to allow landscape evolution based on moisture, etc.
-    Also invalidates all appearance caches to refresh visuals.
 
-    moisture_grid: (width, height) array of average moisture values
+    Args:
+        state: GameState with terrain grids and kind_grid
+        moisture_grid: (width, height) array of average moisture values
+
     Returns:
         List of messages to display to player
     """
     messages: List[str] = []
-    percentiles = calculate_elevation_percentiles(tiles, width, height)
+    percentiles = calculate_elevation_percentiles(state.elevation_grid, state.width, state.height)
     changes = 0
 
-    for x in range(width):
-        for y in range(height):
-            tile = tiles[x][y]
-
+    for x in range(state.width):
+        for y in range(state.height):
             # Don't change biome of tiles with depot structures
-            # (Check moved to structures - depot is no longer a tile property)
-            # The depot tile biome can now change naturally like any other tile
+            # (Depot tile biome can now change naturally like any other tile)
 
-            neighbor_tiles = [
-                tiles[nx][ny]
-                for nx, ny in get_neighbors(x, y, width, height)
-            ]
+            neighbor_positions = get_neighbors(x, y, state.width, state.height)
             elev_pct = percentiles.get((x, y), 0.5)
             avg_moisture = moisture_grid[x, y]
-            new_biome = calculate_biome(tile, neighbor_tiles, elev_pct, avg_moisture)
+            new_biome = calculate_biome(state, x, y, neighbor_positions, elev_pct, avg_moisture)
 
-            if new_biome != tile.kind:
-                tile.kind = new_biome
+            # Get current biome from kind_grid (center subsquare)
+            center_sx = x * 3 + 1
+            center_sy = y * 3 + 1
+            old_biome = state.kind_grid[center_sx, center_sy]
+
+            if new_biome != old_biome:
+                # Update all 9 subsquares in this tile
+                for local_x in range(3):
+                    for local_y in range(3):
+                        sx = x * 3 + local_x
+                        sy = y * 3 + local_y
+                        state.kind_grid[sx, sy] = new_biome
                 changes += 1
-
-    # Refresh all appearance caches at day end
-    invalidate_all_appearances(tiles, width, height)
 
     if changes > 0:
         messages.append(f"Landscape shifted: {changes} tiles changed biome.")

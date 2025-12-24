@@ -1103,7 +1103,7 @@ def end_day(state: GameState) -> None:
         else:
             tile_moisture = np.zeros((state.width, state.height), dtype=float)
 
-        biome_messages = recalculate_biomes(state.tiles, state.width, state.height, tile_moisture)
+        biome_messages = recalculate_biomes(state, tile_moisture)
         state.messages.extend(biome_messages)
 
 
