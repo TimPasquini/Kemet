@@ -352,15 +352,17 @@ def generate_grids_direct(grid_width: int, grid_height: int) -> Dict:
 
     # Phase 2: Vectorized terrain property assignment based on biome grid
     # Generate random variations for each cell
+    from config import DEPTH_UNIT_MM
     bedrock_variation = np.random.uniform(-0.3, 0.3, (grid_width, grid_height))
-    bedrock_base[:] = bedrock_base_elev + elevation_to_units(bedrock_variation)
+    bedrock_base[:] = bedrock_base_elev + (bedrock_variation * 1000 / DEPTH_UNIT_MM).astype(np.int32)
 
     # Depth variation per biome
     depth_grids = {}
     for biome, (min_depth, max_depth) in depth_map.items():
         mask = (kind_grid == biome)
+        depth_random = np.random.uniform(min_depth, max_depth, (grid_width, grid_height))
         depth_grids[biome] = np.where(mask,
-            elevation_to_units(np.random.uniform(min_depth, max_depth, (grid_width, grid_height))),
+            (depth_random * 1000 / DEPTH_UNIT_MM).astype(np.int32),
             0
         )
 
