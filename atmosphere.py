@@ -1,9 +1,19 @@
 # atmosphere.py
 """
-Atmosphere layer for regional humidity and wind simulation.
+DEPRECATED - TO BE REMOVED IN PHASE 3 (Atmosphere Migration)
 
-The atmosphere divides the map into regions (4x4 tiles each) with properties
-that affect surface simulation like evaporation rates.
+Legacy object-oriented atmosphere system using coarse regions.
+
+PROBLEMS:
+- Coarse Resolution: 4×4 tile regions (12×12 grid cells share identical values)
+- Object-Oriented: List[List[AtmosphereRegion]] instead of NumPy arrays
+- Iterative Logic: Python for-loops instead of vectorization
+- Performance Bottleneck: Blocks scale-up to larger maps
+
+REPLACEMENT: Grid-based atmosphere with humidity_grid and wind_grid at full
+grid resolution (180×135), fully vectorized NumPy operations.
+
+This entire file will be deleted after Phase 3 migration.
 """
 from __future__ import annotations
 

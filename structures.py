@@ -3,9 +3,12 @@
 structures.py - Player-built structures for Kemet
 
 Defines structure types, costs, and behavior:
+- Depot: Player's starting base/storage location
 - Cistern: Stores water, reduces evaporation
 - Condenser: Generates water from air
 - Planter: Grows biomass when watered
+
+All structures operate on grid coordinates (sx, sy for grid cells, tx, ty for tile coords).
 """
 from __future__ import annotations
 from abc import ABC, abstractmethod
@@ -35,19 +38,27 @@ from subgrid import subgrid_to_tile
 
 if TYPE_CHECKING:
     from main import GameState, Inventory
-    from mapgen import Tile
-    from subgrid import SubSquare
 
 
 @dataclass
 class Structure(ABC):
-    """Represents a player-built structure on a tile."""
+    """Represents a player-built structure on a grid cell.
+
+    Structures are placed at grid cell coordinates (sx, sy) and can affect
+    the parent tile (tx, ty) or surrounding cells.
+    """
     kind: str
     hp: int = 3
 
     @abstractmethod
-    def tick(self, state: "GameState", tile: "Tile", subsquare: "SubSquare", tx: int, ty: int, sx: int, sy: int) -> None:
-        """Update the structure for one simulation tick."""
+    def tick(self, state: "GameState", tx: int, ty: int, sx: int, sy: int) -> None:
+        """Update the structure for one simulation tick.
+
+        Args:
+            state: GameState with all grid data
+            tx, ty: Parent tile coordinates
+            sx, sy: Grid cell coordinates where structure is placed
+        """
         pass
 
     @abstractmethod
@@ -65,7 +76,7 @@ class Depot(Structure):
     """Player's starting base/storage location."""
     kind: str = "depot"
 
-    def tick(self, state: "GameState", tile: "Tile", subsquare: "SubSquare", tx: int, ty: int, sx: int, sy: int) -> None:
+    def tick(self, state: "GameState", tx: int, ty: int, sx: int, sy: int) -> None:
         # Depot is passive - no tick behavior needed
         pass
 
@@ -78,9 +89,9 @@ class Condenser(Structure):
     """Generates water from the air."""
     kind: str = "condenser"
 
-    def tick(self, state: "GameState", tile: "Tile", subsquare: "SubSquare", tx: int, ty: int, sx: int, sy: int) -> None:
-        # Add water to sub-squares (distributed by elevation)
-        distribute_upward_seepage(None, CONDENSER_OUTPUT, state.active_water_subsquares, tx, ty, state)
+    def tick(self, state: "GameState", tx: int, ty: int, sx: int, sy: int) -> None:
+        # Add water to grid cells (distributed by elevation)
+        distribute_upward_seepage(CONDENSER_OUTPUT, state.active_water_subsquares, tx, ty, state)
 
     def get_survey_string(self) -> str:
         return f"struct={self.kind}"
@@ -88,19 +99,19 @@ class Condenser(Structure):
 
 @dataclass
 class Cistern(Structure):
-    """Stores surface water."""
+    """Stores surface water from the parent tile."""
     kind: str = "cistern"
     stored: int = 0  # Water storage in units
 
-    def tick(self, state: "GameState", tile: "Tile", subsquare: "SubSquare", tx: int, ty: int, sx: int, sy: int) -> None:
-        # Get total surface water from sub-squares
-        surface_water = get_tile_surface_water(None, state.water_grid, tx, ty)
+    def tick(self, state: "GameState", tx: int, ty: int, sx: int, sy: int) -> None:
+        # Get total surface water from parent tile's grid cells
+        surface_water = get_tile_surface_water(state.water_grid, tx, ty)
 
         # Transfer surface water into cistern storage
         if surface_water > CISTERN_TRANSFER_RATE and self.stored < CISTERN_CAPACITY:
             transfer = min(CISTERN_TRANSFER_RATE, surface_water, CISTERN_CAPACITY - self.stored)
-            # Remove water proportionally from sub-squares
-            remove_water_proportionally(None, transfer, state, tx, ty)
+            # Remove water proportionally from grid cells
+            remove_water_proportionally(transfer, state, tx, ty)
             self.stored += transfer
 
         # Cistern slowly leaks (scales with heat)
@@ -108,7 +119,7 @@ class Cistern(Structure):
         drained = min(self.stored, loss)
         self.stored -= drained
         recovered = (drained * CISTERN_LOSS_RECOVERY) // 100
-        distribute_upward_seepage(None, recovered, state.active_water_subsquares, tx, ty, state)
+        distribute_upward_seepage(recovered, state.active_water_subsquares, tx, ty, state)
 
     def get_survey_string(self) -> str:
         return f"struct={self.kind} | stored={self.stored / 10:.1f}L"
@@ -119,13 +130,12 @@ class Cistern(Structure):
 
 @dataclass
 class Planter(Structure):
-    """Grows biomass when watered."""
+    """Grows biomass when watered, adds organic matter to soil."""
     kind: str = "planter"
     growth: int = 0  # Growth progress 0-100
 
-    def tick(self, state: "GameState", tile: "Tile", subsquare: "SubSquare", tx: int, ty: int, sx: int, sy: int) -> None:
-
-        # Total water includes sub-square surface water + subsurface (from grids)
+    def tick(self, state: "GameState", tx: int, ty: int, sx: int, sy: int) -> None:
+        # Total water includes grid cell surface water + subsurface (from grids)
         from grid_helpers import get_tile_total_water
         total_water = get_tile_total_water(state, tx, ty)
 
@@ -140,7 +150,7 @@ class Planter(Structure):
             self.growth = 0
             state.inventory.biomass += 1
             state.inventory.seeds += 1
-            remove_water_proportionally(tile, PLANTER_WATER_COST, state, tx, ty)
+            remove_water_proportionally(PLANTER_WATER_COST, state, tx, ty)
             
             # Update Array (Source of Truth)
             current_depth = state.terrain_layers[SoilLayer.ORGANICS, sx, sy]
@@ -195,7 +205,6 @@ def build_structure(state: "GameState", kind: str) -> None:
         "planter": Planter,
     }
     state.structures[sub_pos] = structure_class_map[kind]()
-    subsquare.structure_id = len(state.structures)  # Mark sub-square as having structure
 
     # Update cistern cache for evaporation optimization
     if kind == "cistern":
@@ -207,14 +216,12 @@ def build_structure(state: "GameState", kind: str) -> None:
 def tick_structures(state: "GameState", heat: int) -> None:
     """Update all structures for one simulation tick.
 
-    Structures are keyed by sub-square coords but their effects
-    (water collection, growth) operate on the parent tile.
+    Structures are keyed by grid cell coords (sx, sy) but their effects
+    (water collection, growth) can affect the parent tile (tx, ty).
     """
     from subgrid import subgrid_to_tile
 
     for sub_pos, structure in list(state.structures.items()):
-        # Get parent tile coordinates for this structure's sub-square
+        # Get parent tile coordinates for this structure's grid cell
         tile_pos = subgrid_to_tile(sub_pos[0], sub_pos[1])
-
-        # tile and subsquare parameters are deprecated - structures use grids directly
-        structure.tick(state, None, None, tile_pos[0], tile_pos[1], sub_pos[0], sub_pos[1])
+        structure.tick(state, tile_pos[0], tile_pos[1], sub_pos[0], sub_pos[1])

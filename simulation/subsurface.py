@@ -19,12 +19,17 @@ if TYPE_CHECKING:
 
 
 def apply_tile_evaporation(state: "GameState") -> None:
-    """Apply evaporation to active surface water sub-squares.
+    """Apply evaporation to active surface water grid cells.
 
     This is much faster than iterating the whole grid.
 
+    NOTE: This function uses the legacy object-oriented atmosphere system
+    (AtmosphereLayer/AtmosphereRegion) which will be replaced with grid-based
+    atmosphere in Phase 3. After atmosphere vectorization, this will need
+    to be updated to use humidity_grid instead of state.atmosphere.get_evaporation_modifier().
+
     Args:
-        state: Game state with tiles and active_water_subsquares set.
+        state: Game state with grids and active_water_subsquares set.
     """
     # Iterate over a copy as the set can be modified
     for sub_x, sub_y in list(state.active_water_subsquares):

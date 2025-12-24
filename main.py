@@ -53,8 +53,6 @@ from structures import (
 from simulation.surface import (
     simulate_surface_flow,
     simulate_surface_seepage,
-    get_tile_surface_water,
-    remove_water_proportionally,
 )
 from simulation.subsurface import apply_tile_evaporation
 from simulation.subsurface_vectorized import simulate_subsurface_tick_vectorized
@@ -115,11 +113,11 @@ class GameState:
     _cached_elevation_range: Tuple[float, float] | None = None
 
     # === Vectorized Simulation State ===
-    water_grid: np.ndarray | None = None      # Shape: (GRID_WIDTH, GRID_HEIGHT), dtype=int32
-    elevation_grid: np.ndarray | None = None  # Shape: (GRID_WIDTH, GRID_HEIGHT), dtype=int32
-    moisture_grid: np.ndarray | None = None   # Shape: (GRID_WIDTH, GRID_HEIGHT), dtype=float64 (EMA)
-    trench_grid: np.ndarray | None = None     # Shape: (GRID_WIDTH, GRID_HEIGHT), dtype=uint8
-    kind_grid: np.ndarray | None = None       # Shape: (TILE_WIDTH, TILE_HEIGHT), dtype='U20' - biome type per tile
+    water_grid: np.ndarray | None = None      # Shape: (GRID_WIDTH, GRID_HEIGHT), dtype=int32 - surface water per cell
+    elevation_grid: np.ndarray | None = None  # Shape: (GRID_WIDTH, GRID_HEIGHT), dtype=int32 - total elevation per cell
+    moisture_grid: np.ndarray | None = None   # Shape: (GRID_WIDTH, GRID_HEIGHT), dtype=float64 - moisture history (EMA)
+    trench_grid: np.ndarray | None = None     # Shape: (GRID_WIDTH, GRID_HEIGHT), dtype=uint8 - trench markers
+    kind_grid: np.ndarray | None = None       # Shape: (GRID_WIDTH, GRID_HEIGHT), dtype='U20' - biome type per cell
 
     # Daily accumulator grids for erosion
     water_passage_grid: np.ndarray | None = None  # Shape: (GRID_WIDTH, GRID_HEIGHT), dtype=float

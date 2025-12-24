@@ -25,7 +25,6 @@ from render.config import (
     COLOR_SKY,
     METER_SCALE,
 )
-from simulation.surface import get_tile_surface_water
 from subgrid import tile_to_subgrid
 
 if TYPE_CHECKING:

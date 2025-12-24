@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Tuple, Optional, List
 import pygame
 
 from ground import TILE_TYPES
-from surface_state import compute_surface_appearance
 from render.primitives import draw_text
 from render.grid_helpers import get_grid_cell_color, get_grid_elevation
 from config import (

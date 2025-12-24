@@ -1,16 +1,24 @@
-"""Sub-grid coordinate system for fine-grained surface interactions.
+"""Grid coordinate conversion utilities for tile-based systems.
 
-Each simulation tile is divided into a 3x3 grid of sub-squares.
-Sub-squares are independent coordinate units - water flows freely across tile boundaries.
-The 3x3 grouping is purely organizational for efficient grid array access.
+DEPRECATED - TO BE REMOVED IN PHASE 3 (Atmosphere Migration):
+This module provides coordinate conversion between "tiles" (3×3 grid cell regions)
+and individual grid cells. These conversions exist solely for compatibility with
+the legacy atmosphere system which operates on tile coordinates.
 
-All game state is stored in NumPy grids at subsquare resolution.
+After Phase 3 atmosphere vectorization, all systems will use grid coordinates
+directly (0-179, 0-134) and this module will be deleted.
+
+Current usage:
+- Tile grouping: Each "tile" is a 3×3 region of grid cells
+- Grid cells are independent units - water flows freely across tile boundaries
+- All game state is stored in NumPy grids at grid cell resolution (180×135)
 """
 from __future__ import annotations
 
 from typing import Tuple, List
 
-SUBGRID_SIZE = 3  # 3x3 sub-squares per tile
+# DEPRECATED - Import from config.py instead. Will be removed in Phase 3.
+from config import SUBGRID_SIZE
 
 
 # =============================================================================
@@ -18,33 +26,41 @@ SUBGRID_SIZE = 3  # 3x3 sub-squares per tile
 # =============================================================================
 
 def tile_to_subgrid(tile_x: int, tile_y: int) -> Tuple[int, int]:
-    """Convert tile coords to top-left sub-square coords.
+    """Convert tile coords to top-left grid cell coords.
 
-    Example: tile (2, 3) -> sub-square (6, 9)
+    DEPRECATED - For use with legacy atmosphere system only.
+
+    Example: tile (2, 3) -> grid cell (6, 9)
     """
     return tile_x * SUBGRID_SIZE, tile_y * SUBGRID_SIZE
 
 
 def subgrid_to_tile(sub_x: int, sub_y: int) -> Tuple[int, int]:
-    """Convert sub-square coords to containing tile coords.
+    """Convert grid cell coords to containing tile coords.
 
-    Example: sub-square (7, 10) -> tile (2, 3)
+    DEPRECATED - For use with legacy atmosphere system only.
+
+    Example: grid cell (7, 10) -> tile (2, 3)
     """
     return sub_x // SUBGRID_SIZE, sub_y // SUBGRID_SIZE
 
 
 def get_subsquare_index(sub_x: int, sub_y: int) -> Tuple[int, int]:
-    """Get index within tile (0-2, 0-2) from world sub-coords.
+    """Get index within tile (0-2, 0-2) from world grid coords.
 
-    Example: sub-square (7, 10) -> index (1, 1) within its tile
+    DEPRECATED - For use with legacy atmosphere system only.
+
+    Example: grid cell (7, 10) -> index (1, 1) within its tile
     """
     return sub_x % SUBGRID_SIZE, sub_y % SUBGRID_SIZE
 
 
 def tile_center_subsquare(tile_x: int, tile_y: int) -> Tuple[int, int]:
-    """Get the center sub-square coords for a tile.
+    """Get the center grid cell coords for a tile.
 
-    Example: tile (2, 3) -> sub-square (7, 10) (center of 3x3)
+    DEPRECATED - For use with legacy atmosphere system only.
+
+    Example: tile (2, 3) -> grid cell (7, 10) (center of 3x3)
     """
     return tile_x * SUBGRID_SIZE + 1, tile_y * SUBGRID_SIZE + 1
 
@@ -85,16 +101,16 @@ def is_in_range(player_pos: Tuple[int, int], target_pos: Tuple[int, int],
 
 def get_subsquares_in_range(center: Tuple[int, int], interaction_range: int,
                             width: int, height: int) -> List[Tuple[int, int]]:
-    """Get all sub-square coords within Chebyshev distance of center.
+    """Get all grid cell coords within Chebyshev distance of center.
 
     Args:
-        center: Center point (sub-square coords)
+        center: Center point (grid cell coords)
         interaction_range: Maximum Chebyshev distance
-        width: Map width in sub-squares
-        height: Map height in sub-squares
+        width: Map width in grid cells
+        height: Map height in grid cells
 
     Returns:
-        List of (sub_x, sub_y) coords within range and map bounds
+        List of (sx, sy) coords within range and map bounds
     """
     result = []
     for dx in range(-interaction_range, interaction_range + 1):
@@ -113,7 +129,7 @@ def clamp_to_range(player_pos: Tuple[int, int], target_pos: Tuple[int, int],
     in the direction of target.
 
     Args:
-        player_pos: Player's sub-square position
+        player_pos: Player's grid cell position
         target_pos: Desired target position
         interaction_range: Maximum allowed distance
 
@@ -132,8 +148,8 @@ def clamp_to_bounds(pos: Tuple[int, int], width: int, height: int) -> Tuple[int,
 
     Args:
         pos: Position to clamp
-        width: Map width in sub-squares
-        height: Map height in sub-squares
+        width: Map width in grid cells
+        height: Map height in grid cells
 
     Returns:
         Position clamped to valid range
@@ -162,14 +178,14 @@ NEIGHBORS_4 = [
 
 def get_neighbor_coords(sub_x: int, sub_y: int,
                         direction: Tuple[int, int]) -> Tuple[int, int]:
-    """Get neighboring sub-square coords in given direction.
+    """Get neighboring grid cell coords in given direction.
 
     Args:
-        sub_x, sub_y: Current sub-square world coords
+        sub_x, sub_y: Current grid cell world coords
         direction: (dx, dy) offset
 
     Returns:
-        Neighboring sub-square world coords
+        Neighboring grid cell world coords
     """
     return sub_x + direction[0], sub_y + direction[1]
 

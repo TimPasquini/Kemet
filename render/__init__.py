@@ -9,8 +9,6 @@ from render.colors import (
     elevation_brightness,
     apply_brightness,
     blend_colors,
-    get_surface_material_color,
-    color_for_tile,
 )
 from render.primitives import draw_text, draw_section_header
 from render.map import render_map_viewport, render_static_background, redraw_background_rect, render_interaction_highlights
@@ -25,8 +23,6 @@ __all__ = [
     "elevation_brightness",
     "apply_brightness",
     "blend_colors",
-    "get_surface_material_color",
-    "color_for_tile",
     # Primitives
     "draw_text", "draw_section_header",
     # Map

@@ -124,13 +124,14 @@ MATERIAL_LIBRARY = {
 @dataclass
 class TerrainColumn:
     """
-    Fixed-layer soil horizon model for a single tile.
-    
-    Each layer has:
-    - material: what it's made of
-    - depth: how much material (integer units, 1 unit = 100mm)
-    
-    Surface elevation is calculated from sum of depths relative to sea level.
+    DEPRECATED - Legacy object-oriented terrain representation.
+
+    This class was used before the grid-based terrain system. It's kept for
+    backwards compatibility but is no longer used in the simulation.
+
+    REPLACEMENT: All terrain is now stored in NumPy arrays:
+    - terrain_layers[layer, sx, sy] for depths
+    - terrain_materials[layer, sx, sy] for material names
     """
     # Fixed layer structure (always 6 layers)
     bedrock_depth: int          # Immutable base layer

@@ -26,9 +26,7 @@ from ground import SoilLayer
 
 if TYPE_CHECKING:
     from main import GameState
-    from mapgen import Tile
     from atmosphere import AtmosphereLayer
-    from subgrid import SubSquare
 
 Point = Tuple[int, int]
 
@@ -382,7 +380,13 @@ def reset_daily_accumulators(state: "GameState") -> None:
 
 
 def accumulate_wind_exposure(state: "GameState") -> None:
-    """Accumulate wind exposure for overnight erosion, using active sets."""
+    """Accumulate wind exposure for overnight erosion, using active sets.
+
+    DEPRECATED FOR PHASE 3: This function uses the legacy object-oriented
+    atmosphere system (AtmosphereLayer with region-based wind). After Phase 3
+    atmosphere vectorization, this should be replaced with a grid-based approach
+    using wind_grid (180×135) for proper per-cell wind exposure calculation.
+    """
     atmosphere = state.atmosphere
     if not atmosphere:
         return

@@ -1,11 +1,11 @@
 # simulation/surface.py
-"""Sub-grid surface water flow simulation.
+"""Grid-based surface water flow simulation.
 
-Water flows between sub-squares based on elevation differences.
-Flow crosses tile boundaries seamlessly - sub-squares are independent units.
+Water flows between grid cells based on elevation differences.
+Flow crosses tile boundaries seamlessly - grid cells are independent units.
 
 Key concepts:
-- Each sub-square has its own surface_water amount
+- Each grid cell has its own surface_water amount in water_grid
 - Flow is 8-directional (cardinal + diagonal)
 - Elevation = bedrock_base + sum(terrain_layers)
 - Water flows from high to low, distributed proportionally
@@ -27,27 +27,9 @@ from subgrid import tile_to_subgrid
 
 if TYPE_CHECKING:
     from main import GameState
-    from mapgen import Tile
     from world_state import GlobalWaterPool
 
 Point = Tuple[int, int]
-
-
-def get_subsquare_elevation(tile: "Tile", local_x: int, local_y: int) -> int:
-    """Get absolute elevation of a sub-square in depth units.
-
-    DEPRECATED: This function is legacy. Use elevation_grid[sx, sy] directly.
-    """
-    # Legacy function - returns tile's terrain surface elevation
-    return tile.terrain.get_surface_elevation()
-
-
-def get_subsquare_water_height(tile: "Tile", local_x: int, local_y: int) -> float:
-    """Get water surface height (elevation + water depth) for a sub-square."""
-    # NOTE: This function is legacy. For simulation, use the grids directly.
-    # It cannot know the water amount without access to the grid.
-    elev = get_subsquare_elevation(tile, local_x, local_y)
-    return float(elev)
 
 
 def simulate_surface_flow(state: "GameState") -> int:
@@ -262,23 +244,16 @@ def simulate_surface_seepage(state: "GameState") -> None:
     state.dirty_subsquares.update(zip(seep_rows, seep_cols))
 
 
-def get_tile_surface_water(tile: Optional["Tile"] = None, water_grid: np.ndarray | None = None, tile_x: int = -1, tile_y: int = -1) -> int:
-    """Get total surface water across all sub-squares in a tile.
+def get_tile_surface_water(water_grid: np.ndarray, tile_x: int, tile_y: int) -> int:
+    """Get total surface water across all grid cells in a tile's 3x3 region.
 
     Args:
-        tile: DEPRECATED - no longer used, pass None
         water_grid: The water grid to sum from
         tile_x, tile_y: Tile coordinates
 
-    Useful for compatibility with tile-level systems (evaporation, etc.).
+    Returns:
+        Total surface water across the tile's 3x3 grid cells
     """
-    if water_grid is None or tile_x == -1:
-        # Fallback for legacy calls that don't have grid access.
-        # This is now incorrect as subsquare.surface_water is gone.
-        # The correct fix is to update all call sites.
-        # For now, returning 0 to avoid crashing.
-        return 0
-
     sx = tile_x * SUBGRID_SIZE
     sy = tile_y * SUBGRID_SIZE
 
@@ -286,14 +261,13 @@ def get_tile_surface_water(tile: Optional["Tile"] = None, water_grid: np.ndarray
     return np.sum(water_grid[sx:sx+3, sy:sy+3])
 
 
-def remove_water_proportionally(tile: Optional["Tile"], amount: int, state: "GameState", tile_x: int, tile_y: int) -> int:
-    """Remove water proportionally from tile's sub-squares.
+def remove_water_proportionally(amount: int, state: "GameState", tile_x: int, tile_y: int) -> int:
+    """Remove water proportionally from a tile's grid cells.
 
-    Each sub-square loses water in proportion to how much it has.
-    This ensures water is removed evenly rather than draining one sub-square first.
+    Each grid cell loses water in proportion to how much it has.
+    This ensures water is removed evenly rather than draining one cell first.
 
     Args:
-        tile: DEPRECATED - no longer used, pass None
         amount: Maximum amount to remove
         state: GameState for accessing water_grid
         tile_x, tile_y: Tile coordinates
@@ -301,7 +275,7 @@ def remove_water_proportionally(tile: Optional["Tile"], amount: int, state: "Gam
     Returns:
         Actual amount removed (may be less if insufficient water)
     """
-    total_water = get_tile_surface_water(None, state.water_grid, tile_x, tile_y)
+    total_water = get_tile_surface_water(state.water_grid, tile_x, tile_y)
     if total_water <= 0:
         return 0
 
@@ -331,19 +305,17 @@ def remove_water_proportionally(tile: Optional["Tile"], amount: int, state: "Gam
 
 
 def distribute_water_to_tile(
-    tile: Optional["Tile"],
     amount: int,
     water_grid: np.ndarray,
     tile_x: int,
     tile_y: int,
-    state: Optional["GameState"] = None
+    state: "GameState"
 ) -> List[Tuple[int, int]]:
-    """
-    Distribute water to a tile's sub-squares, filling from lowest absolute elevation up.
+    """Distribute water to a tile's grid cells, filling from lowest elevation up.
+
     Ensures water surface level remains flat across the connected body within the tile.
 
     Args:
-        tile: DEPRECATED - no longer used, pass None
         amount: Amount of water to add
         water_grid: The global water grid to modify
         tile_x, tile_y: Coordinates of the tile for grid indexing
@@ -364,12 +336,7 @@ def distribute_water_to_tile(
         for ly in range(SUBGRID_SIZE):
             sx = sx_base + lx
             sy = sy_base + ly
-            # Get elevation from grid if available, otherwise from tile (legacy)
-            if state is not None and state.elevation_grid is not None:
-                base_elev = state.elevation_grid[sx, sy]
-            else:
-                # Legacy fallback
-                base_elev = get_subsquare_elevation(tile, lx, ly) if tile else 0
+            base_elev = state.elevation_grid[sx, sy]
             current_water = water_grid[sx, sy]
             current_level = base_elev + current_water
             targets.append({
@@ -445,31 +412,26 @@ def distribute_water_to_tile(
 
 
 def distribute_upward_seepage(
-    tile: Optional["Tile"],
     water_amount: int,
-    active_set: Optional[Set[Point]] = None,
-    tile_x: int = 0,
-    tile_y: int = 0,
-    state: "GameState" = None,
+    active_set: Optional[Set[Point]],
+    tile_x: int,
+    tile_y: int,
+    state: "GameState",
 ) -> None:
-    """Distribute water seeping up from subsurface to sub-squares.
+    """Distribute water seeping up from subsurface to grid cells.
 
-    This now optionally updates the active_water_subsquares set for performance.
+    Updates the active_water_subsquares set for performance optimization.
 
     Args:
-        tile: DEPRECATED - no longer used, pass None
         water_amount: Amount of water emerging from below
-        active_set: The global set of active water sub-squares to update
+        active_set: The global set of active water grid cells to update
         tile_x, tile_y: The tile's world coordinates (for updating active_set)
         state: The game state, required for water_grid access
     """
     if water_amount <= 0:
         return
 
-    if state is None or state.water_grid is None:
-        return  # Cannot proceed without the water grid
-
-    modified = distribute_water_to_tile(None, water_amount, state.water_grid, tile_x, tile_y, state)
+    modified = distribute_water_to_tile(water_amount, state.water_grid, tile_x, tile_y, state)
 
     if active_set is not None:
         base_sub_x, base_sub_y = tile_to_subgrid(tile_x, tile_y)

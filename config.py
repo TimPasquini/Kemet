@@ -18,9 +18,11 @@ from typing import Dict, Tuple
 GRID_WIDTH = 180
 GRID_HEIGHT = 135
 
-# TEMPORARY: Tile subdivision constant (will be removed after tile removal)
-SUBGRID_SIZE = 3  # Each tile subdivides into 3×3 grid cells
-MAP_SIZE: Tuple[int, int] = (GRID_WIDTH // SUBGRID_SIZE, GRID_HEIGHT // SUBGRID_SIZE)  # (60, 45) tiles - TEMPORARY
+# DEPRECATED - TO BE REMOVED IN PHASE 3 (Atmosphere Migration):
+# Tile grouping only exists for legacy atmosphere system compatibility.
+# After atmosphere vectorization, all systems will operate purely on grid coordinates.
+SUBGRID_SIZE = 3  # Number of grid cells per tile (in each dimension)
+MAP_SIZE: Tuple[int, int] = (GRID_WIDTH // SUBGRID_SIZE, GRID_HEIGHT // SUBGRID_SIZE)  # (60, 45) tiles
 
 # Player interaction range in grid cells
 INTERACTION_RANGE = 2  # Grid cells player can reach (1-2 cells out)
@@ -122,19 +124,19 @@ STARTING_BIOMASS = 0
 # DEPOT / RESUPPLY
 # =============================================================================
 DEPOT_WATER_AMOUNT = 300    # Units (30L)
-DEPOT_SCRAP_AMOUNT = 3
-DEPOT_SEEDS_AMOUNT = 1
+DEPOT_SCRAP_AMOUNT = 30
+DEPOT_SEEDS_AMOUNT = 10
 
 # =============================================================================
 # ACTION DURATIONS (seconds)
 # =============================================================================
 # Defines how long the player is locked while performing an action
 ACTION_DURATIONS: Dict[str, float] = {
-    "terrain": 1.0,   # Shovel tool (trench/lower/raise)
-    "dig": 1.0,
-    "lower": 1.5,
-    "raise": 0.8,
-    "build": 2.0,
+    "terrain": 0.5,   # Shovel tool (trench/lower/raise)
+    "dig": 0.5,
+    "lower": 0.5,
+    "raise": 0.5,
+    "build": 1.0,
     "collect": 0.5,
     "pour": 0.5,
     "survey": 0.3,

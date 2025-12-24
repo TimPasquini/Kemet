@@ -21,6 +21,8 @@ from ground import (
     SoilLayer,
     TileType,
     TILE_TYPES,
+    elevation_to_units,
+    units_to_meters,
 )
 from utils import get_neighbors
 

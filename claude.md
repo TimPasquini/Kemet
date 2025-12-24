@@ -153,12 +153,22 @@ This helps players categorize "things I built" vs. "ways I've shaped the land."
 - Water conservation via GlobalWaterPool
 - Player interaction at range with cursor targeting
 
-### ⚠️ Atmosphere System (Legacy - Requires Refactor)
-**Status**: Functional but incompatible with Phase 3 scale-up
+### ⚠️ Atmosphere System (Legacy - Phase 3 Target)
+**Status**: Functional but marked for complete replacement
 - Uses coarse 4×4 tile regions instead of grid resolution
 - Object-oriented structure (AtmosphereRegion class)
 - Iterative simulation logic
-- **See "Critical Priorities" for refactor requirements**
+- **Entire file will be deleted and replaced with grid-based system in Phase 3**
+
+### 🧹 Legacy Code Cleanup (Complete - Dec 24, 2025)
+**Completed**:
+- All Tile/SubSquare class references removed
+- Deleted `surface_state.py` (broken legacy code)
+- Marked `atmosphere.py`, `subgrid.py`, `TerrainColumn` for deprecation
+- Updated 500+ lines of documentation
+- Fixed all misleading comments about architecture
+- All TYPE_CHECKING imports cleaned up
+- All function signatures updated to remove deprecated parameters
 
 ---
 
@@ -175,8 +185,8 @@ This helps players categorize "things I built" vs. "ways I've shaped the land."
 - 250× speedup on auxiliary calculations
 - 1000+ lines of code removed
 
-### ✅ Phase 2: Geometric Trenching (COMPLETE - Dec 2025)
-**Goal**: Replace boolean flags with actual geometry
+### ✅ Phase 2: Geometric Trenching & Legacy Cleanup (COMPLETE - Dec 2025)
+**Goal**: Replace boolean flags with actual geometry and remove all legacy code
 
 **Completed**:
 - Elevation unified to single source: `bedrock_base + sum(terrain_layers)`
@@ -184,10 +194,17 @@ This helps players categorize "things I built" vs. "ways I've shaped the land."
 - Material conservation with elevation-aware redistribution
 - Visual highlighting system for trenching preview
 - Player-relative directionality
+- **Legacy Code Cleanup**:
+  - Deleted `surface_state.py` (broken, referenced deleted classes)
+  - Removed all Tile/SubSquare class references from TYPE_CHECKING imports
+  - Removed deprecated parameters from all functions
+  - Marked `atmosphere.py`, `subgrid.py`, `TerrainColumn` for Phase 3 deprecation
+  - Updated 500+ lines of documentation to reflect grid-based architecture
+  - Fixed all misleading comments about "tiles" vs "grid cells"
 
-### 🔴 Phase 3: Atmosphere Vectorization (CRITICAL - NEXT)
-**Goal**: Migrate atmosphere to grid-based architecture
-**Priority**: HIGH - Required before scale-up
+### 🔴 Phase 3: Atmosphere Vectorization (CRITICAL - IN PROGRESS)
+**Goal**: Migrate atmosphere to grid-based architecture to close out grid migration
+**Priority**: HIGH - Final step to 100% pure grid architecture
 
 **Current Blockers**:
 1. Coarse 4×4 tile regions instead of 180×135 grid
@@ -199,15 +216,56 @@ This helps players categorize "things I built" vs. "ways I've shaped the land."
 - Create `humidity_grid` (180×135) and `wind_grid` (180×135×2 for x/y components)
 - Vectorize atmosphere simulation with NumPy operations
 - Update evaporation to use grid-based atmospheric modifiers
-- Delete `AtmosphereRegion` class and object collections
-- Integrate with existing vectorized water/erosion systems
+- Vectorize wind exposure calculation in erosion
+- **Delete** `atmosphere.py` entirely (~121 lines)
+- **Delete** `subgrid.py` entirely (~185 lines)
+- Remove atmosphere dependencies from `simulation/subsurface.py` and `simulation/erosion.py`
 
-**Files to Modify**: `atmosphere.py`, `simulation/subsurface.py`, `main.py`
+**Files to Modify**: `atmosphere.py` (DELETE), `subgrid.py` (DELETE), `simulation/subsurface.py`, `simulation/erosion.py`, `main.py`
 **Estimated Effort**: ~6-8 hours
-**Benefits**: Enables Phase 4 scale-up, maintains architectural consistency, ~10-50× speedup
+**Benefits**:
+- 100% pure grid architecture (no object collections)
+- Enables Phase 4 scale-up
+- ~10-50× atmosphere speedup
+- 300+ lines of legacy code deleted
 
-### Phase 4: Scale Up (AFTER Phase 3)
-**Goal**: Increase map size to enable larger-scale gameplay
+### Phase 3.5: Code Reorganization (AFTER Phase 3, BEFORE Scale-Up)
+**Goal**: Reorganize codebase for better maintainability with clean grid-based code
+**Priority**: MEDIUM - Makes scale-up work easier
+
+**Why After Atmosphere Migration**:
+- 300+ lines of legacy code already deleted
+- Cleaner dependency graph (no atmosphere circular dependencies)
+- Less code to reorganize
+- Clear separation between grid systems and utilities
+
+**Step A: Game State Module** (~2-3 hours)
+Create `game_state/` subdirectory:
+- `state.py` - GameState dataclass (~150 lines from main.py)
+- `initialization.py` - build_initial_state() (~100 lines)
+- `terrain_actions.py` - dig_trench, lower/raise_ground (~400 lines)
+- `player_actions.py` - collect/pour_water, survey (~180 lines)
+
+**Result**: main.py reduced from ~1128 → ~300 lines (just simulation loop + commands)
+
+**Step B: World Generation Module** (~1-2 hours)
+Create `world/` subdirectory:
+- `generation.py` - mapgen.py renamed
+- `biomes.py` - Extract biome calculation logic
+- `terrain.py` - ground.py renamed
+- `weather.py` - Move from main dir
+
+**Result**: Clear separation of world generation from game state management
+
+**Files to Move**: 8 files reorganized into 2 new modules
+**Estimated Effort**: ~3-5 hours total for Steps A & B
+**Benefits**:
+- main.py becomes manageable
+- Clear module boundaries
+- Easier to test individual systems
+- Better code navigation
+
+**Goal**: Test performance at scale and validate all systems
 
 **Targets**:
 - Initial: 512×512 grid (≈170m × 170m at 0.33m/cell)
@@ -216,12 +274,44 @@ This helps players categorize "things I built" vs. "ways I've shaped the land."
 **Prerequisites**:
 - ✅ All systems vectorized
 - ✅ No object collections
-- 🔴 Atmosphere vectorized (Phase 3)
+- ✅ Atmosphere vectorized (Phase 3)
+- ✅ Code reorganized (Phase 3.5 Steps A & B)
 
-**Performance Strategy**:
+**Work Items**:
+- Profile performance at 180×135 baseline
+- Test at 512×512 grid resolution
+- Verify all systems (water, erosion, biomes, atmosphere) work at scale
+- Implement active region optimization if needed
+- Add structure spatial indexing if needed
+
+**Performance Strategy** (if needed):
 - Active region simulation (only update areas with activity)
 - Spatial partitioning for structure lookups
 - LOD system for distant rendering
+
+**Estimated Effort**: ~4-6 hours
+**Success Criteria**: Stable 60 FPS gameplay at 512×512
+
+### Phase 4.5: Reorganization Completion (AFTER Scale-Up)
+**Goal**: Complete code reorganization now that scale-up is validated
+**Priority**: LOW - Nice to have, not blocking
+
+**Step C: Core Utilities Module** (~1-2 hours)
+Create `core/` subdirectory:
+- `config.py` - Move from main dir
+- `grid_helpers.py` - Move from main dir
+- `camera.py` - Move from main dir
+- `utils.py` - Move from main dir
+
+**Step D: Interface Module** (~1-2 hours)
+Create `interface/` subdirectory:
+- `player.py` - Move from main dir
+- `ui_state.py` - Move from main dir
+- `tools.py` - Move from main dir
+- `keybindings.py` - Move from main dir
+
+**Result**: Main directory reduced to ~5 core files + submodules
+**Estimated Effort**: ~2-4 hours total for Steps C & D
 
 ### Phase 5: Geological Erosion (Pre-Sim)
 **Goal**: Generate realistic starting terrain through simulation
@@ -296,36 +386,80 @@ The surface simulation is now fully data-oriented. The `water_grid` and `elevati
 
 ## File Structure
 
+### Current Structure (Phase 2 Complete)
 ```
 kemet/
 ├── config.py              # Constants: Units, Time, Weather, Physics, UI
-├── main.py                # GameState, tick orchestration, staggered schedule
+├── main.py                # GameState, tick orchestration, staggered schedule (1128 lines)
 ├── world_state.py         # GlobalWaterPool, SedimentPool (conservation)
-├── atmosphere.py          # AtmosphereLayer, regional humidity/wind
-├── subgrid.py             # SubSquare, coordinate utils, terrain override
-├── surface_state.py       # Computed appearance, unified water access
-├── player.py              # Player state (sub-grid position), collision
+├── atmosphere.py          # ⚠️ DEPRECATED - Object-oriented atmosphere (TO DELETE Phase 3)
+├── subgrid.py             # ⚠️ DEPRECATED - Coordinate conversions (TO DELETE Phase 3)
+├── player.py              # Player state (grid position), collision
 ├── camera.py              # Viewport transforms
-├── mapgen.py              # Map generation, tile types (simulation props)
-├── ground.py              # TerrainColumn, SoilLayer, materials
+├── mapgen.py              # Map generation, biome types
+├── ground.py              # TerrainColumn (DEPRECATED), SoilLayer, materials
 ├── tools.py               # Tool system (Toolbar, Tool, ToolOption)
 ├── grid_helpers.py        # Clean API for grid access
 ├── keybindings.py         # Centralized input mappings
 ├── pygame_runner.py       # Pygame frontend entry point
-├── simulation/
-│   ├── surface.py         # Surface flow (NumPy) + seepage
-│   ├── subsurface.py      # Underground flow + evaporation
-│   └── erosion.py         # Overnight erosion (water/wind)
-├── render/
-│   ├── __init__.py        # Module exports
-│   ├── map.py             # Map viewport, tiles, structures, highlights
-│   ├── hud.py             # HUD panels, inventory, soil profile
-│   ├── toolbar.py         # Toolbar and popup menu rendering
-│   ├── overlays.py        # Help, event log, player, night overlay
-│   ├── primitives.py      # Basic drawing helpers (text cache)
-│   └── colors.py          # Color computation (elevation/material)
 ├── structures.py          # Structure ABC + Cistern, Condenser, Planter
-└── ui_state.py            # UI state, layout, click regions, cursor tracking
+├── ui_state.py            # UI state, layout, click regions, cursor tracking
+├── utils.py               # General utilities
+├── weather.py             # Weather system
+├── simulation/
+│   ├── surface.py         # Surface flow (vectorized) + seepage
+│   ├── subsurface.py      # Underground flow + evaporation
+│   ├── subsurface_vectorized.py  # Vectorized subsurface simulation
+│   ├── erosion.py         # Overnight erosion (water/wind)
+│   └── config.py          # Simulation constants
+└── render/
+    ├── __init__.py        # Module exports
+    ├── map.py             # Map viewport rendering
+    ├── hud.py             # HUD panels, inventory, soil profile
+    ├── toolbar.py         # Toolbar and popup menu rendering
+    ├── overlays.py        # Help, event log, night overlay
+    ├── minimap.py         # Minimap rendering
+    ├── player_renderer.py # Player rendering
+    ├── primitives.py      # Basic drawing helpers
+    ├── colors.py          # Color computation
+    ├── grid_helpers.py    # Grid rendering utilities
+    └── config.py          # Rendering constants
+```
+
+### Target Structure (After Phase 4.5)
+```
+kemet/
+├── main.py                # Simulation loop + command dispatch (~300 lines)
+├── structures.py          # Structure definitions
+├── world_state.py         # Conservation systems
+├── pygame_runner.py       # Pygame frontend entry point
+├── game_state/            # NEW - Game state management
+│   ├── state.py           # GameState dataclass
+│   ├── initialization.py  # build_initial_state()
+│   ├── terrain_actions.py # Terrain manipulation
+│   └── player_actions.py  # Player actions
+├── world/                 # NEW - World generation & environment
+│   ├── generation.py      # Map generation (was mapgen.py)
+│   ├── biomes.py          # Biome calculation
+│   ├── terrain.py         # Terrain data (was ground.py)
+│   └── weather.py         # Weather system
+├── simulation/            # Physics simulation
+│   ├── surface.py
+│   ├── subsurface.py
+│   ├── subsurface_vectorized.py
+│   ├── erosion.py
+│   └── config.py
+├── render/                # All rendering
+├── core/                  # NEW - Core utilities
+│   ├── config.py
+│   ├── grid_helpers.py
+│   ├── camera.py
+│   └── utils.py
+└── interface/             # NEW - Player interaction
+    ├── player.py
+    ├── ui_state.py
+    ├── tools.py
+    └── keybindings.py
 ```
 
 ---

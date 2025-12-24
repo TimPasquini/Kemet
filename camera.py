@@ -141,21 +141,21 @@ class Camera:
 
     @property
     def sub_tile_size(self) -> float:
-        """Size of a sub-square in world pixels."""
+        """Size of a grid cell in world pixels."""
         return self.tile_size / SUBGRID_SIZE
 
     def world_to_subsquare(self, world_x: float, world_y: float) -> Tuple[int, int]:
-        """Convert world pixel coordinates to sub-grid coordinates."""
+        """Convert world pixel coordinates to grid cell coordinates."""
         sub_size = self.sub_tile_size
         return int(world_x // sub_size), int(world_y // sub_size)
 
     def subsquare_to_world(self, sub_x: int, sub_y: int) -> Tuple[float, float]:
-        """Convert sub-grid coordinates to world pixel coordinates (top-left of sub-square)."""
+        """Convert grid cell coordinates to world pixel coordinates (top-left of cell)."""
         sub_size = self.sub_tile_size
         return sub_x * sub_size, sub_y * sub_size
 
     def subsquare_to_world_center(self, sub_x: int, sub_y: int) -> Tuple[float, float]:
-        """Convert sub-grid coordinates to world pixel coordinates (center of sub-square)."""
+        """Convert grid cell coordinates to world pixel coordinates (center of cell)."""
         sub_size = self.sub_tile_size
         return sub_x * sub_size + sub_size / 2, sub_y * sub_size + sub_size / 2
 
@@ -165,7 +165,7 @@ class Camera:
 
     def get_visible_subsquare_range(self) -> Tuple[int, int, int, int]:
         """
-        Get the range of sub-squares visible in the viewport.
+        Get the range of grid cells visible in the viewport.
 
         Returns: (start_x, start_y, end_x, end_y) - end is exclusive
         """
@@ -188,7 +188,7 @@ class Camera:
         return start_x, start_y, end_x, end_y
 
     def is_subsquare_visible(self, sub_x: int, sub_y: int) -> bool:
-        """Check if a sub-square is within the visible viewport."""
+        """Check if a grid cell is within the visible viewport."""
         start_x, start_y, end_x, end_y = self.get_visible_subsquare_range()
         return start_x <= sub_x < end_x and start_y <= sub_y < end_y
 
