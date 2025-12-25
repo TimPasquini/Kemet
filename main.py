@@ -113,17 +113,12 @@ def end_day(state: GameState) -> None:
         erosion_messages = apply_overnight_erosion(state)
         state.messages.extend(erosion_messages)
 
-        # Aggregate grid-resolution moisture (180x135) to region resolution (60x45)
-        # TODO: Eliminate this aggregation in Phase 4 - biomes should work on grid directly
+        # Pass moisture grid directly to biome recalculation (operates at grid cell resolution)
         if state.moisture_grid is not None:
-            # Reshape to (60, 3, 45, 3) and average over the 3x3 regions
-            tile_moisture = state.moisture_grid.reshape(
-                GRID_WIDTH // 3, 3, GRID_HEIGHT // 3, 3
-            ).mean(axis=(1, 3))
+            biome_messages = recalculate_biomes(state, state.moisture_grid)
         else:
-            tile_moisture = np.zeros((GRID_WIDTH // 3, GRID_HEIGHT // 3), dtype=float)
-
-        biome_messages = recalculate_biomes(state, tile_moisture)
+            # Create empty moisture grid if not initialized
+            biome_messages = recalculate_biomes(state, np.zeros((GRID_WIDTH, GRID_HEIGHT), dtype=float))
         state.messages.extend(biome_messages)
 
 

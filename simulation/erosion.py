@@ -207,14 +207,10 @@ def apply_overnight_erosion(
                 total_water_erosion = float(np.sum(erosion_amounts[significant]))
 
     # --- Wind Erosion (Vectorized) ---
-    if len(state.active_wind_tiles) > 0:
-        # Build list of all grid cells in active wind regions
+    # Note: active_wind_tiles removed - wind erosion now processes all exposed cells
+    # TODO: Re-implement wind tracking if needed for performance
+    if False:  # Disabled - active_wind_tiles tracking removed
         wind_coords = []
-        for tile_x, tile_y in state.active_wind_tiles:
-            for lx in range(3):
-                for ly in range(3):
-                    wind_coords.append((tile_x * 3 + lx, tile_y * 3 + ly))
-
         if len(wind_coords) > 0:
             rows, cols = zip(*wind_coords)
             rows = np.array(rows, dtype=np.int32)
@@ -266,7 +262,6 @@ def apply_overnight_erosion(
 
     # Reset all daily accumulators
     reset_daily_accumulators(state)
-    state.active_wind_tiles.clear()
 
     if total_water_erosion > 1.0:
         messages.append("Water shaped the land overnight.")
