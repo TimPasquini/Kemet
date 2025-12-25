@@ -71,8 +71,6 @@ from render.config import (
     FONT_SIZE,
     COLOR_BG_DARK,
     CELL_SIZE,
-    TILE_SIZE,  # DEPRECATED
-    SUB_TILE_SIZE,  # DEPRECATED
 )
 from render import (
     render_map_viewport,

@@ -49,16 +49,6 @@ class PlayerState:
         self.smooth_x = float(value[0]) + 0.5
         self.smooth_y = float(value[1]) + 0.5
 
-    @property
-    def tile_position(self) -> Point:
-        """Get the 3×3 region coordinates containing the player (legacy method)."""
-        return (int(self.smooth_x) // 3, int(self.smooth_y // 3))
-
-    @property
-    def subsquare_index(self) -> Point:
-        """Get the local cell index (0-2, 0-2) within the current 3×3 region (legacy method)."""
-        return (int(self.smooth_x) % 3, int(self.smooth_y) % 3)
-
     def start_action(self, action: str) -> bool:
         """Start an action if not busy."""
         if self.action_timer > 0:

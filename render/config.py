@@ -13,10 +13,6 @@ from typing import Dict, Tuple
 # Grid cells are the fundamental spatial unit (48px each, 180×135 grid)
 CELL_SIZE = 48                            # Grid cell size in pixels
 
-# Legacy constants - to be removed
-SUB_TILE_SIZE = CELL_SIZE                 # DEPRECATED: Use CELL_SIZE instead
-TILE_SIZE = CELL_SIZE * 3                 # DEPRECATED: Tile abstraction removed
-
 VIRTUAL_WIDTH = 1280
 VIRTUAL_HEIGHT = 720
 

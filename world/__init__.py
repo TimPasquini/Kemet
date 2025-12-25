@@ -12,8 +12,8 @@ Provides:
 # Core terrain types and utilities
 from world.terrain import (
     SoilLayer,
-    TileType,
-    TILE_TYPES,
+    BiomeType,
+    BIOME_TYPES,
     MATERIAL_LIBRARY,
     TerrainColumn,
     SurfaceTraits,
@@ -38,8 +38,8 @@ from world.generation import generate_grids_direct
 __all__ = [
     # Terrain
     "SoilLayer",
-    "TileType",
-    "TILE_TYPES",
+    "BiomeType",
+    "BIOME_TYPES",
     "MATERIAL_LIBRARY",
     "TerrainColumn",
     "SurfaceTraits",

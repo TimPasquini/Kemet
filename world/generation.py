@@ -3,7 +3,7 @@
 Map generation and biome system for Kemet.
 
 Handles:
-- TileType definitions
+- BiomeType definitions
 - Procedural map generation (WFC-style)
 - Wellspring placement
 - Biome calculation and recalculation
@@ -19,8 +19,8 @@ import numpy as np
 from scipy import ndimage
 from world.terrain import (
     SoilLayer,
-    TileType,
-    TILE_TYPES,
+    BiomeType,
+    BIOME_TYPES,
     elevation_to_units,
     units_to_meters,
 )

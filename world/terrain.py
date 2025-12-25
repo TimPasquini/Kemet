@@ -384,10 +384,10 @@ def units_to_meters(units: int) -> float:
     return units * DEPTH_UNIT_MM / 1000.0
 
 # =============================================================================
-# TILE TYPES (BIOMES)
+# BIOME TYPES
 # =============================================================================
 @dataclass
-class TileType:
+class BiomeType:
     """Simulation properties for a biome type.
 
     Biome types define how grid cells behave in simulation (evaporation, water
@@ -401,12 +401,12 @@ class TileType:
     retention: int  # Water retention percentage
 
 
-TILE_TYPES: Dict[str, TileType] = {
+BIOME_TYPES: Dict[str, BiomeType] = {
     # Evap rates reduced ~10x for realistic water persistence
-    # At heat=100, evap per sub-square per tick: dune=1, flat=1, wadi=0, rock=1, salt=1
-    "dune": TileType("dune", ".", evap=1, capacity=60, retention=5),
-    "flat": TileType("flat", ",", evap=1, capacity=90, retention=8),
-    "wadi": TileType("wadi", "w", evap=0, capacity=140, retention=20),  # Wadis retain water well
-    "rock": TileType("rock", "^", evap=1, capacity=50, retention=2),
-    "salt": TileType("salt", "_", evap=2, capacity=70, retention=3),   # Salt flats dry fastest
+    # At heat=100, evap per grid cell per tick: dune=1, flat=1, wadi=0, rock=1, salt=1
+    "dune": BiomeType("dune", ".", evap=1, capacity=60, retention=5),
+    "flat": BiomeType("flat", ",", evap=1, capacity=90, retention=8),
+    "wadi": BiomeType("wadi", "w", evap=0, capacity=140, retention=20),  # Wadis retain water well
+    "rock": BiomeType("rock", "^", evap=1, capacity=50, retention=2),
+    "salt": BiomeType("salt", "_", evap=2, capacity=70, retention=3),   # Salt flats dry fastest
 }

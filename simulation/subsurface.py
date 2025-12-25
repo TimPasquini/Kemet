@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 import numpy as np
 
-from world.terrain import TILE_TYPES
+from world.terrain import BIOME_TYPES
 from config import (
     TRENCH_EVAP_REDUCTION,
     CISTERN_EVAP_REDUCTION,
@@ -54,7 +54,7 @@ def apply_tile_evaporation(state: "GameState") -> None:
 
     # Base evaporation from biome properties
     base_evaps = np.array([
-        (TILE_TYPES[kind].evap * state.heat) // 100
+        (BIOME_TYPES[kind].evap * state.heat) // 100
         for kind in cell_kinds
     ], dtype=np.int32)
 
@@ -89,7 +89,7 @@ def apply_tile_evaporation(state: "GameState") -> None:
                           base_evaps)
 
     # Retention reduction
-    retentions = np.array([TILE_TYPES[kind].retention for kind in cell_kinds])
+    retentions = np.array([BIOME_TYPES[kind].retention for kind in cell_kinds])
     tile_evaps = base_evaps - ((retentions * base_evaps) // 100)
 
     # Filter non-positive evaporation
