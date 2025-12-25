@@ -83,28 +83,30 @@ def calculate_biome(
 
 def calculate_elevation_percentiles(
     elevation_grid: np.ndarray
-) -> Dict[Point, float]:
+) -> np.ndarray:
     """
-    Calculate elevation percentile for each grid cell.
+    Calculate elevation percentile for each grid cell using vectorized operations.
 
     Args:
         elevation_grid: Grid of elevation values (GRID_WIDTH × GRID_HEIGHT)
 
-    Returns dict mapping (sx, sy) -> percentile (0.0 = lowest, 1.0 = highest)
+    Returns: Array of same shape with percentile values (0.0 = lowest, 1.0 = highest)
     """
-    elevation_data = []
-    height, width = elevation_grid.shape
-    for sy in range(height):
-        for sx in range(width):
-            elev = elevation_grid[sx, sy]
-            elevation_data.append((elev, (sx, sy)))
-    elevation_data.sort(key=lambda e: e[0])
+    # Flatten the elevation grid while preserving shape info
+    flat_elev = elevation_grid.flatten()
 
-    percentiles = {}
-    total = len(elevation_data)
-    for i, (elev, pos) in enumerate(elevation_data):
-        percentiles[pos] = i / max(1, total - 1)
-    return percentiles
+    # Use argsort to get ranking (indices that would sort the array)
+    # Then argsort again to get the rank of each element
+    sorted_indices = np.argsort(flat_elev)
+    ranks = np.empty_like(sorted_indices)
+    ranks[sorted_indices] = np.arange(len(flat_elev))
+
+    # Convert ranks to percentiles (0.0 to 1.0)
+    total = len(flat_elev)
+    percentiles_flat = ranks / max(1, total - 1)
+
+    # Reshape back to grid shape
+    return percentiles_flat.reshape(elevation_grid.shape).astype(np.float32)
 
 
 def recalculate_biomes(
@@ -123,13 +125,16 @@ def recalculate_biomes(
         List of messages to display to player
     """
     messages: List[str] = []
+    # Vectorized elevation percentile calculation
     percentiles = calculate_elevation_percentiles(state.elevation_grid)
     changes = 0
 
+    # Note: Full vectorization of biome calculation is complex due to neighbor consensus logic
+    # This optimization focuses on the percentile calculation which was the main bottleneck
     for sy in range(GRID_HEIGHT):
         for sx in range(GRID_WIDTH):
             neighbor_positions = get_neighbors(sx, sy, GRID_WIDTH, GRID_HEIGHT)
-            elev_pct = percentiles.get((sx, sy), 0.5)
+            elev_pct = percentiles[sx, sy]  # Now array access instead of dict lookup
             avg_moisture = moisture_grid[sx, sy]
             new_biome = calculate_biome(state, sx, sy, neighbor_positions, elev_pct, avg_moisture)
 

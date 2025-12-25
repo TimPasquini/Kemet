@@ -104,6 +104,9 @@ def build_initial_state() -> GameState:
     water_passage_grid = np.zeros((GRID_WIDTH, GRID_HEIGHT), dtype=float)
     wind_exposure_grid = np.zeros((GRID_WIDTH, GRID_HEIGHT), dtype=float)
 
+    # Pre-allocate random buffer for surface flow (performance optimization)
+    random_buffer = np.zeros((GRID_WIDTH, GRID_HEIGHT), dtype=np.float64)
+
     # Initialize elevation_grid (calculated from other grids)
     elevation_grid = bedrock_base + np.sum(terrain_layers, axis=0)
 
@@ -129,6 +132,7 @@ def build_initial_state() -> GameState:
         humidity_grid=humidity_grid,
         wind_grid=wind_grid,
         temperature_grid=temperature_grid,
+        _random_buffer=random_buffer,
     )
 
     # Create depot structure at starting cell

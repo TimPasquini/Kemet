@@ -217,6 +217,6 @@ def tick_structures(state: "GameState", heat: int) -> None:
     Structures are keyed by grid cell coords (sx, sy) and affect their
     cell and neighboring cells (3×3 neighborhood).
     """
-
-    for cell_pos, structure in list(state.structures.items()):
+    # Direct iteration without list() conversion - structures dict is not modified during tick
+    for cell_pos, structure in state.structures.items():
         structure.tick(state, cell_pos[0], cell_pos[1])

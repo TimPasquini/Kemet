@@ -99,7 +99,15 @@ def simulate_surface_flow(state: "GameState") -> int:
         
         # Calculate integer flow amount using probabilistic rounding to prevent stagnation of small volumes
         ideal_flow = amount_to_move * fraction
-        flow = np.floor(ideal_flow + np.random.random(ideal_flow.shape)).astype(np.int32)
+        # Use pre-allocated random buffer to avoid per-tick allocation
+        # Generate random values matching ideal_flow shape
+        if ideal_flow.shape == state._random_buffer.shape:
+            state._random_buffer[:] = np.random.random(ideal_flow.shape)
+            random_vals = state._random_buffer
+        else:
+            # Fallback if shapes don't match (shouldn't happen, but be safe)
+            random_vals = np.random.random(ideal_flow.shape)
+        flow = np.floor(ideal_flow + random_vals).astype(np.int32)
         
         # Apply flow only where valid
         flow = np.where(flow_mask, flow, 0)

@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Tuple, Optional, List
 
 import pygame
+import numpy as np
 
 from world.terrain import BIOME_TYPES
 from render.primitives import draw_text
@@ -177,44 +178,96 @@ def render_water_overlay(
     scaled_cell_size: int,
 ) -> None:
     """
-    Render water as a single semi-transparent overlay for performance.
-    This avoids thousands of small blit calls per frame.
+    Render water using fully vectorized operations for maximum performance.
+    Uses numpy array operations to avoid Python loops.
     """
     sub_size = max(1, scaled_cell_size)
     start_x, start_y, end_x, end_y = camera.get_visible_cell_range()
 
-    # Create a single overlay surface for the entire viewport.
-    water_overlay = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
+    # Get visible water region as a single slice
+    water_region = state.water_grid[start_x:end_x, start_y:end_y]
 
-    for sy in range(start_y, end_y):
-        for sx in range(start_x, end_x):
-            # Grid-aware water rendering
-            water = state.water_grid[sx, sy]
+    # Quick check if there's any water to render
+    if np.max(water_region) <= 2:
+        return
 
-            if water <= 2:
-                continue
+    # Create RGBA array at grid resolution (rows, cols, 4 channels)
+    grid_shape = water_region.shape
+    rgba_grid = np.zeros((*grid_shape, 4), dtype=np.uint8)
 
-            # Determine color and alpha based on water depth
-            if water <= 20:
-                alpha = 40 + (water * 3)
-                color = (100, 180, 230)
-            elif water <= 50:
-                alpha = 100 + ((water - 20) * 2)
-                color = (60, 140, 210)
-            else:
-                alpha = min(200, 160 + (water - 50))
-                color = (40, 100, 180)
+    # Vectorized water depth classification
+    has_water = water_region > 2
+    shallow = has_water & (water_region <= 20)
+    medium = (water_region > 20) & (water_region <= 50)
+    deep = water_region > 50
 
-            # Get grid cell screen position
-            world_x, world_y = camera.cell_to_world(sx, sy)
-            vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
-            rect = pygame.Rect(int(vp_x), int(vp_y), sub_size, sub_size)
+    # Vectorized color assignment
+    rgba_grid[shallow, :3] = [100, 180, 230]
+    rgba_grid[medium, :3] = [60, 140, 210]
+    rgba_grid[deep, :3] = [40, 100, 180]
 
-            # Draw the water rectangle directly onto the single overlay surface
-            pygame.draw.rect(water_overlay, (*color, alpha), rect)
+    # Vectorized alpha calculation with proper clipping
+    rgba_grid[shallow, 3] = np.clip(40 + water_region[shallow] * 3, 0, 255).astype(np.uint8)
+    rgba_grid[medium, 3] = np.clip(100 + (water_region[medium] - 20) * 2, 0, 255).astype(np.uint8)
+    rgba_grid[deep, 3] = np.clip(160 + (water_region[deep] - 50), 0, 200).astype(np.uint8)
 
-    # Blit the entire water overlay onto the main surface once.
-    surface.blit(water_overlay, (0, 0))
+    # Scale up to pixel resolution by repeating each cell
+    # water_region has shape (x_range, y_range) because water_grid is indexed [x, y]
+    # After repeating, we get (x_range * sub_size, y_range * sub_size, 4)
+    if sub_size > 1:
+        pixel_array = rgba_grid.repeat(sub_size, axis=0).repeat(sub_size, axis=1)
+    else:
+        pixel_array = rgba_grid
+
+    # pixel_array shape is (x_pixels, y_pixels, 4) = (width, height, 4)
+    # pygame.image.frombuffer expects data in row-major order (height, width)
+    # So transpose from (width, height, channels) to (height, width, channels)
+    pixel_array_hwc = np.transpose(pixel_array, (1, 0, 2))
+
+    try:
+        # Create surface from array and blit - this is much faster than individual draw calls
+        # frombuffer expects size as (width, height)
+        width_pixels = pixel_array.shape[0]
+        height_pixels = pixel_array.shape[1]
+
+        water_surface = pygame.image.frombuffer(
+            pixel_array_hwc.tobytes(),
+            (width_pixels, height_pixels),
+            'RGBA'
+        )
+
+        # Calculate viewport position of the first visible cell to handle sub-pixel camera positions
+        world_x, world_y = camera.cell_to_world(start_x, start_y)
+        vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
+
+        # Blit at the correct offset to prevent jittering when camera moves
+        surface.blit(water_surface, (int(vp_x), int(vp_y)))
+    except (ValueError, pygame.error) as e:
+        # Fallback to rect-based rendering if buffer creation fails
+        import sys
+        print(f"Vectorized water rendering failed, using fallback: {e}", file=sys.stderr)
+        water_overlay = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
+        for sy in range(start_y, end_y):
+            for sx in range(start_x, end_x):
+                water = state.water_grid[sx, sy]
+                if water <= 2:
+                    continue
+
+                if water <= 20:
+                    alpha = 40 + (water * 3)
+                    color = (100, 180, 230)
+                elif water <= 50:
+                    alpha = 100 + ((water - 20) * 2)
+                    color = (60, 140, 210)
+                else:
+                    alpha = min(200, 160 + (water - 50))
+                    color = (40, 100, 180)
+
+                world_x, world_y = camera.cell_to_world(sx, sy)
+                vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
+                rect = pygame.Rect(int(vp_x), int(vp_y), sub_size, sub_size)
+                pygame.draw.rect(water_overlay, (*color, alpha), rect)
+        surface.blit(water_overlay, (0, 0))
 
 
 def render_static_background(state: "GameState", font) -> pygame.Surface:

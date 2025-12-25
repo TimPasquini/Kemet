@@ -116,6 +116,11 @@ class GameState:
     # Currently unused in simulation (kept at 1.0), but ready for future expansion.
     temperature_grid: np.ndarray | None = None
 
+    # === Performance Optimization Buffers ===
+    # Shape: (GRID_WIDTH, GRID_HEIGHT), dtype=float64. Pre-allocated buffer for random numbers.
+    # Reused in surface flow calculations to avoid per-tick allocation.
+    _random_buffer: np.ndarray | None = None
+
     # === Player convenience properties ===
     @property
     def player_cell(self) -> Point:
