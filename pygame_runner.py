@@ -70,8 +70,9 @@ from render.config import (
     TOOLBAR_HEIGHT,
     FONT_SIZE,
     COLOR_BG_DARK,
-    TILE_SIZE,
-    SUB_TILE_SIZE,
+    CELL_SIZE,
+    TILE_SIZE,  # DEPRECATED
+    SUB_TILE_SIZE,  # DEPRECATED
 )
 from render import (
     render_map_viewport,
@@ -154,13 +155,13 @@ def update_dirty_background(
     if not state.dirty_cells:
         return background_surface
 
-    # Redraw only the dirty sub-squares
+    # Redraw only the dirty cells
     for sub_x, sub_y in state.dirty_cells:
         rect = pygame.Rect(
-            sub_x * SUB_TILE_SIZE,
-            sub_y * SUB_TILE_SIZE,
-            SUB_TILE_SIZE,
-            SUB_TILE_SIZE
+            sub_x * CELL_SIZE,
+            sub_y * CELL_SIZE,
+            CELL_SIZE,
+            CELL_SIZE
         )
         redraw_background_rect(background_surface, state, font, rect)
 
@@ -172,7 +173,7 @@ def render_to_virtual_screen(
     font,
     state: GameState,
     camera: Camera,
-    tile_size: int,
+    cell_size: int,
     elevation_range: Tuple[float, float],
     player_world_pos: Tuple[float, float],
     toolbar: Toolbar,
@@ -186,28 +187,27 @@ def render_to_virtual_screen(
 
     # 1. Render map viewport (terrain, structures, features)
     # map_surface is now passed in and reused to avoid per-frame allocation
-    # We pass the scaled cell grouping size to the renderer so it draws at the correct zoom level
-    scaled_tile_size = int(tile_size * camera.zoom)
-    scaled_sub_tile_size = int(scaled_tile_size / 3)
+    # We pass the scaled cell size to the renderer so it draws at the correct zoom level
+    scaled_cell_size = int(cell_size * camera.zoom)
     
     # Ensure map surface is large enough for the viewport
     if map_surface is None or map_surface.get_width() != camera.viewport_width or map_surface.get_height() != camera.viewport_height:
         # This shouldn't happen often if camera viewport is fixed to layout
         map_surface = pygame.Surface((camera.viewport_width, camera.viewport_height))
 
-    render_map_viewport(map_surface, font, state, camera, scaled_tile_size, elevation_range, background_surface)
+    render_map_viewport(map_surface, font, state, camera, scaled_cell_size, elevation_range, background_surface)
 
     # Render interaction highlights (before player, after terrain)
     render_interaction_highlights(
         map_surface,
         camera,
-        state.player_state.position,  # Sub-grid coordinates
+        state.player_state.position,  # Grid cell coordinates
         ui_state,
         toolbar.get_selected_tool(),
-        scaled_sub_tile_size,
+        scaled_cell_size,
     )
 
-    render_player(map_surface, state, camera, player_world_pos, scaled_tile_size)
+    render_player(map_surface, state, camera, player_world_pos, scaled_cell_size)
     render_night_overlay(map_surface, state.heat)
 
     # Blit map surface directly (sizes match)
@@ -308,7 +308,7 @@ def issue(state: GameState, cmd: str, args: List[str], target_cell: Optional[Tup
     state.start_action(cmd)
 
 
-def run(tile_size: int = TILE_SIZE) -> None:
+def run(cell_size: int = CELL_SIZE) -> None:
     """Main game loop."""
     pygame.init()
 
@@ -335,7 +335,7 @@ def run(tile_size: int = TILE_SIZE) -> None:
 
     # Create camera - viewport sized to fit map area in layout
     camera = Camera()
-    camera.set_world_bounds(GRID_WIDTH, GRID_HEIGHT, tile_size)
+    camera.set_world_bounds(GRID_WIDTH, GRID_HEIGHT, cell_size)
     camera.set_viewport_size(ui_state.map_rect.width, ui_state.map_rect.height)
 
     # Pre-allocate map surface to avoid per-frame allocation (~1-2MB saved per frame)
@@ -345,12 +345,12 @@ def run(tile_size: int = TILE_SIZE) -> None:
     world_sub_width = GRID_WIDTH
     world_sub_height = GRID_HEIGHT
 
-    # Movement speed in sub-squares per second (not pixels)
-    move_speed_subsquares = MOVE_SPEED / SUB_TILE_SIZE
+    # Movement speed in cells per second (not pixels)
+    move_speed_cells = MOVE_SPEED / CELL_SIZE
 
     # Center camera on player
-    player_px = state.player_state.smooth_x * SUB_TILE_SIZE
-    player_py = state.player_state.smooth_y * SUB_TILE_SIZE
+    player_px = state.player_state.smooth_x * CELL_SIZE
+    player_py = state.player_state.smooth_y * CELL_SIZE
     camera.center_on(player_px, player_py)
     show_help = False
     # elevation_range is now cached on state and retrieved via get_elevation_range()
@@ -509,7 +509,7 @@ def run(tile_size: int = TILE_SIZE) -> None:
             from config import RUN_SPEED_MULTIPLIER
             from keybindings import RUN_KEY
             speed_multiplier = RUN_SPEED_MULTIPLIER if keys[RUN_KEY] else 1.0
-            current_speed = move_speed_subsquares * speed_multiplier
+            current_speed = move_speed_cells * speed_multiplier
 
             vx = vy = 0.0
             if keys[pygame.K_w]:
@@ -527,8 +527,8 @@ def run(tile_size: int = TILE_SIZE) -> None:
             )
 
         # Camera follows player (get pixel position from player state)
-        player_px = state.player_state.smooth_x * SUB_TILE_SIZE
-        player_py = state.player_state.smooth_y * SUB_TILE_SIZE
+        player_px = state.player_state.smooth_x * CELL_SIZE
+        player_py = state.player_state.smooth_y * CELL_SIZE
         camera.follow(player_px, player_py)
 
         # Update cursor tracking when mouse moves OR when player moves
@@ -565,7 +565,7 @@ def run(tile_size: int = TILE_SIZE) -> None:
 
         # Render to virtual screen
         map_surface = render_to_virtual_screen(
-            virtual_screen, font, state, camera, tile_size, state.get_elevation_range(),
+            virtual_screen, font, state, camera, cell_size, state.get_elevation_range(),
             (player_px, player_py),
             toolbar, ui_state, show_help, background_surface, map_surface
         )

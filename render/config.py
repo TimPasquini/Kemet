@@ -11,9 +11,11 @@ from typing import Dict, Tuple
 # UI LAYOUT & DIMENSIONS
 # =============================================================================
 # Grid cells are the fundamental spatial unit (48px each, 180×135 grid)
-# TILE_SIZE kept for compatibility (represents legacy 3×3 grouping size)
-SUB_TILE_SIZE = 48                        # Grid cell size in pixels
-TILE_SIZE = SUB_TILE_SIZE * 3             # Legacy tile size (144px) - kept for compatibility
+CELL_SIZE = 48                            # Grid cell size in pixels
+
+# Legacy constants - to be removed
+SUB_TILE_SIZE = CELL_SIZE                 # DEPRECATED: Use CELL_SIZE instead
+TILE_SIZE = CELL_SIZE * 3                 # DEPRECATED: Tile abstraction removed
 
 VIRTUAL_WIDTH = 1280
 VIRTUAL_HEIGHT = 720

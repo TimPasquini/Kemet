@@ -16,14 +16,11 @@ def render_player(
     state: "GameState",
     camera: "Camera",
     player_world_pos: Tuple[float, float],
-    scaled_tile_size: int
+    scaled_cell_size: int
 ) -> None:
     """Render the player character."""
     px, py = player_world_pos
     vx, vy = camera.world_to_viewport(px, py)
-    
-    # Calculate grid cell size in pixels at current zoom
-    scaled_cell_size = scaled_tile_size / 3
 
     # Player radius is roughly half a grid cell (diameter = cell size)
     # We clamp it to a minimum of 2 pixels so it doesn't disappear at high zoom out
@@ -34,8 +31,8 @@ def render_player(
 
     # Draw action timer bar if busy
     if state.is_busy():
-        bar_width = max(10, int(scaled_sub_tile_size))
-        bar_height = max(2, int(scaled_sub_tile_size / 6))
+        bar_width = max(10, int(scaled_cell_size))
+        bar_height = max(2, int(scaled_cell_size / 6))
         
         bar_x = int(vx - bar_width / 2)
         bar_y = int(vy - radius - bar_height - 4)

@@ -25,8 +25,7 @@ from render.config import (
     TRENCH_INSET,
     WELLSPRING_RADIUS,
     PLAYER_RADIUS,
-    SUB_TILE_SIZE,
-    TILE_SIZE,
+    CELL_SIZE,
     COLOR_BG_DARK,
     COLOR_STRUCTURE,
     COLOR_WELLSPRING_STRONG,
@@ -71,7 +70,7 @@ def render_map_viewport(
     font,
     state: "GameState",
     camera: "Camera",
-    tile_size: int,
+    scaled_cell_size: int,
     elevation_range: Tuple[float, float],
     background_surface: pygame.Surface = None,
 ) -> None:
@@ -84,7 +83,7 @@ def render_map_viewport(
         font: Font for text rendering
         state: Game state with grid data and structures
         camera: Camera defining visible region
-        tile_size: Size of grid cell grouping in pixels (legacy parameter)
+        scaled_cell_size: Size of grid cell in pixels at current zoom
         elevation_range: (min, max) elevation for color scaling
         background_surface: Pre-rendered static terrain (optional, falls back to per-frame render)
     """
@@ -109,12 +108,12 @@ def render_map_viewport(
             surface.blit(scaled_bg, (0, 0))
     else:
         # Fallback: render terrain per-frame (slower but works without background cache)
-        _render_terrain_per_frame(surface, state, camera, tile_size, elevation_range)
+        _render_terrain_per_frame(surface, state, camera, scaled_cell_size, elevation_range)
 
     # --- 2. Draw dynamic elements on top of the background ---
     # Draw structures (keyed by grid cell coords, rendered at grid cell position)
-    # Use SUB_TILE_SIZE directly to match background scaling
-    scaled_sub_size = max(1, int(SUB_TILE_SIZE * camera.zoom))
+    # Use CELL_SIZE directly to match background scaling
+    scaled_sub_size = max(1, scaled_cell_size)
     for (sub_x, sub_y), structure in state.structures.items():
         # Check if grid cell is visible
         if not camera.is_subsquare_visible(sub_x, sub_y):
@@ -145,20 +144,19 @@ def render_map_viewport(
                 radius = max(2, int(WELLSPRING_RADIUS * camera.zoom))
                 pygame.draw.circle(surface, spring_color, (cell_center_x, cell_center_y), radius)
 
-    # Render sub-grid water overlay (dynamic, so drawn on top of static background)
-    render_subgrid_water(surface, state, camera, tile_size)
+    # Render water overlay (dynamic, so drawn on top of static background)
+    render_water_overlay(surface, state, camera, scaled_cell_size)
 
 
 def _render_terrain_per_frame(
     surface: pygame.Surface,
     state: "GameState",
     camera: "Camera",
-    tile_size: int,
+    scaled_cell_size: int,
     elevation_range: Tuple[float, float],
 ) -> None:
     """Fallback terrain rendering - renders each visible grid cell per frame."""
     start_x, start_y, end_x, end_y = camera.get_visible_subsquare_range()
-    scaled_sub_tile_size = max(1, int((TILE_SIZE / 3) * camera.zoom))
 
     for sub_y in range(start_y, end_y):
         for sub_x in range(start_x, end_x):
@@ -168,21 +166,21 @@ def _render_terrain_per_frame(
             world_x, world_y = camera.subsquare_to_world(sub_x, sub_y)
             vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
 
-            rect = pygame.Rect(int(vp_x), int(vp_y), scaled_sub_tile_size, scaled_sub_tile_size)
+            rect = pygame.Rect(int(vp_x), int(vp_y), scaled_cell_size, scaled_cell_size)
             pygame.draw.rect(surface, color, rect)
 
 
-def render_subgrid_water(
+def render_water_overlay(
     surface: pygame.Surface,
     state: "GameState",
     camera: "Camera",
-    tile_size: int,
+    scaled_cell_size: int,
 ) -> None:
     """
     Render water as a single semi-transparent overlay for performance.
     This avoids thousands of small blit calls per frame.
     """
-    sub_size = max(1, tile_size // 3)
+    sub_size = max(1, scaled_cell_size)
     start_x, start_y, end_x, end_y = camera.get_visible_subsquare_range()
 
     # Create a single overlay surface for the entire viewport.
@@ -226,8 +224,8 @@ def render_static_background(state: "GameState", font) -> pygame.Surface:
 
     Renders all 180×135 grid cells with their biome colors and trench borders.
     """
-    world_pixel_width = GRID_WIDTH * SUB_TILE_SIZE
-    world_pixel_height = GRID_HEIGHT * SUB_TILE_SIZE
+    world_pixel_width = GRID_WIDTH * CELL_SIZE
+    world_pixel_height = GRID_HEIGHT * CELL_SIZE
     background_surface = pygame.Surface((world_pixel_width, world_pixel_height))
     background_surface.fill(COLOR_BG_DARK)
 
@@ -241,9 +239,9 @@ def render_static_background(state: "GameState", font) -> pygame.Surface:
             color = get_grid_cell_color(state, sx, sy, elevation_range)
 
             # Position on the large background surface
-            px = sx * SUB_TILE_SIZE
-            py = sy * SUB_TILE_SIZE
-            rect = pygame.Rect(px, py, SUB_TILE_SIZE, SUB_TILE_SIZE)
+            px = sx * CELL_SIZE
+            py = sy * CELL_SIZE
+            rect = pygame.Rect(px, py, CELL_SIZE, CELL_SIZE)
             pygame.draw.rect(background_surface, color, rect)
 
             # Draw trench border from the global grid
@@ -255,8 +253,8 @@ def render_static_background(state: "GameState", font) -> pygame.Surface:
 
 def redraw_background_rect(background_surface: pygame.Surface, state: "GameState", font, rect: pygame.Rect) -> None:
     """Redraw a single grid cell onto the cached background surface."""
-    sx = rect.x // SUB_TILE_SIZE
-    sy = rect.y // SUB_TILE_SIZE
+    sx = rect.x // CELL_SIZE
+    sy = rect.y // CELL_SIZE
 
     # Bounds check
     if not (0 <= sx < GRID_WIDTH and 0 <= sy < GRID_HEIGHT):
@@ -357,14 +355,14 @@ def render_interaction_highlights(
     player_pos: Tuple[int, int],
     ui_state: "UIState",
     tool: Optional["Tool"],
-    scaled_sub_tile_size: int,
+    scaled_cell_size: int,
 ) -> None:
     """Render interaction range indicator and target highlight."""
     target_cell = ui_state.target_cell
     if target_cell is None:
         return
 
-    sub_size = scaled_sub_tile_size
+    sub_size = scaled_cell_size
 
     # Check if this is a trench tool
     is_trench = tool and tool.get_current_option() and tool.get_current_option().id in ["trench_flat", "slope_down", "slope_up"]
