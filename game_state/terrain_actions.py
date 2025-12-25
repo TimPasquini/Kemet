@@ -313,7 +313,7 @@ def _dig_trench_slope_down_impl(state: GameState, sx: int, sy: int,
     state.dirty_cells.add((sx, sy))
     state.terrain_changed = True
     state.invalidate_elevation_range()
-    _invalidate_tile_appearance(state, sx, sy)
+    _invalidate_cell_appearance(state, sx, sy)
 
     state.messages.append(f"Slope (Down): gradient origin>sel>exit created.")
 
@@ -371,7 +371,7 @@ def _dig_trench_slope_up_impl(state: GameState, sx: int, sy: int,
     state.dirty_cells.add((sx, sy))
     state.terrain_changed = True
     state.invalidate_elevation_range()
-    _invalidate_tile_appearance(state, sx, sy)
+    _invalidate_cell_appearance(state, sx, sy)
 
     state.messages.append(f"Slope (Up): gradient origin<sel<exit, moved {units_to_meters(material_from_target):.1f}m.")
 
@@ -419,9 +419,9 @@ def _distribute_to_sides(state: GameState, material_pool: int, left_pos, right_p
         state.dirty_cells.add(right_pos)
 
 
-def _invalidate_tile_appearance(state: GameState, sx: int, sy: int) -> None:
+def _invalidate_cell_appearance(state: GameState, sx: int, sy: int) -> None:
     """Helper to invalidate cell appearance cache (currently unused)."""
-    # This function is currently a no-op; tile appearance caching was removed
+    # This function is currently a no-op; appearance caching was removed
     pass
 
 

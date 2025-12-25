@@ -3,7 +3,7 @@
 Pygame-CE frontend for the Kemet prototype.
 
 Architecture:
-- World space: tile/pixel coordinates in the game world (can be larger than screen)
+- World space: pixel coordinates in the game world (8640×6480px = 180×135 cells × 48px)
 - Virtual screen space: fixed 1280x720 UI layout surface
 - Screen space: actual window pixels (scales with resize)
 
@@ -31,9 +31,8 @@ try:
 except ImportError as exc:
     raise SystemExit("pygame-ce is required. Install with: pip install pygame-ce") from exc
 
+from game_state import GameState, build_initial_state
 from main import (
-    GameState,
-    build_initial_state,
     handle_command,
     simulate_tick,
     end_day,
@@ -154,10 +153,10 @@ def update_dirty_background(
         return background_surface
 
     # Redraw only the dirty cells
-    for sub_x, sub_y in state.dirty_cells:
+    for grid_x, grid_y in state.dirty_cells:
         rect = pygame.Rect(
-            sub_x * CELL_SIZE,
-            sub_y * CELL_SIZE,
+            grid_x * CELL_SIZE,
+            grid_y * CELL_SIZE,
             CELL_SIZE,
             CELL_SIZE
         )
@@ -287,7 +286,7 @@ def issue(state: GameState, cmd: str, args: List[str], target_cell: Optional[Tup
         state: Game state
         cmd: Command to execute
         args: Command arguments
-        target_cell: Target position in sub-grid coords (or None for player position)
+        target_cell: Target position in grid cell coords (or None for player position)
     """
     if state.is_busy():
         return
@@ -340,8 +339,8 @@ def run(cell_size: int = CELL_SIZE) -> None:
     map_surface = pygame.Surface((camera.viewport_width, camera.viewport_height))
 
     # World dimensions in grid cells (for movement bounds and cursor clamping)
-    world_sub_width = GRID_WIDTH
-    world_sub_height = GRID_HEIGHT
+    world_width_cells = GRID_WIDTH
+    world_height_cells = GRID_HEIGHT
 
     # Movement speed in cells per second (not pixels)
     move_speed_cells = MOVE_SPEED / CELL_SIZE
@@ -521,7 +520,7 @@ def run(cell_size: int = CELL_SIZE) -> None:
 
             update_player_movement(
                 state.player_state, (vx, vy), dt,
-                world_sub_width, world_sub_height, state.is_cell_blocked
+                world_width_cells, world_height_cells, state.is_cell_blocked
             )
 
         # Camera follows player (get pixel position from player state)

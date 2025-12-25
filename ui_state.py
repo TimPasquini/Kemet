@@ -3,7 +3,7 @@
 UI state management for pygame frontend.
 
 Tracks layout regions, scroll positions, hover states, click regions,
-and cursor/target tracking for the sub-grid interaction system.
+and cursor/target tracking for the grid cell interaction system.
 Keeps UI state separate from game state.
 """
 from __future__ import annotations
@@ -199,8 +199,8 @@ class UIState:
             state: The main game state for checking validity
             tool: The currently selected tool
         """
-        world_sub_width = GRID_WIDTH
-        world_sub_height = GRID_HEIGHT
+        world_width_cells = GRID_WIDTH
+        world_height_cells = GRID_HEIGHT
         player_pos = state.player_state.position
 
         # Check if mouse is over the map viewport
@@ -225,11 +225,11 @@ class UIState:
         world_x, world_y = camera.viewport_to_world(viewport_x, viewport_y)
 
         # Convert world position to grid coordinates
-        self.hovered_cell = camera.world_to_subsquare(world_x, world_y)
+        self.hovered_cell = camera.world_to_cell(world_x, world_y)
 
         # Clamp to world bounds
         self.hovered_cell = clamp_to_bounds(
-            self.hovered_cell, world_sub_width, world_sub_height
+            self.hovered_cell, world_width_cells, world_height_cells
         )
 
         # Clamp to interaction range of player
@@ -239,7 +239,7 @@ class UIState:
 
         # Final bounds check on target
         self.target_cell = clamp_to_bounds(
-            self.target_cell, world_sub_width, world_sub_height
+            self.target_cell, world_width_cells, world_height_cells
         )
 
         # Check if the determined target is valid for the current tool

@@ -2,7 +2,7 @@
 """Grid-based surface water flow simulation.
 
 Water flows between grid cells based on elevation differences.
-Flow crosses tile boundaries seamlessly - grid cells are independent units.
+Grid cells are independent units - water flows freely across all cell boundaries.
 
 Key concepts:
 - Each grid cell has its own surface_water amount in water_grid

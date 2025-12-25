@@ -12,7 +12,7 @@ import numpy as np
 from world.terrain import SoilLayer, units_to_meters
 
 if TYPE_CHECKING:
-    from main import GameState
+    from game_state import GameState
 
 def get_grid_elevation(state: "GameState", sx: int, sy: int) -> int:
     """Get absolute elevation of a grid cell in depth units from arrays.
@@ -127,5 +127,3 @@ def get_cell_neighborhood_total_water(state: "GameState", sx: int, sy: int) -> i
     surface = get_cell_neighborhood_surface_water(state, sx, sy)
     subsurface = get_cell_neighborhood_subsurface_water(state, sx, sy)
     return surface + subsurface
-
-

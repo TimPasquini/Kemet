@@ -114,27 +114,27 @@ def render_map_viewport(
     # Draw structures (keyed by grid cell coords, rendered at grid cell position)
     # Use CELL_SIZE directly to match background scaling
     scaled_sub_size = max(1, scaled_cell_size)
-    for (sub_x, sub_y), structure in state.structures.items():
+    for (grid_x, grid_y), structure in state.structures.items():
         # Check if grid cell is visible
-        if not camera.is_subsquare_visible(sub_x, sub_y):
+        if not camera.is_cell_visible(grid_x, grid_y):
             continue
-        # Get world position for sub-square using camera method
-        world_x, world_y = camera.subsquare_to_world(sub_x, sub_y)
+        # Get world position for grid cell using camera method
+        world_x, world_y = camera.cell_to_world(grid_x, grid_y)
         vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
         rect = pygame.Rect(int(vp_x), int(vp_y), scaled_sub_size, scaled_sub_size)
         pygame.draw.rect(surface, COLOR_STRUCTURE, rect.inflate(-2, -2))
-        # Draw structure initial centered in sub-square
+        # Draw structure initial centered in grid cell
         if scaled_sub_size >= 8:  # Only draw letter if big enough
             draw_text(surface, font, structure.kind[0].upper(), (rect.x + scaled_sub_size // 3, rect.y + scaled_sub_size // 4))
 
     # Draw wellsprings - check all visible grid cells
-    start_sx, start_sy, end_sx, end_sy = camera.get_visible_subsquare_range()
+    start_sx, start_sy, end_sx, end_sy = camera.get_visible_cell_range()
     for sy in range(start_sy, end_sy):
         for sx in range(start_sx, end_sx):
             wellspring_output = state.wellspring_grid[sx, sy] if state.wellspring_grid is not None else 0
             if wellspring_output > 0:
                 # Get grid cell screen position
-                world_x, world_y = camera.subsquare_to_world(sx, sy)
+                world_x, world_y = camera.cell_to_world(sx, sy)
                 vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
 
                 # Draw wellspring circle at cell center
@@ -156,14 +156,14 @@ def _render_terrain_per_frame(
     elevation_range: Tuple[float, float],
 ) -> None:
     """Fallback terrain rendering - renders each visible grid cell per frame."""
-    start_x, start_y, end_x, end_y = camera.get_visible_subsquare_range()
+    start_x, start_y, end_x, end_y = camera.get_visible_cell_range()
 
     for sub_y in range(start_y, end_y):
         for sub_x in range(start_x, end_x):
             # Grid-aware color computation (no SubSquare access needed)
             color = get_grid_cell_color(state, sub_x, sub_y, elevation_range)
 
-            world_x, world_y = camera.subsquare_to_world(sub_x, sub_y)
+            world_x, world_y = camera.cell_to_world(sub_x, sub_y)
             vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
 
             rect = pygame.Rect(int(vp_x), int(vp_y), scaled_cell_size, scaled_cell_size)
@@ -181,14 +181,14 @@ def render_water_overlay(
     This avoids thousands of small blit calls per frame.
     """
     sub_size = max(1, scaled_cell_size)
-    start_x, start_y, end_x, end_y = camera.get_visible_subsquare_range()
+    start_x, start_y, end_x, end_y = camera.get_visible_cell_range()
 
     # Create a single overlay surface for the entire viewport.
     water_overlay = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
 
     for sub_y in range(start_y, end_y):
         for sub_x in range(start_x, end_x):
-            # Grid-aware water rendering (no tile access needed)
+            # Grid-aware water rendering
             water = state.water_grid[sub_x, sub_y]
 
             if water <= 2:
@@ -205,8 +205,8 @@ def render_water_overlay(
                 alpha = min(200, 160 + (water - 50))
                 color = (40, 100, 180)
 
-            # Get sub-square screen position
-            world_x, world_y = camera.subsquare_to_world(sub_x, sub_y)
+            # Get grid cell screen position
+            world_x, world_y = camera.cell_to_world(sub_x, sub_y)
             vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
             rect = pygame.Rect(int(vp_x), int(vp_y), sub_size, sub_size)
 
@@ -383,7 +383,7 @@ def render_interaction_highlights(
         for pos, color, alpha in highlights:
             if pos is None:
                 continue
-            world_x, world_y = camera.subsquare_to_world(pos[0], pos[1])
+            world_x, world_y = camera.cell_to_world(pos[0], pos[1])
             vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
 
             if sub_size > 0:
@@ -397,7 +397,7 @@ def render_interaction_highlights(
     else:
         # Standard single-square highlight for non-trench tools
         color = get_tool_highlight_color(tool, ui_state.is_valid_target)
-        world_x, world_y = camera.subsquare_to_world(target_cell[0], target_cell[1])
+        world_x, world_y = camera.cell_to_world(target_cell[0], target_cell[1])
         vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
         rect = pygame.Rect(int(vp_x), int(vp_y), sub_size, sub_size)
 

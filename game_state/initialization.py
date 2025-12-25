@@ -58,7 +58,7 @@ def build_initial_state() -> GameState:
     start_cell = (GRID_WIDTH // 2, GRID_HEIGHT // 2)
 
     # Update grids for depot location - create good starting terrain in 3x3 area around start
-    depot_terrain = create_default_terrain(elevation_to_units(-2.0), elevation_to_units(1.0))
+    depot_terrain_props = create_default_terrain(elevation_to_units(-2.0), elevation_to_units(1.0))
     for dx in range(-1, 2):
         for dy in range(-1, 2):
             sx = start_cell[0] + dx
@@ -66,10 +66,10 @@ def build_initial_state() -> GameState:
             if 0 <= sx < GRID_WIDTH and 0 <= sy < GRID_HEIGHT:
                 kind_grid[sx, sy] = "flat"
                 wellspring_grid[sx, sy] = 0
-                bedrock_base[sx, sy] = depot_terrain.bedrock_base
+                bedrock_base[sx, sy] = depot_terrain_props["bedrock_base"]
                 for layer in SoilLayer:
-                    terrain_layers[layer, sx, sy] = depot_terrain.get_layer_depth(layer)
-                    terrain_materials[layer, sx, sy] = depot_terrain.get_layer_material(layer)
+                    terrain_layers[layer, sx, sy] = depot_terrain_props["depths"][layer]
+                    terrain_materials[layer, sx, sy] = depot_terrain_props["materials"][layer]
 
     # Initialize player at starting cell
     player_state = PlayerState()

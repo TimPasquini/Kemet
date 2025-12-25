@@ -8,7 +8,7 @@ Defines structure types, costs, and behavior:
 - Condenser: Generates water from air
 - Planter: Grows biomass when watered
 
-All structures operate on grid coordinates (sx, sy for grid cells, tx, ty for tile coords).
+All structures operate on grid cell coordinates (sx, sy).
 """
 from __future__ import annotations
 from abc import ABC, abstractmethod
@@ -166,7 +166,7 @@ class Planter(Structure):
 
 
 def build_structure(state: "GameState", kind: str) -> None:
-    """Build a structure at target sub-square."""
+    """Build a structure at target grid cell."""
     
     kind = kind.lower()
     if kind not in STRUCTURE_COSTS:

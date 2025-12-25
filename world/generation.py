@@ -45,12 +45,12 @@ def generate_grids_direct(grid_width: int, grid_height: int) -> Dict:
     """
     Generate map data directly as NumPy arrays (array-first approach).
 
-    Creates a varied desert landscape at grid resolution without intermediate
-    Tile objects. Uses WFC-style biome generation for natural clustering.
+    Creates a varied desert landscape at grid resolution.
+    Uses WFC-style biome generation for natural clustering.
 
     Args:
-        grid_width: Grid width (e.g., 180 for 60 tiles × 3)
-        grid_height: Grid height (e.g., 135 for 45 tiles × 3)
+        grid_width: Grid width (e.g., 180)
+        grid_height: Grid height (e.g., 135)
 
     Returns:
         Dictionary with all grid arrays:
@@ -60,7 +60,7 @@ def generate_grids_direct(grid_width: int, grid_height: int) -> Dict:
             - bedrock_base: (grid_w, grid_h) bedrock elevation baseline
             - wellspring_grid: (grid_w, grid_h) wellspring output per cell
             - water_grid: (grid_w, grid_h) surface water
-            - kind_grid: (grid_w, grid_h) biome type (temporary, for tile compatibility)
+            - kind_grid: (grid_w, grid_h) biome type names
     """
     from world.terrain import MATERIAL_LIBRARY
 

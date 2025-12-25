@@ -3,7 +3,7 @@
 Array-based subsurface water physics with full 3D voxel-like layer adjacency.
 
 This module implements vectorized NumPy operations for subsurface water simulation
-at grid resolution (GRID_WIDTH × GRID_HEIGHT), replacing the tile-based approach.
+at grid resolution (GRID_WIDTH × GRID_HEIGHT).
 """
 from __future__ import annotations
 

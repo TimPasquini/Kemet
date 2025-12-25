@@ -8,38 +8,17 @@ Uses fixed-layer terrain and integer-based water systems.
 from __future__ import annotations
 
 import collections
-import random
-from dataclasses import dataclass, field
-from typing import Deque, Dict, List, Set, Tuple
+from typing import List, Tuple
 
 import numpy as np
 from config import GRID_WIDTH, GRID_HEIGHT
-from config import (
-    MAX_POUR_AMOUNT,
-    MIN_LAYER_THICKNESS,
-    DEPOT_WATER_AMOUNT,
-    DEPOT_SCRAP_AMOUNT,
-    DEPOT_SEEDS_AMOUNT,
-    STARTING_WATER,
-    STARTING_SCRAP,
-    STARTING_SEEDS,
-    STARTING_BIOMASS,
-    MOISTURE_EMA_ALPHA,
-    MIN_BEDROCK_ELEVATION,
-)
+from config import MOISTURE_EMA_ALPHA
 from world.terrain import (
     SoilLayer,
-    MATERIAL_LIBRARY,
-    TerrainColumn,
-    SurfaceTraits,
-    create_default_terrain,
-    elevation_to_units,
     units_to_meters,
 )
 from world.biomes import recalculate_biomes
-from player import PlayerState
 from structures import (
-    Structure, # Only the base class is needed
     build_structure,
     tick_structures,
 )
@@ -47,13 +26,11 @@ from simulation.surface import (
     simulate_surface_flow,
     simulate_surface_seepage,
 )
-from simulation.subsurface import apply_tile_evaporation
+from simulation.subsurface import apply_surface_evaporation
 from simulation.subsurface_vectorized import simulate_subsurface_tick_vectorized
 from simulation.erosion import apply_overnight_erosion, accumulate_wind_exposure
-from world.weather import WeatherSystem
-from world_state import GlobalWaterPool
-from game_state import GameState, Inventory, build_initial_state
-from game_state.terrain_actions import dig_trench, lower_ground, raise_ground, terrain_action
+from game_state import GameState
+from game_state.terrain_actions import terrain_action
 from game_state.player_actions import collect_water, pour_water
 
 Point = Tuple[int, int]
@@ -89,7 +66,7 @@ def simulate_tick(state: GameState) -> None:
     if tick % 4 == 1:
         simulate_subsurface_tick_vectorized(state)
 
-    apply_tile_evaporation(state)
+    apply_surface_evaporation(state)
 
     # Update atmosphere every 2 ticks for performance (not every tick)
     if tick % 2 == 0:
@@ -97,9 +74,6 @@ def simulate_tick(state: GameState) -> None:
         if state.humidity_grid is not None and state.wind_grid is not None:
             from simulation.atmosphere import simulate_atmosphere_tick_vectorized
             simulate_atmosphere_tick_vectorized(state)
-        # LEGACY: Fall back to old atmosphere during transition
-        elif state.atmosphere is not None:
-            simulate_atmosphere_tick(state.atmosphere, state.heat)
 
     # Accumulate wind exposure every 10 ticks
     if tick % 10 == 0:
@@ -140,43 +114,42 @@ def show_status(state: GameState) -> None:
         num_cisterns = structure_counts.get("cistern", 0)
         state.messages.append(f"Cisterns: {summaries['stored_water'] / 10:.1f}L stored across {num_cisterns} cistern(s)")
 
-def survey_tile(state: GameState) -> None:
+def survey_cell(state: GameState) -> None:
     """Survey tool - display grid cell information (array-based)."""
-    x, y = state.get_action_target_cell()
-    sub_pos = state.get_action_target_cell()
-    sx, sy = sub_pos
-    structure = state.structures.get(sub_pos)
-    surface_water = state.water_grid[sx, sy]
+    grid_pos = state.get_action_target_cell()
+    x, y = grid_pos
+    structure = state.structures.get(grid_pos)
+    surface_water = state.water_grid[x, y]
 
     # Calculate elevation from grids
     from grid_helpers import get_total_elevation
-    elev_m = get_total_elevation(state, sx, sy)
+    elev_m = get_total_elevation(state, x, y)
 
-    desc = [f"Tile {x},{y}", f"Sub {sx%3},{sy%3}", f"elev={elev_m:.2f}m",
+    desc = [f"Cell ({x},{y})", f"elev={elev_m:.2f}m",
             f"surf={surface_water / 10:.1f}L"]
 
     # Get subsurface water from grid
-    subsurface_total = int(np.sum(state.subsurface_water_grid[:, sx, sy]))
+    subsurface_total = int(np.sum(state.subsurface_water_grid[:, x, y]))
     if subsurface_total > 0:
         desc.append(f"subsrf={subsurface_total / 10:.1f}L")
 
     # Get exposed material (what the player sees on the surface)
     from grid_helpers import get_exposed_material
-    material = get_exposed_material(state, sx, sy)
+    material = get_exposed_material(state, x, y)
     desc.append(f"material={material}")
 
     # Get layer depths from terrain_layers grid
-    topsoil_depth = state.terrain_layers[SoilLayer.TOPSOIL, sx, sy]
-    organics_depth = state.terrain_layers[SoilLayer.ORGANICS, sx, sy]
+    topsoil_depth = state.terrain_layers[SoilLayer.TOPSOIL, x, y]
+    organics_depth = state.terrain_layers[SoilLayer.ORGANICS, x, y]
     desc.append(f"topsoil={units_to_meters(topsoil_depth):.1f}m")
     desc.append(f"organics={units_to_meters(organics_depth):.1f}m")
 
     # Get wellspring from wellspring_grid
-    wellspring_output = state.wellspring_grid[sx, sy]
+    wellspring_output = state.wellspring_grid[x, y]
     if wellspring_output > 0:
         desc.append(f"wellspring={wellspring_output / 10:.2f}L/t")
 
-    if state.trench_grid[sx, sy]:
+    if state.trench_grid[x, y]:
         desc.append("trench")
     if structure:
         desc.append(structure.get_survey_string())
@@ -191,7 +164,7 @@ def handle_command(state: GameState, cmd: str, args: List[str]) -> bool:
         "collect": lambda s, a: collect_water(s),
         "pour": lambda s, a: pour_water(s, float(a[0])) if a else s.messages.append("Usage: pour <liters>"),
         "status": lambda s, a: show_status(s),
-        "survey": lambda s, a: survey_tile(s),
+        "survey": lambda s, a: survey_cell(s),
         "end": lambda s, a: end_day(s),
     }
     if cmd == "quit":

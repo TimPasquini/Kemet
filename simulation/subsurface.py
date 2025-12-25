@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from main import GameState
 
 
-def apply_tile_evaporation(state: "GameState") -> None:
+def apply_surface_evaporation(state: "GameState") -> None:
     """Apply evaporation to active surface water grid cells (vectorized).
 
     Uses grid-based atmosphere (humidity_grid, wind_grid) instead of legacy

@@ -27,7 +27,7 @@ def clamp(val: float, low: float, high: float) -> float:
 
 
 # =============================================================================
-# Distance and Range Utilities (moved from subgrid.py)
+# Distance and Range Utilities (moved from grid utilities)
 # =============================================================================
 
 def chebyshev_distance(p1: Point, p2: Point) -> int:
@@ -60,7 +60,7 @@ def is_in_range(player_pos: Point, target_pos: Point,
     return chebyshev_distance(player_pos, target_pos) <= interaction_range
 
 
-def get_subsquares_in_range(center: Point, interaction_range: int,
+def get_cells_in_range(center: Point, interaction_range: int,
                             width: int, height: int) -> List[Point]:
     """Get all grid cell coords within Chebyshev distance of center.
 
@@ -119,7 +119,7 @@ def clamp_to_bounds(pos: Point, width: int, height: int) -> Point:
 
 
 # =============================================================================
-# 8-Neighbor Utilities (moved from subgrid.py)
+# 8-Neighbor Utilities (moved from grid utilities)
 # =============================================================================
 
 # 8 neighboring directions (cardinal + diagonal)

@@ -145,18 +145,17 @@ def render_hud(
     draw_text(screen, font, f"  Surface: {surface_water / 10:.1f}L", (hud_x + 10, y_offset), COLOR_TEXT_GRAY)
     y_offset += LINE_HEIGHT
 
-    if region_subsurface > 0:
-        draw_text(screen, font, f"  Ground: {region_subsurface / 10:.1f}L", (hud_x + 10, y_offset), COLOR_TEXT_GRAY)
+    if cell_subsurface > 0:
+        draw_text(screen, font, f"  Ground: {cell_subsurface / 10:.1f}L", (hud_x + 10, y_offset), COLOR_TEXT_GRAY)
         y_offset += LINE_HEIGHT
 
-    # Check if any cell in the player's region has a trench
-    if state.trench_grid is not None and np.any(state.trench_grid[gx_start:gx_start+3, gy_start:gy_start+3]):
+    # Check if this cell has a trench
+    if state.trench_grid is not None and state.trench_grid[sx, sy]:
         draw_text(screen, font, "Trench: Yes", (hud_x, y_offset), COLOR_TRENCH)
         y_offset += LINE_HEIGHT
 
-    # Check wellspring from grid (center cell of region)
-    center_sx, center_sy = gx_start + 1, gy_start + 1
-    wellspring_output = state.wellspring_grid[center_sx, center_sy] if state.wellspring_grid is not None else 0
+    # Check wellspring from grid
+    wellspring_output = state.wellspring_grid[sx, sy] if state.wellspring_grid is not None else 0
     if wellspring_output > 0:
         draw_text(screen, font, f"Wellspring: {wellspring_output / 10:.2f}L/tick", (hud_x, y_offset), COLOR_WELLSPRING_STRONG)
         y_offset += LINE_HEIGHT

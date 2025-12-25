@@ -94,7 +94,7 @@ def get_wind_exposure(
     # Higher upwind terrain provides shelter
     # 1 unit = 0.1m. A 0.5m difference (5 units) provides full shelter?
     # Original code used 5.0 (meters?) or units? 
-    # Original get_subsquare_elevation returned units.
+    # Original get_grid cell_elevation returned units.
     # So 5 units = 0.5m.
     if upwind_elev > my_elev:
         shelter = min((upwind_elev - my_elev) / 5.0, 0.8)

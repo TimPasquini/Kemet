@@ -128,20 +128,20 @@ class Camera:
     # Grid cell coordinate conversions
     # =========================================================================
 
-    def world_to_subsquare(self, world_x: float, world_y: float) -> Tuple[int, int]:
+    def world_to_cell(self, world_x: float, world_y: float) -> Tuple[int, int]:
         """Convert world pixel coordinates to grid cell coordinates."""
         return int(world_x // self.cell_size), int(world_y // self.cell_size)
 
-    def subsquare_to_world(self, sub_x: int, sub_y: int) -> Tuple[float, float]:
+    def cell_to_world(self, sub_x: int, sub_y: int) -> Tuple[float, float]:
         """Convert grid cell coordinates to world pixel coordinates (top-left of cell)."""
         return sub_x * self.cell_size, sub_y * self.cell_size
 
-    def subsquare_to_world_center(self, sub_x: int, sub_y: int) -> Tuple[float, float]:
+    def cell_to_world_center(self, sub_x: int, sub_y: int) -> Tuple[float, float]:
         """Convert grid cell coordinates to world pixel coordinates (center of cell)."""
         return sub_x * self.cell_size + self.cell_size / 2, sub_y * self.cell_size + self.cell_size / 2
 
 
-    def get_visible_subsquare_range(self) -> Tuple[int, int, int, int]:
+    def get_visible_cell_range(self) -> Tuple[int, int, int, int]:
         """
         Get the range of grid cells visible in the viewport.
 
@@ -165,9 +165,9 @@ class Camera:
 
         return start_x, start_y, end_x, end_y
 
-    def is_subsquare_visible(self, sub_x: int, sub_y: int) -> bool:
+    def is_cell_visible(self, sub_x: int, sub_y: int) -> bool:
         """Check if a grid cell is within the visible viewport."""
-        start_x, start_y, end_x, end_y = self.get_visible_subsquare_range()
+        start_x, start_y, end_x, end_y = self.get_visible_cell_range()
         return start_x <= sub_x < end_x and start_y <= sub_y < end_y
 
 
