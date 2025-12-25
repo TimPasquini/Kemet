@@ -2,11 +2,10 @@
 """
 Camera system for viewport management.
 
-Handles the transformation between four coordinate spaces:
+Handles the transformation between three coordinate spaces:
 1. World space - pixel coordinates in the game world
-2. Tile space - coarse grid coordinates (simulation level)
-3. Sub-grid space - fine grid coordinates (3x tile resolution)
-4. Viewport space - coordinates within the visible map area
+2. Grid space - grid cell coordinates (180×135 cells)
+3. Viewport space - coordinates within the visible map area
 
 The camera tracks a position in world space and defines what portion
 of the world is visible in the viewport.
@@ -37,8 +36,8 @@ class Camera:
     world_pixel_width: int = 1280
     world_pixel_height: int = 960
 
-    # Tile size for coordinate conversions
-    tile_size: int = 32
+    # Grid cell size for coordinate conversions
+    tile_size: int = 32  # Note: legacy name, represents cell_size * 3
 
     # Zoom level (1.0 = 100%, 0.5 = 50% size / 2x view area, 2.0 = 200% size)
     zoom: float = 1.0
@@ -53,7 +52,7 @@ class Camera:
         """
         self.world_pixel_width = world_width_cells * cell_size
         self.world_pixel_height = world_height_cells * cell_size
-        self.tile_size = cell_size  # Note: 'tile_size' kept for compatibility, but represents cell size
+        self.tile_size = cell_size  # Note: legacy name 'tile_size', represents cell_size * 3 grouping
 
     def set_viewport_size(self, width: int, height: int) -> None:
         """Set the viewport size in pixels."""

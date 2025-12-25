@@ -51,12 +51,12 @@ class PlayerState:
 
     @property
     def tile_position(self) -> Point:
-        """Get the tile coordinates containing the player."""
+        """Get the 3×3 region coordinates containing the player (legacy method)."""
         return (int(self.smooth_x) // 3, int(self.smooth_y // 3))
 
     @property
     def subsquare_index(self) -> Point:
-        """Get the local subsquare index (0-2, 0-2) within the current tile."""
+        """Get the local cell index (0-2, 0-2) within the current 3×3 region (legacy method)."""
         return (int(self.smooth_x) % 3, int(self.smooth_y) % 3)
 
     def start_action(self, action: str) -> bool:

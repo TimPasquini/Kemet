@@ -22,12 +22,12 @@ def render_player(
     px, py = player_world_pos
     vx, vy = camera.world_to_viewport(px, py)
     
-    # Calculate sub-tile size in pixels at current zoom
-    scaled_sub_tile_size = scaled_tile_size / 3
-    
-    # Player radius is roughly half a sub-tile (diameter = sub-tile size)
+    # Calculate grid cell size in pixels at current zoom
+    scaled_cell_size = scaled_tile_size / 3
+
+    # Player radius is roughly half a grid cell (diameter = cell size)
     # We clamp it to a minimum of 2 pixels so it doesn't disappear at high zoom out
-    radius = max(2, int(scaled_sub_tile_size / 2))
+    radius = max(2, int(scaled_cell_size / 2))
     
     pygame.draw.circle(surface, COLOR_PLAYER, (int(vx), int(vy)), radius)
     pygame.draw.circle(surface, (0, 0, 0), (int(vx), int(vy)), radius, 1)

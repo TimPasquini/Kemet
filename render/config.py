@@ -10,10 +10,10 @@ from typing import Dict, Tuple
 # =============================================================================
 # UI LAYOUT & DIMENSIONS
 # =============================================================================
-# Sub-squares are player-scale tiles (48px each)
-# Simulation tiles contain 3x3 sub-squares (144px each)
-SUB_TILE_SIZE = 48                        # Player-scale tile size in pixels
-TILE_SIZE = SUB_TILE_SIZE * 3             # 144px simulation tile (3 is in main config)
+# Grid cells are the fundamental spatial unit (48px each, 180×135 grid)
+# TILE_SIZE kept for compatibility (represents legacy 3×3 grouping size)
+SUB_TILE_SIZE = 48                        # Grid cell size in pixels
+TILE_SIZE = SUB_TILE_SIZE * 3             # Legacy tile size (144px) - kept for compatibility
 
 VIRTUAL_WIDTH = 1280
 VIRTUAL_HEIGHT = 720

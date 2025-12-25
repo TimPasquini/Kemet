@@ -388,9 +388,9 @@ def units_to_meters(units: int) -> float:
 # =============================================================================
 @dataclass
 class TileType:
-    """Simulation properties for a tile type.
+    """Simulation properties for a biome type.
 
-    Tile types define how tiles behave in simulation (evaporation, water
+    Biome types define how grid cells behave in simulation (evaporation, water
     capacity). Visual rendering is handled separately via surface_state.py
     based on terrain materials and environmental factors.
     """

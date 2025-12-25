@@ -1,5 +1,5 @@
 # render/hud.py
-"""HUD panels: environment info, tile info, inventory, soil profile."""
+"""HUD panels: environment info, cell info, inventory, soil profile."""
 from __future__ import annotations
 
 import math
@@ -57,7 +57,7 @@ def render_hud(
     hud_x: int,
     start_y: int,
 ) -> int:
-    """Render the main HUD panels (environment + current tile). Returns final y position."""
+    """Render the main HUD panels (environment + current cell). Returns final y position."""
     y_offset = start_y
 
     # Environment section

@@ -208,7 +208,7 @@ def apply_overnight_erosion(
 
     # --- Wind Erosion (Vectorized) ---
     if len(state.active_wind_tiles) > 0:
-        # Build list of all subsquares in active wind tiles
+        # Build list of all grid cells in active wind regions
         wind_coords = []
         for tile_x, tile_y in state.active_wind_tiles:
             for lx in range(3):

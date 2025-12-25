@@ -40,7 +40,7 @@ def render_minimap(
 
     for x in range(map_w_regions):
         for y in range(map_h_regions):
-            # Get center cell of tile's 3x3 grid region
+            # Get center cell of this 3×3 region for sampling
             center_sx = x * 3 + 1
             center_sy = y * 3 + 1
 
@@ -51,8 +51,7 @@ def render_minimap(
             # Darken for minimap display (make it less bright)
             color = tuple(int(c * 0.7) for c in color)
 
-            # Show water (check grids instead of tile.hydration)
-            # Sum surface + subsurface water for this tile's 3x3 grid region
+            # Show water - sum surface + subsurface water for this 3×3 region
             sx_start, sy_start = x * 3, y * 3
             sx_end, sy_end = sx_start + 3, sy_start + 3
 
@@ -63,7 +62,7 @@ def render_minimap(
             if total_water > 50:  # Threshold for showing water on minimap
                 color = (60, 100, 180)
 
-            # Show depot - check if any subsquare on this tile has a depot structure
+            # Show depot - check if any grid cell in this 3×3 region has a depot structure
             has_depot = False
             sx_base, sy_base = (x * 3, y * 3)
             for dx in range(3):

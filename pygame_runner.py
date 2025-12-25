@@ -184,9 +184,9 @@ def render_to_virtual_screen(
     """Render everything to the virtual screen at fixed resolution."""
     virtual_screen.fill(COLOR_BG_DARK)
 
-    # 1. Render map viewport (tiles, structures, features)
+    # 1. Render map viewport (terrain, structures, features)
     # map_surface is now passed in and reused to avoid per-frame allocation
-    # We pass the scaled tile size to the renderer so it draws at the correct zoom level
+    # We pass the scaled cell grouping size to the renderer so it draws at the correct zoom level
     scaled_tile_size = int(tile_size * camera.zoom)
     scaled_sub_tile_size = int(scaled_tile_size / 3)
     
@@ -197,7 +197,7 @@ def render_to_virtual_screen(
 
     render_map_viewport(map_surface, font, state, camera, scaled_tile_size, elevation_range, background_surface)
 
-    # Render interaction highlights (before player, after tiles)
+    # Render interaction highlights (before player, after terrain)
     render_interaction_highlights(
         map_surface,
         camera,
@@ -215,7 +215,7 @@ def render_to_virtual_screen(
 
     # 2. Render sidebar elements
     # Two-column layout:
-    # Left col: Text info (Env, Atmos, Tile, Inv)
+    # Left col: Text info (Env, Atmos, Cell, Inv)
     # Right col: Soil profile
     sidebar_x = ui_state.sidebar_rect.x
     y_offset = 12

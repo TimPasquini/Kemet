@@ -71,8 +71,8 @@ def simulate_tick(state: GameState) -> None:
         simulate_surface_flow(state)
 
     if tick % 2 == 1:
-        # Seepage still iterates all tiles, but is less frequent.
-        # Could be optimized further by tracking active surface water tiles.
+        # Seepage still iterates all grid cells, but is less frequent.
+        # Could be optimized further by tracking active surface water cells.
         simulate_surface_seepage(state)
         
         # Update moisture history using fully vectorized approach

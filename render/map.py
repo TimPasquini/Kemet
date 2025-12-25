@@ -1,9 +1,9 @@
 # render/map.py
-"""Map, tile, structure, and player rendering with camera support.
+"""Map, structure, and player rendering with camera support.
 
 Rendering now supports:
-- Tile-level features (biome colors, structures)
-- Sub-grid water visualization
+- Grid cell features (biome colors, structures)
+- Water visualization
 - Interaction range highlights
 """
 from __future__ import annotations
@@ -77,14 +77,14 @@ def render_map_viewport(
 ) -> None:
     """Render the visible portion of the world to the map viewport surface.
 
-    Renders at sub-square resolution - each sub-square has its own biome color.
+    Renders at grid cell resolution - each grid cell has its own biome color.
 
     Args:
         surface: Surface to render to (sized to camera viewport)
         font: Font for text rendering
-        state: Game state with tiles and structures
+        state: Game state with grid data and structures
         camera: Camera defining visible region
-        tile_size: Size of each simulation tile in pixels
+        tile_size: Size of grid cell grouping in pixels (legacy parameter)
         elevation_range: (min, max) elevation for color scaling
         background_surface: Pre-rendered static terrain (optional, falls back to per-frame render)
     """
@@ -156,7 +156,7 @@ def _render_terrain_per_frame(
     tile_size: int,
     elevation_range: Tuple[float, float],
 ) -> None:
-    """Fallback terrain rendering - renders each visible sub-square per frame (grid-aware)."""
+    """Fallback terrain rendering - renders each visible grid cell per frame."""
     start_x, start_y, end_x, end_y = camera.get_visible_subsquare_range()
     scaled_sub_tile_size = max(1, int((TILE_SIZE / 3) * camera.zoom))
 
@@ -221,8 +221,10 @@ def render_subgrid_water(
 
 def render_static_background(state: "GameState", font) -> pygame.Surface:
     """
-    Render the entire static world (terrain) to a single surface (grid-based).
+    Render the entire static world (terrain) to a single surface.
     This is a one-time operation, and the surface is cached for performance.
+
+    Renders all 180×135 grid cells with their biome colors and trench borders.
     """
     world_pixel_width = GRID_WIDTH * SUB_TILE_SIZE
     world_pixel_height = GRID_HEIGHT * SUB_TILE_SIZE
@@ -252,7 +254,7 @@ def render_static_background(state: "GameState", font) -> pygame.Surface:
 
 
 def redraw_background_rect(background_surface: pygame.Surface, state: "GameState", font, rect: pygame.Rect) -> None:
-    """Redraw a single grid cell onto the cached background surface (grid-based)."""
+    """Redraw a single grid cell onto the cached background surface."""
     sx = rect.x // SUB_TILE_SIZE
     sy = rect.y // SUB_TILE_SIZE
 
