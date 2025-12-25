@@ -21,22 +21,6 @@ def get_grid_elevation(state: "GameState", sx: int, sy: int) -> int:
     return bedrock + layers_total
 
 
-def get_tile_elevation_range(state: "GameState", tile_x: int, tile_y: int) -> Tuple[int, int]:
-    """Get min and max elevation for a tile's 3x3 grid region."""
-    sx_start = tile_x * 3
-    sy_start = tile_y * 3
-    sx_end = sx_start + 3
-    sy_end = sy_start + 3
-
-    # Calculate elevations for all 9 cells
-    elevations = []
-    for sx in range(sx_start, sx_end):
-        for sy in range(sy_start, sy_end):
-            elevations.append(get_grid_elevation(state, sx, sy))
-
-    return min(elevations), max(elevations)
-
-
 def get_exposed_material(state: "GameState", sx: int, sy: int) -> str:
     """Get the material name of the exposed (topmost) layer at a grid cell."""
     # Find topmost non-zero layer

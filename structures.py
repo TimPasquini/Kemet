@@ -29,11 +29,7 @@ from config import (
     CISTERN_LOSS_RECOVERY,
     STRUCTURE_COSTS,
 )
-from simulation.surface import (
-    get_tile_surface_water,
-    distribute_upward_seepage,
-    remove_water_proportionally,
-)
+from simulation.surface import distribute_upward_seepage
 
 if TYPE_CHECKING:
     from main import GameState, Inventory

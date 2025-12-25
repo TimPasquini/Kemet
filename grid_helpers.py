@@ -129,23 +129,3 @@ def get_cell_neighborhood_total_water(state: "GameState", sx: int, sy: int) -> i
     return surface + subsurface
 
 
-def get_tile_average_moisture(state: "GameState", tx: int, ty: int) -> float:
-    """Get average moisture for a tile from moisture grid.
-
-    Args:
-        state: Game state
-        tx, ty: Tile coordinates (0-59, 0-44)
-
-    Returns:
-        Average moisture value
-    """
-    if state.moisture_grid is None:
-        return 0.0
-
-    gx_start = tx * 3
-    gy_start = ty * 3
-    tile_moisture = state.moisture_grid[
-        gx_start:gx_start + 3,
-        gy_start:gy_start + 3
-    ]
-    return float(tile_moisture.mean())
