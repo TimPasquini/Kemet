@@ -25,81 +25,66 @@ def render_minimap(
     pygame.draw.rect(surface, (20, 20, 25), rect)
     pygame.draw.rect(surface, (60, 60, 70), rect, 1)
     
-    # Calculate scale
-    # We want to fit the whole map into the rect (aggregated in 3×3 regions for minimap)
-    map_w_regions = GRID_WIDTH // 3
-    map_h_regions = GRID_HEIGHT // 3
+    # Calculate scale - sample every 3rd grid cell for minimap display
+    # This gives us a 60×45 minimap from the 180×135 grid
+    sample_step = 3
+    minimap_w = GRID_WIDTH // sample_step
+    minimap_h = GRID_HEIGHT // sample_step
 
-    # Size of a region on the minimap
-    scale_x = rect.width / map_w_regions
-    scale_y = rect.height / map_h_regions
+    # Size of each minimap pixel
+    scale_x = rect.width / minimap_w
+    scale_y = rect.height / minimap_h
 
-    # Draw regions (aggregating 3×3 grid cells for minimap display)
-    # Get material colors from the center cell of each 3×3 region
+    # Draw minimap by sampling every 3rd grid cell
     from render.grid_helpers import get_exposed_material, APPEARANCE_TYPES, DEFAULT_COLOR
 
-    for x in range(map_w_regions):
-        for y in range(map_h_regions):
-            # Get center cell of this 3×3 region for sampling
-            center_sx = x * 3 + 1
-            center_sy = y * 3 + 1
+    for mx in range(minimap_w):
+        for my in range(minimap_h):
+            # Sample grid cell (every 3rd cell)
+            sx = mx * sample_step
+            sy = my * sample_step
 
-            # Get material-based color from grids
-            material = get_exposed_material(state, center_sx, center_sy)
+            # Get material-based color from this grid cell
+            material = get_exposed_material(state, sx, sy)
             color = APPEARANCE_TYPES.get(material, DEFAULT_COLOR)
 
-            # Darken for minimap display (make it less bright)
+            # Darken for minimap display
             color = tuple(int(c * 0.7) for c in color)
 
-            # Show water - sum surface + subsurface water for this 3×3 region
-            sx_start, sy_start = x * 3, y * 3
-            sx_end, sy_end = sx_start + 3, sy_start + 3
-
-            surface_water = np.sum(state.water_grid[sx_start:sx_end, sy_start:sy_end])
-            subsurface_water = np.sum(state.subsurface_water_grid[:, sx_start:sx_end, sy_start:sy_end])
+            # Show water - check this cell's water
+            surface_water = state.water_grid[sx, sy]
+            subsurface_water = np.sum(state.subsurface_water_grid[:, sx, sy])
             total_water = surface_water + subsurface_water
 
-            if total_water > 50:  # Threshold for showing water on minimap
+            if total_water > 15:  # Threshold for showing water on minimap
                 color = (60, 100, 180)
 
-            # Show depot - check if any grid cell in this 3×3 region has a depot structure
-            has_depot = False
-            sx_base, sy_base = (x * 3, y * 3)
-            for dx in range(3):
-                for dy in range(3):
-                    sub_pos = (sx_base + dx, sy_base + dy)
-                    if sub_pos in state.structures and state.structures[sub_pos].kind == "depot":
-                        has_depot = True
-                        break
-                if has_depot:
-                    break
-
-            if has_depot:
+            # Show depot - check if this cell has a depot structure
+            if (sx, sy) in state.structures and state.structures[(sx, sy)].kind == "depot":
                 color = (200, 50, 50)
 
-            # Draw pixel
-            px = rect.x + int(x * scale_x)
-            py = rect.y + int(y * scale_y)
-            # Draw slightly larger than 1x1 to avoid gaps if scale is non-integer
+            # Draw minimap pixel
+            px = rect.x + int(mx * scale_x)
+            py = rect.y + int(my * scale_y)
             w = max(1, int(scale_x) + 1)
             h = max(1, int(scale_y) + 1)
             surface.fill(color, (px, py, w, h))
 
-    # Draw Player (convert grid position to region position for minimap)
+    # Draw Player (map grid position to minimap coordinates)
     player_sx, player_sy = state.player_state.position
-    player_region_x, player_region_y = player_sx // 3, player_sy // 3
-    px = rect.x + int(player_region_x * scale_x)
-    py = rect.y + int(player_region_y * scale_y)
+    player_mx = player_sx // sample_step
+    player_my = player_sy // sample_step
+    px = rect.x + int(player_mx * scale_x)
+    py = rect.y + int(player_my * scale_y)
     pygame.draw.circle(surface, (255, 255, 0), (px, py), 2)
-    
+
     # Draw Camera Viewport Frame
-    # Calculate visible range in grid cells
     start_sx, start_sy, end_sx, end_sy = camera.get_visible_subsquare_range()
 
     view_rect = pygame.Rect(
-        rect.x + start_sx * scale_x,
-        rect.y + start_sy * scale_y,
-        (end_sx - start_sx) * scale_x,
-        (end_sy - start_sy) * scale_y
+        rect.x + (start_sx // sample_step) * scale_x,
+        rect.y + (start_sy // sample_step) * scale_y,
+        ((end_sx - start_sx) // sample_step) * scale_x,
+        ((end_sy - start_sy) // sample_step) * scale_y
     )
     pygame.draw.rect(surface, (255, 255, 255), view_rect, 1)

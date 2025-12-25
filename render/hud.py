@@ -128,30 +128,18 @@ def render_hud(
     draw_text(screen, font, f"Elevation: {units_to_meters(elevation_units):.2f}m", (hud_x, y_offset))
     y_offset += LINE_HEIGHT
 
-    # TODO Phase 7: Show data for individual cell instead of aggregating 3×3 region
-    # Calculate region coordinates from grid cell (for backwards compatibility)
-    region_x, region_y = sx // 3, sy // 3
-    gx_start, gy_start = region_x * 3, region_y * 3
-
+    # Show data for individual grid cell
     if state.moisture_grid is not None:
-        # Aggregate from grid resolution to region (3×3)
-        region_moisture_cells = state.moisture_grid[
-            gx_start:gx_start + 3,
-            gy_start:gy_start + 3
-        ]
-        moist = region_moisture_cells.mean()
+        # Get moisture for this specific cell
+        moist = state.moisture_grid[sx, sy]
         # Light blue for moisture
         draw_text(screen, font, f"Soil Moisture: {moist:.1f}", (hud_x, y_offset), (100, 200, 255))
     y_offset += LINE_HEIGHT
-    # Get water from grids (sum 3×3 region)
-    surface_water = state.water_grid[gx_start:gx_start+3, gy_start:gy_start+3].sum()
-    # Get subsurface water from grid (sum all 9 grid cells for this region, all layers)
-    region_subsurface = state.subsurface_water_grid[
-        :,  # All layers
-        gx_start:gx_start + 3,
-        gy_start:gy_start + 3
-    ].sum()
-    total_water = surface_water + region_subsurface
+    # Get water from this grid cell
+    surface_water = state.water_grid[sx, sy]
+    # Get subsurface water from this grid cell (all layers)
+    cell_subsurface = state.subsurface_water_grid[:, sx, sy].sum()
+    total_water = surface_water + cell_subsurface
     draw_text(screen, font, f"Water: {total_water / 10:.1f}L total", (hud_x, y_offset))
     y_offset += LINE_HEIGHT
     draw_text(screen, font, f"  Surface: {surface_water / 10:.1f}L", (hud_x + 10, y_offset), COLOR_TEXT_GRAY)
