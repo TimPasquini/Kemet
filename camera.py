@@ -37,7 +37,7 @@ class Camera:
     world_pixel_height: int = 960
 
     # Grid cell size for coordinate conversions
-    tile_size: int = 32  # Note: legacy name, represents cell_size * 3
+    cell_size: int = 48
 
     # Zoom level (1.0 = 100%, 0.5 = 50% size / 2x view area, 2.0 = 200% size)
     zoom: float = 1.0
@@ -48,11 +48,11 @@ class Camera:
         Args:
             world_width_cells: Width of world in grid cells (e.g., GRID_WIDTH = 180)
             world_height_cells: Height of world in grid cells (e.g., GRID_HEIGHT = 135)
-            cell_size: Size of each grid cell in pixels (e.g., SUB_TILE_SIZE = 48)
+            cell_size: Size of each grid cell in pixels (e.g., CELL_SIZE = 48)
         """
         self.world_pixel_width = world_width_cells * cell_size
         self.world_pixel_height = world_height_cells * cell_size
-        self.tile_size = cell_size  # Note: legacy name 'tile_size', represents cell_size * 3 grouping
+        self.cell_size = cell_size
 
     def set_viewport_size(self, width: int, height: int) -> None:
         """Set the viewport size in pixels."""
@@ -125,28 +125,20 @@ class Camera:
 
 
     # =========================================================================
-    # Sub-grid coordinate conversions
+    # Grid cell coordinate conversions
     # =========================================================================
-
-    @property
-    def sub_tile_size(self) -> float:
-        """Size of a grid cell in world pixels."""
-        return self.tile_size / 3
 
     def world_to_subsquare(self, world_x: float, world_y: float) -> Tuple[int, int]:
         """Convert world pixel coordinates to grid cell coordinates."""
-        sub_size = self.sub_tile_size
-        return int(world_x // sub_size), int(world_y // sub_size)
+        return int(world_x // self.cell_size), int(world_y // self.cell_size)
 
     def subsquare_to_world(self, sub_x: int, sub_y: int) -> Tuple[float, float]:
         """Convert grid cell coordinates to world pixel coordinates (top-left of cell)."""
-        sub_size = self.sub_tile_size
-        return sub_x * sub_size, sub_y * sub_size
+        return sub_x * self.cell_size, sub_y * self.cell_size
 
     def subsquare_to_world_center(self, sub_x: int, sub_y: int) -> Tuple[float, float]:
         """Convert grid cell coordinates to world pixel coordinates (center of cell)."""
-        sub_size = self.sub_tile_size
-        return sub_x * sub_size + sub_size / 2, sub_y * sub_size + sub_size / 2
+        return sub_x * self.cell_size + self.cell_size / 2, sub_y * self.cell_size + self.cell_size / 2
 
 
     def get_visible_subsquare_range(self) -> Tuple[int, int, int, int]:
@@ -155,21 +147,20 @@ class Camera:
 
         Returns: (start_x, start_y, end_x, end_y) - end is exclusive
         """
-        sub_size = self.sub_tile_size
         # Calculate world dimensions in grid cells directly from pixel dimensions
-        world_sub_width = int(self.world_pixel_width // sub_size)
-        world_sub_height = int(self.world_pixel_height // sub_size)
+        world_cell_width = int(self.world_pixel_width // self.cell_size)
+        world_cell_height = int(self.world_pixel_height // self.cell_size)
 
-        start_x = max(0, int(self.world_x // sub_size))
-        start_y = max(0, int(self.world_y // sub_size))
+        start_x = max(0, int(self.world_x // self.cell_size))
+        start_y = max(0, int(self.world_y // self.cell_size))
 
         end_x = min(
-            int((self.world_x + (self.viewport_width / self.zoom)) // sub_size) + 1,
-            world_sub_width
+            int((self.world_x + (self.viewport_width / self.zoom)) // self.cell_size) + 1,
+            world_cell_width
         )
         end_y = min(
-            int((self.world_y + (self.viewport_height / self.zoom)) // sub_size) + 1,
-            world_sub_height
+            int((self.world_y + (self.viewport_height / self.zoom)) // self.cell_size) + 1,
+            world_cell_height
         )
 
         return start_x, start_y, end_x, end_y
