@@ -17,13 +17,11 @@ import random
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Set, Union
 
 import numpy as np
-from config import SUBGRID_SIZE
 from simulation.config import (
     SURFACE_FLOW_RATE,
     SURFACE_FLOW_THRESHOLD,
     SURFACE_SEEPAGE_RATE,
 )
-from subgrid import tile_to_subgrid
 
 if TYPE_CHECKING:
     from main import GameState
@@ -133,7 +131,7 @@ def simulate_surface_flow(state: "GameState") -> int:
 
     # Update active set based on non-zero water
     nz_rows, nz_cols = np.nonzero(state.water_grid)
-    state.active_water_subsquares = set(zip(nz_rows, nz_cols))
+    state.active_water_cells = set(zip(nz_rows, nz_cols))
 
     # Update water passage accumulators for erosion
     outflow_real = outflow_accum[center_slice]
@@ -146,7 +144,7 @@ def simulate_surface_flow(state: "GameState") -> int:
 
         # Check visual threshold (using new water value) - add to active set if water visible
         if state.water_grid[sx, sy] > 5:  # Water visible threshold
-            state.active_water_subsquares.add((sx, sy))
+            state.active_water_cells.add((sx, sy))
     
     return edge_runoff_total
 
@@ -158,7 +156,7 @@ def compute_exposed_layer_grid(terrain_layers: np.ndarray) -> np.ndarray:
     - 0-4: Layer index (ORGANICS=0, TOPSOIL=1, ELUVIATION=2, SUBSOIL=3, REGOLITH=4)
     - -1: Bedrock only (no soil layers)
     """
-    from ground import SoilLayer
+    from world.terrain import SoilLayer
 
     # Start with all bedrock (-1)
     exposed = np.full(terrain_layers.shape[1:], -1, dtype=np.int8)
@@ -182,14 +180,14 @@ def simulate_surface_seepage(state: "GameState") -> None:
     Args:
         state: The main game state.
     """
-    from ground import SoilLayer
+    from world.terrain import SoilLayer
 
     # Only process cells with surface water
-    if len(state.active_water_subsquares) == 0:
+    if len(state.active_water_cells) == 0:
         return
 
     # Build active region mask
-    rows, cols = zip(*state.active_water_subsquares)
+    rows, cols = zip(*state.active_water_cells)
     rows = np.array(rows, dtype=np.int32)
     cols = np.array(cols, dtype=np.int32)
 
@@ -241,7 +239,139 @@ def simulate_surface_seepage(state: "GameState") -> None:
     state.subsurface_water_grid[seep_layers, seep_rows, seep_cols] += seep_amounts
 
     # Mark dirty for rendering (legacy compatibility)
-    state.dirty_subsquares.update(zip(seep_rows, seep_cols))
+    state.dirty_cells.update(zip(seep_rows, seep_cols))
+
+
+def remove_water_from_cell_neighborhood(amount: int, state: "GameState", sx: int, sy: int) -> int:
+    """Remove water proportionally from a grid cell's 3×3 neighborhood.
+
+    Each grid cell in the neighborhood loses water in proportion to how much it has.
+    This ensures water is removed evenly rather than draining one cell first.
+
+    Args:
+        amount: Maximum amount to remove
+        state: GameState for accessing water_grid
+        sx, sy: Grid cell coordinates
+
+    Returns:
+        Actual amount removed (may be less if insufficient water)
+    """
+    from config import GRID_WIDTH, GRID_HEIGHT
+    from grid_helpers import get_cell_neighborhood_surface_water
+
+    total_water = get_cell_neighborhood_surface_water(state, sx, sy)
+    if total_water <= 0:
+        return 0
+
+    to_remove = min(amount, total_water)
+    remaining = to_remove
+
+    for dx in range(-1, 2):
+        for dy in range(-1, 2):
+            gx, gy = sx + dx, sy + dy
+            if not (0 <= gx < GRID_WIDTH and 0 <= gy < GRID_HEIGHT):
+                continue
+
+            val = state.water_grid[gx, gy]
+
+            if val > 0 and remaining > 0:
+                proportion = val / total_water
+                # Round up to ensure we remove enough, but cap at available and remaining
+                take = min(
+                    int(to_remove * proportion) + 1,
+                    val,
+                    remaining
+                )
+                state.water_grid[gx, gy] -= take
+                state.active_water_cells.add((gx, gy))
+                state.dirty_cells.add((gx, gy))
+                remaining -= take
+
+    return to_remove - remaining
+
+
+def distribute_water_to_cell_neighborhood(
+    amount: int,
+    state: "GameState",
+    sx: int,
+    sy: int
+) -> List[Tuple[int, int]]:
+    """Distribute water to a grid cell's 3×3 neighborhood, filling from lowest elevation up.
+
+    Ensures water surface level remains flat across the connected body.
+
+    Args:
+        amount: Amount of water to add
+        state: GameState for accessing water_grid and elevation_grid
+        sx, sy: Grid cell coordinates
+
+    Returns:
+        List of (gx, gy) grid cells that received water
+    """
+    from config import GRID_WIDTH, GRID_HEIGHT
+
+    if amount <= 0:
+        return []
+
+    # 1. Build list of targets in the 3×3 neighborhood
+    targets = []
+    for dx in range(-1, 2):
+        for dy in range(-1, 2):
+            gx, gy = sx + dx, sy + dy
+            if not (0 <= gx < GRID_WIDTH and 0 <= gy < GRID_HEIGHT):
+                continue
+
+            base_elev = state.elevation_grid[gx, gy]
+            current_water = state.water_grid[gx, gy]
+            current_level = base_elev + current_water
+            targets.append({
+                'gx': gx,
+                'gy': gy,
+                'level': current_level,
+                'added': 0
+            })
+
+    # 2. Sort by current level (lowest first)
+    targets.sort(key=lambda x: x['level'])
+
+    remaining = amount
+
+    while remaining > 0:
+        # Get current lowest level
+        min_level = targets[0]['level']
+
+        # Find all cells at this level (the "active group")
+        group = []
+        for t in targets:
+            if t['level'] == min_level:
+                group.append(t)
+            else:
+                break
+
+        if not group:
+            break
+
+        # Distribute 1 unit per cell in group
+        for t in group:
+            if remaining <= 0:
+                break
+            t['added'] += 1
+            t['level'] += 1
+            remaining -= 1
+
+        # Re-sort after water addition
+        targets.sort(key=lambda x: x['level'])
+
+    # 3. Apply the added water to the grid
+    modified = []
+    for t in targets:
+        if t['added'] > 0:
+            state.water_grid[t['gx'], t['gy']] += t['added']
+            state.active_water_cells.add((t['gx'], t['gy']))
+            state.dirty_cells.add((t['gx'], t['gy']))
+            modified.append((t['gx'], t['gy']))
+
+    return modified
 
 
 def get_tile_surface_water(water_grid: np.ndarray, tile_x: int, tile_y: int) -> int:
@@ -254,8 +384,8 @@ def get_tile_surface_water(water_grid: np.ndarray, tile_x: int, tile_y: int) -> 
     Returns:
         Total surface water across the tile's 3x3 grid cells
     """
-    sx = tile_x * SUBGRID_SIZE
-    sy = tile_y * SUBGRID_SIZE
+    sx = tile_x * 3
+    sy = tile_y * 3
 
     # Sum the 3x3 block
     return np.sum(water_grid[sx:sx+3, sy:sy+3])
@@ -282,11 +412,11 @@ def remove_water_proportionally(amount: int, state: "GameState", tile_x: int, ti
     to_remove = min(amount, total_water)
     remaining = to_remove
 
-    sx_base = tile_x * SUBGRID_SIZE
-    sy_base = tile_y * SUBGRID_SIZE
+    sx_base = tile_x * 3
+    sy_base = tile_y * 3
 
-    for lx in range(SUBGRID_SIZE):
-        for ly in range(SUBGRID_SIZE):
+    for lx in range(3):
+        for ly in range(3):
             sx, sy = sx_base + lx, sy_base + ly
             val = state.water_grid[sx, sy]
 
@@ -327,13 +457,13 @@ def distribute_water_to_tile(
     if amount <= 0:
         return []
 
-    sx_base = tile_x * SUBGRID_SIZE
-    sy_base = tile_y * SUBGRID_SIZE
+    sx_base = tile_x * 3
+    sy_base = tile_y * 3
 
     # 1. Build list of targets with current absolute elevation
     targets = []
-    for lx in range(SUBGRID_SIZE):
-        for ly in range(SUBGRID_SIZE):
+    for lx in range(3):
+        for ly in range(3):
             sx = sx_base + lx
             sy = sy_base + ly
             base_elev = state.elevation_grid[sx, sy]
@@ -414,26 +544,25 @@ def distribute_water_to_tile(
 def distribute_upward_seepage(
     water_amount: int,
     active_set: Optional[Set[Point]],
-    tile_x: int,
-    tile_y: int,
+    sx: int,
+    sy: int,
     state: "GameState",
 ) -> None:
-    """Distribute water seeping up from subsurface to grid cells.
+    """Distribute water seeping up from subsurface to grid cell neighborhood.
 
-    Updates the active_water_subsquares set for performance optimization.
+    Updates the active_water_cells set for performance optimization.
 
     Args:
         water_amount: Amount of water emerging from below
         active_set: The global set of active water grid cells to update
-        tile_x, tile_y: The tile's world coordinates (for updating active_set)
+        sx, sy: Grid cell coordinates (center of distribution)
         state: The game state, required for water_grid access
     """
     if water_amount <= 0:
         return
 
-    modified = distribute_water_to_tile(water_amount, state.water_grid, tile_x, tile_y, state)
+    modified = distribute_water_to_cell_neighborhood(water_amount, state, sx, sy)
 
     if active_set is not None:
-        base_sub_x, base_sub_y = tile_to_subgrid(tile_x, tile_y)
-        for lx, ly in modified:
-            active_set.add((base_sub_x + lx, base_sub_y + ly))
+        for gx, gy in modified:
+            active_set.add((gx, gy))

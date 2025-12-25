@@ -17,7 +17,7 @@ from typing import Deque, Dict, List, Tuple, TYPE_CHECKING
 
 import numpy as np
 from scipy import ndimage
-from ground import (
+from world.terrain import (
     SoilLayer,
     TileType,
     TILE_TYPES,
@@ -25,161 +25,12 @@ from ground import (
     units_to_meters,
 )
 from utils import get_neighbors
+from world.biomes import calculate_biome, calculate_elevation_percentiles, recalculate_biomes
 
 if TYPE_CHECKING:
     from main import GameState
-from config import SUBGRID_SIZE
 
 Point = Tuple[int, int]
-
-
-# =============================================================================
-# Biome Calculation
-# =============================================================================
-
-def calculate_biome(
-    state: "GameState",
-    tile_x: int,
-    tile_y: int,
-    neighbor_positions: List[Point],
-    elevation_percentile: float,
-    avg_moisture: float
-) -> str:
-    """
-    Determine the biome type for a tile based on its properties.
-
-    Args:
-        state: GameState with terrain grids
-        tile_x: Tile x coordinate
-        tile_y: Tile y coordinate
-        neighbor_positions: List of (x, y) tuples for adjacent tiles
-        elevation_percentile: 0.0-1.0 ranking of elevation (0=lowest, 1=highest)
-        avg_moisture: Average moisture level for this tile
-
-    Returns:
-        Biome key string (e.g., "dune", "wadi", "rock")
-    """
-    from ground import SoilLayer
-
-    # Get center subsquare for this tile
-    center_sx = tile_x * 3 + 1
-    center_sy = tile_y * 3 + 1
-
-    # Calculate soil depth from terrain layers
-    soil_depth = (
-        state.terrain_layers[SoilLayer.TOPSOIL, center_sx, center_sy] +
-        state.terrain_layers[SoilLayer.SUBSOIL, center_sx, center_sy]
-    )
-
-    topsoil_material = state.terrain_materials[SoilLayer.TOPSOIL, center_sx, center_sy]
-    organics_depth = state.terrain_layers[SoilLayer.ORGANICS, center_sx, center_sy]
-
-    # High elevation with thin soil -> rock
-    if elevation_percentile > 0.75 and soil_depth < 5:
-        return "rock"
-
-    # Low elevation with moisture -> wadi
-    if elevation_percentile < 0.25 and avg_moisture > 50:
-        return "wadi"
-
-    # Sandy and dry -> dune
-    if topsoil_material == "sand" and avg_moisture < 20:
-        return "dune"
-
-    # Low elevation, dry, no organics -> salt flat
-    if elevation_percentile < 0.4 and avg_moisture < 15 and organics_depth == 0:
-        return "salt"
-
-    # Follow neighbors if strong consensus
-    if neighbor_positions:
-        neighbor_biomes = [state.get_tile_kind(nx, ny) for nx, ny in neighbor_positions]
-        biome_counts = Counter(neighbor_biomes)
-        most_common_list = biome_counts.most_common(1)
-        if most_common_list:
-            most_common, count = most_common_list[0]
-            if count >= 3 and most_common in ("dune", "flat", "wadi"):
-                return most_common
-
-    return "flat"
-
-
-def calculate_elevation_percentiles(
-    elevation_grid: np.ndarray, width: int, height: int
-) -> Dict[Point, float]:
-    """
-    Calculate elevation percentile for each tile.
-
-    Args:
-        elevation_grid: Grid of elevation values at subsquare resolution
-        width: Number of tiles wide
-        height: Number of tiles tall
-
-    Returns dict mapping (x, y) -> percentile (0.0 = lowest, 1.0 = highest)
-    """
-    elevation_data = []
-    for x in range(width):
-        for y in range(height):
-            # Get elevation from center subsquare of tile
-            center_sx = x * 3 + 1
-            center_sy = y * 3 + 1
-            elev = elevation_grid[center_sx, center_sy]
-            elevation_data.append((elev, (x, y)))
-    elevation_data.sort(key=lambda e: e[0])
-
-    percentiles = {}
-    total = len(elevation_data)
-    for i, (elev, pos) in enumerate(elevation_data):
-        percentiles[pos] = i / max(1, total - 1)
-    return percentiles
-
-
-def recalculate_biomes(
-    state: "GameState", moisture_grid: np.ndarray
-) -> List[str]:
-    """
-    Recalculate biomes for all tiles based on current conditions.
-
-    Called daily to allow landscape evolution based on moisture, etc.
-
-    Args:
-        state: GameState with terrain grids and kind_grid
-        moisture_grid: (width, height) array of average moisture values
-
-    Returns:
-        List of messages to display to player
-    """
-    messages: List[str] = []
-    percentiles = calculate_elevation_percentiles(state.elevation_grid, state.width, state.height)
-    changes = 0
-
-    for x in range(state.width):
-        for y in range(state.height):
-            # Don't change biome of tiles with depot structures
-            # (Depot tile biome can now change naturally like any other tile)
-
-            neighbor_positions = get_neighbors(x, y, state.width, state.height)
-            elev_pct = percentiles.get((x, y), 0.5)
-            avg_moisture = moisture_grid[x, y]
-            new_biome = calculate_biome(state, x, y, neighbor_positions, elev_pct, avg_moisture)
-
-            # Get current biome from kind_grid (center subsquare)
-            center_sx = x * 3 + 1
-            center_sy = y * 3 + 1
-            old_biome = state.kind_grid[center_sx, center_sy]
-
-            if new_biome != old_biome:
-                # Update all 9 subsquares in this tile
-                for local_x in range(3):
-                    for local_y in range(3):
-                        sx = x * 3 + local_x
-                        sy = y * 3 + local_y
-                        state.kind_grid[sx, sy] = new_biome
-                changes += 1
-
-    if changes > 0:
-        messages.append(f"Landscape shifted: {changes} tiles changed biome.")
-
-    return messages
 
 
 # =============================================================================
@@ -211,7 +62,7 @@ def generate_grids_direct(grid_width: int, grid_height: int) -> Dict:
             - water_grid: (grid_w, grid_h) surface water
             - kind_grid: (grid_w, grid_h) biome type (temporary, for tile compatibility)
     """
-    from ground import MATERIAL_LIBRARY
+    from world.terrain import MATERIAL_LIBRARY
 
     # Initialize arrays
     terrain_layers = np.zeros((len(SoilLayer), grid_width, grid_height), dtype=np.int32)
@@ -413,32 +264,28 @@ def generate_grids_direct(grid_width: int, grid_height: int) -> Dict:
     max_water = ((regolith_depths * porosity_values) // 100).astype(np.int32)
     subsurface_water_grid[SoilLayer.REGOLITH] = max_water
 
-    # Generate wellsprings at tile centers (prefer lowland areas)
-    # Calculate elevations for all tile center cells
-    tile_width = grid_width // 3
-    tile_height = grid_height // 3
+    # Generate wellsprings (prefer lowland areas)
+    # Calculate elevations for all grid cells
     elev_list = []
-    for tx in range(tile_width):
-        for ty in range(tile_height):
-            # Get center cell of this tile's 3x3 region
-            center_gx = tx * 3 + 1
-            center_gy = ty * 3 + 1
-            if center_gx < grid_width and center_gy < grid_height:
-                elev = bedrock_base[center_gx, center_gy] + np.sum(terrain_layers[:, center_gx, center_gy])
-                elev_list.append((elev, center_gx, center_gy, tx, ty))
+    for gx in range(grid_width):
+        for gy in range(grid_height):
+            elev = bedrock_base[gx, gy] + np.sum(terrain_layers[:, gx, gy])
+            elev_list.append((elev, gx, gy))
     elev_list.sort(key=lambda e: e[0])
 
     # Primary wellspring in lowest quarter
     lowland_count = max(1, len(elev_list) // 4)
     lowland_candidates = elev_list[:lowland_count]
-    _, px, py, tile_x, tile_y = random.choice(lowland_candidates)
-    # Mark entire tile region as wadi
-    for dx in range(3):
-        for dy in range(3):
-            gx = tile_x * 3 + dx
-            gy = tile_y * 3 + dy
-            if gx < grid_width and gy < grid_height:
+    _, px, py = random.choice(lowland_candidates)
+
+    # Mark wellspring cell and neighbors as wadi
+    for dx in range(-1, 2):
+        for dy in range(-1, 2):
+            gx = px + dx
+            gy = py + dy
+            if 0 <= gx < grid_width and 0 <= gy < grid_height:
                 kind_grid[gx, gy] = "wadi"
+
     wellspring_grid[px, py] = random.randint(40, 60)  # Strong output
     subsurface_water_grid[SoilLayer.REGOLITH, px, py] += 100
     water_grid[px, py] += 20
@@ -446,15 +293,13 @@ def generate_grids_direct(grid_width: int, grid_height: int) -> Dict:
     # Secondary wellsprings (1-2)
     secondary_count = random.randint(1, 2)
     attempts, placed = 0, 0
-    center_tile_x, center_tile_y = tile_width // 2, tile_height // 2
+    center_gx, center_gy = grid_width // 2, grid_height // 2
     while placed < secondary_count and attempts < 20:
-        rand_tile_x = random.randrange(tile_width)
-        rand_tile_y = random.randrange(tile_height)
-        sx = rand_tile_x * 3 + 1
-        sy = rand_tile_y * 3 + 1
+        sx = random.randrange(grid_width)
+        sy = random.randrange(grid_height)
         attempts += 1
         # Don't place on existing wellspring or near center (depot location)
-        if wellspring_grid[sx, sy] > 0 or (abs(rand_tile_x - center_tile_x) < 2 and abs(rand_tile_y - center_tile_y) < 2):
+        if wellspring_grid[sx, sy] > 0 or (abs(sx - center_gx) < 6 and abs(sy - center_gy) < 6):
             continue
         wellspring_grid[sx, sy] = random.randint(15, 30)  # Moderate output
         subsurface_water_grid[SoilLayer.REGOLITH, sx, sy] += 50

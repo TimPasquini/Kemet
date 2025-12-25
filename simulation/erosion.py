@@ -14,14 +14,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Dict, List, Tuple
 import numpy as np
 
-from config import SUBGRID_SIZE
+from config import GRID_WIDTH, GRID_HEIGHT
 from simulation.config import (
     WATER_EROSION_THRESHOLD,
     WATER_EROSION_RATE,
     WIND_EROSION_THRESHOLD,
     WIND_EROSION_RATE,
 )
-from ground import SoilLayer
+from world.terrain import SoilLayer
 
 if TYPE_CHECKING:
     from main import GameState
@@ -77,7 +77,7 @@ def get_wind_exposure(
     wind_direction: int,
 ) -> float:
     """Calculate wind exposure (0-1) based on upwind terrain."""
-    grid_w, grid_h = state.width * SUBGRID_SIZE, state.height * SUBGRID_SIZE
+    grid_w, grid_h = GRID_WIDTH, GRID_HEIGHT
     
     # Get upwind offset (opposite of wind direction)
     dx, dy = DIRECTION_OFFSETS[wind_direction]
@@ -175,9 +175,9 @@ def apply_overnight_erosion(
     exposed_grid = compute_exposed_layer_grid(state.terrain_layers)
 
     # --- Water Erosion (Vectorized) ---
-    if len(state.active_water_subsquares) > 0:
+    if len(state.active_water_cells) > 0:
         # Extract active coordinates
-        rows, cols = zip(*state.active_water_subsquares)
+        rows, cols = zip(*state.active_water_cells)
         rows = np.array(rows, dtype=np.int32)
         cols = np.array(cols, dtype=np.int32)
 
@@ -211,9 +211,9 @@ def apply_overnight_erosion(
         # Build list of all subsquares in active wind tiles
         wind_coords = []
         for tile_x, tile_y in state.active_wind_tiles:
-            for lx in range(SUBGRID_SIZE):
-                for ly in range(SUBGRID_SIZE):
-                    wind_coords.append((tile_x * SUBGRID_SIZE + lx, tile_y * SUBGRID_SIZE + ly))
+            for lx in range(3):
+                for ly in range(3):
+                    wind_coords.append((tile_x * 3 + lx, tile_y * 3 + ly))
 
         if len(wind_coords) > 0:
             rows, cols = zip(*wind_coords)
@@ -307,7 +307,7 @@ def apply_erosion_vectorized(
         state.terrain_materials[depleted_layers, depleted_rows, depleted_cols] = ""
 
     state.terrain_changed = True
-    state.dirty_subsquares.update(zip(rows, cols))
+    state.dirty_cells.update(zip(rows, cols))
 
 
 def compute_soil_moisture_vectorized(
@@ -368,7 +368,7 @@ def apply_erosion(state: "GameState", sx: int, sy: int, amount: float) -> None:
                 state.terrain_materials[layer, sx, sy] = ""
 
             state.terrain_changed = True
-            state.dirty_subsquares.add((sx, sy))
+            state.dirty_cells.add((sx, sy))
 
 
 def reset_daily_accumulators(state: "GameState") -> None:
@@ -403,30 +403,3 @@ def accumulate_wind_exposure(state: "GameState") -> None:
         # Accumulate wind exposure (additive over multiple calls)
         # Note: This is called every 10 ticks, so exposure builds up during the day
         state.wind_exposure_grid[exposure_mask] += wind_magnitude[exposure_mask]
-
-    # LEGACY: Fall back to old atmosphere system during transition
-    elif state.atmosphere is not None:
-        atmosphere = state.atmosphere
-        state.active_wind_tiles.clear()
-
-        for rx in range(atmosphere.width):
-            for ry in range(atmosphere.height):
-                region = atmosphere.regions[rx][ry]
-                if region.wind_speed < 0.2:
-                    continue
-
-                # Note: ATMOSPHERE_REGION_SIZE was 4, now hardcoded for legacy fallback
-                start_tx, start_ty = rx * 4, ry * 4
-                end_tx, end_ty = start_tx + 4, start_ty + 4
-
-                for tile_x in range(start_tx, end_tx):
-                    for tile_y in range(start_ty, end_ty):
-                        if not (0 <= tile_x < state.width and 0 <= tile_y < state.height):
-                            continue
-
-                        state.active_wind_tiles.add((tile_x, tile_y))
-                        for local_x in range(SUBGRID_SIZE):
-                            for local_y in range(SUBGRID_SIZE):
-                                sx, sy = tile_x * SUBGRID_SIZE + local_x, tile_y * SUBGRID_SIZE + local_y
-                                if state.water_grid[sx, sy] < 10:
-                                    state.wind_exposure_grid[sx, sy] += region.wind_speed

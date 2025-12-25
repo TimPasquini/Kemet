@@ -12,12 +12,11 @@ from typing import TYPE_CHECKING, Tuple, Optional, List
 
 import pygame
 
-from ground import TILE_TYPES
+from world.terrain import TILE_TYPES
 from render.primitives import draw_text
 from render.grid_helpers import get_grid_cell_color, get_grid_elevation
 from config import (
-    SUBGRID_SIZE,
-    INTERACTION_RANGE,
+        INTERACTION_RANGE,
     GRID_WIDTH,
     GRID_HEIGHT,
 )
@@ -36,11 +35,7 @@ from render.config import (
     COLOR_TRENCH,
     HIGHLIGHT_COLORS,
 )
-from subgrid import (
-    subgrid_to_tile,
-    get_subsquare_index,
-    chebyshev_distance,
-)
+from utils import chebyshev_distance
 
 if TYPE_CHECKING:
     from main import GameState
@@ -125,7 +120,7 @@ def render_map_viewport(
     scaled_sub_size = max(1, int(SUB_TILE_SIZE * camera.zoom))
     for (sub_x, sub_y), structure in state.structures.items():
         # Convert sub-square to tile for visibility check
-        tile_x, tile_y = subgrid_to_tile(sub_x, sub_y)
+        tile_x, tile_y = (sub_x // 3, sub_y // 3)
         if not camera.is_tile_visible(tile_x, tile_y):
             continue
         # Get world position for sub-square using camera method
@@ -145,28 +140,15 @@ def render_map_viewport(
             rect = pygame.Rect(int(vp_x), int(vp_y), tile_size - 1, tile_size - 1)
 
             # Check wellspring from wellspring_grid (center cell of tile's 3x3 region)
-            center_sx, center_sy = tx * SUBGRID_SIZE + 1, ty * SUBGRID_SIZE + 1
+            center_sx, center_sy = tx * 3 + 1, ty * 3 + 1
             wellspring_output = state.wellspring_grid[center_sx, center_sy] if state.wellspring_grid is not None else 0
             if wellspring_output > 0:
                 spring_color = COLOR_WELLSPRING_STRONG if wellspring_output / 10 > 0.5 else COLOR_WELLSPRING_WEAK
                 pygame.draw.circle(surface, spring_color, rect.center, WELLSPRING_RADIUS * camera.zoom)
 
-            # Check if any subsquare on this tile has a depot structure
-            from subgrid import tile_to_subgrid
-            has_depot = False
-            sx_base, sy_base = tile_to_subgrid(tx, ty)
-            for dx in range(SUBGRID_SIZE):
-                for dy in range(SUBGRID_SIZE):
-                    sub_pos = (sx_base + dx, sy_base + dy)
-                    if sub_pos in state.structures and state.structures[sub_pos].kind == "depot":
-                        has_depot = True
-                        break
-                if has_depot:
-                    break
-
-            if has_depot:
-                pygame.draw.rect(surface, COLOR_DEPOT, rect.inflate(-TRENCH_INSET, -TRENCH_INSET), border_radius=3)
-                draw_text(surface, font, "D", (rect.x + 18, rect.y + 12), color=(40, 40, 20))
+            # NOTE: Depot rendering removed - depots are now rendered as single-cell structures
+            # like all other buildings in the structure rendering loop above (lines 118-133)
+            # Multi-cell structure layouts will be implemented properly in the future
 
     # Render sub-grid water overlay (dynamic, so drawn on top of static background)
     render_subgrid_water(surface, state, camera, tile_size)
@@ -181,7 +163,7 @@ def _render_terrain_per_frame(
 ) -> None:
     """Fallback terrain rendering - renders each visible sub-square per frame (grid-aware)."""
     start_x, start_y, end_x, end_y = camera.get_visible_subsquare_range()
-    scaled_sub_tile_size = max(1, int((TILE_SIZE / SUBGRID_SIZE) * camera.zoom))
+    scaled_sub_tile_size = max(1, int((TILE_SIZE / 3) * camera.zoom))
 
     for sub_y in range(start_y, end_y):
         for sub_x in range(start_x, end_x):
@@ -205,7 +187,7 @@ def render_subgrid_water(
     Render water as a single semi-transparent overlay for performance.
     This avoids thousands of small blit calls per frame.
     """
-    sub_size = max(1, tile_size // SUBGRID_SIZE)
+    sub_size = max(1, tile_size // 3)
     start_x, start_y, end_x, end_y = camera.get_visible_subsquare_range()
 
     # Create a single overlay surface for the entire viewport.
@@ -381,8 +363,8 @@ def render_interaction_highlights(
     scaled_sub_tile_size: int,
 ) -> None:
     """Render interaction range indicator and target highlight."""
-    target_subsquare = ui_state.target_subsquare
-    if target_subsquare is None:
+    target_cell = ui_state.target_cell
+    if target_cell is None:
         return
 
     sub_size = scaled_sub_tile_size
@@ -392,7 +374,7 @@ def render_interaction_highlights(
 
     if is_trench:
         # Render trench-affected squares with color coding
-        affected = _get_trench_affected_squares(player_pos, target_subsquare)
+        affected = _get_trench_affected_squares(player_pos, target_cell)
 
         # Color scheme: origin=red, exit=green, sides=blue, target=yellow
         highlights = [
@@ -400,7 +382,7 @@ def render_interaction_highlights(
             (affected['exit'], (60, 200, 60), 40),      # Green - exit
             (affected['left'], (60, 60, 200), 40),      # Blue - left side
             (affected['right'], (60, 60, 200), 40),     # Blue - right side
-            (target_subsquare, (200, 200, 60), 60),     # Yellow - target
+            (target_cell, (200, 200, 60), 60),     # Yellow - target
         ]
 
         for pos, color, alpha in highlights:
@@ -420,7 +402,7 @@ def render_interaction_highlights(
     else:
         # Standard single-square highlight for non-trench tools
         color = get_tool_highlight_color(tool, ui_state.is_valid_target)
-        world_x, world_y = camera.subsquare_to_world(target_subsquare[0], target_subsquare[1])
+        world_x, world_y = camera.subsquare_to_world(target_cell[0], target_cell[1])
         vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
         rect = pygame.Rect(int(vp_x), int(vp_y), sub_size, sub_size)
 

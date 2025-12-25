@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy.ndimage import binary_dilation
 
-from ground import SoilLayer, MATERIAL_LIBRARY
+from world.terrain import SoilLayer, MATERIAL_LIBRARY
 from config import RAIN_WELLSPRING_MULTIPLIER, GRID_WIDTH, GRID_HEIGHT
 from simulation.config import (
     SUBSURFACE_FLOW_RATE,
@@ -442,4 +442,4 @@ def simulate_subsurface_tick_vectorized(state: "GameState") -> None:
 
     # Update active water set (grid-level)
     nz_rows, nz_cols = np.nonzero(state.water_grid)
-    state.active_water_subsquares = set(zip(nz_rows, nz_cols))
+    state.active_water_cells = set(zip(nz_rows, nz_cols))

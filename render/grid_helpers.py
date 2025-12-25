@@ -5,8 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Tuple
 import numpy as np
 
-from ground import SoilLayer, units_to_meters
-from config import SUBGRID_SIZE
+from world.terrain import SoilLayer, units_to_meters
 
 if TYPE_CHECKING:
     from main import GameState
@@ -24,10 +23,10 @@ def get_grid_elevation(state: "GameState", sx: int, sy: int) -> int:
 
 def get_tile_elevation_range(state: "GameState", tile_x: int, tile_y: int) -> Tuple[int, int]:
     """Get min and max elevation for a tile's 3x3 grid region."""
-    sx_start = tile_x * SUBGRID_SIZE
-    sy_start = tile_y * SUBGRID_SIZE
-    sx_end = sx_start + SUBGRID_SIZE
-    sy_end = sy_start + SUBGRID_SIZE
+    sx_start = tile_x * 3
+    sy_start = tile_y * 3
+    sx_end = sx_start + 3
+    sy_end = sy_start + 3
 
     # Calculate elevations for all 9 cells
     elevations = []

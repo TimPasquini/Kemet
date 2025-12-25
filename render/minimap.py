@@ -6,7 +6,7 @@ import pygame
 import numpy as np
 from typing import TYPE_CHECKING
 
-from config import SUBGRID_SIZE
+from config import GRID_WIDTH, GRID_HEIGHT
 
 if TYPE_CHECKING:
     from main import GameState
@@ -26,23 +26,23 @@ def render_minimap(
     pygame.draw.rect(surface, (60, 60, 70), rect, 1)
     
     # Calculate scale
-    # We want to fit the whole map into the rect
-    map_w_tiles = state.width
-    map_h_tiles = state.height
-    
-    # Size of a tile on the minimap
-    scale_x = rect.width / map_w_tiles
-    scale_y = rect.height / map_h_tiles
-    
-    # Draw tiles (grid-based material colors)
-    # Get material colors from the center cell of each tile's 3x3 region
+    # We want to fit the whole map into the rect (aggregated in 3×3 regions for minimap)
+    map_w_regions = GRID_WIDTH // 3
+    map_h_regions = GRID_HEIGHT // 3
+
+    # Size of a region on the minimap
+    scale_x = rect.width / map_w_regions
+    scale_y = rect.height / map_h_regions
+
+    # Draw regions (aggregating 3×3 grid cells for minimap display)
+    # Get material colors from the center cell of each 3×3 region
     from render.grid_helpers import get_exposed_material, APPEARANCE_TYPES, DEFAULT_COLOR
 
-    for x in range(map_w_tiles):
-        for y in range(map_h_tiles):
+    for x in range(map_w_regions):
+        for y in range(map_h_regions):
             # Get center cell of tile's 3x3 grid region
-            center_sx = x * SUBGRID_SIZE + 1
-            center_sy = y * SUBGRID_SIZE + 1
+            center_sx = x * 3 + 1
+            center_sy = y * 3 + 1
 
             # Get material-based color from grids
             material = get_exposed_material(state, center_sx, center_sy)
@@ -53,8 +53,8 @@ def render_minimap(
 
             # Show water (check grids instead of tile.hydration)
             # Sum surface + subsurface water for this tile's 3x3 grid region
-            sx_start, sy_start = x * SUBGRID_SIZE, y * SUBGRID_SIZE
-            sx_end, sy_end = sx_start + SUBGRID_SIZE, sy_start + SUBGRID_SIZE
+            sx_start, sy_start = x * 3, y * 3
+            sx_end, sy_end = sx_start + 3, sy_start + 3
 
             surface_water = np.sum(state.water_grid[sx_start:sx_end, sy_start:sy_end])
             subsurface_water = np.sum(state.subsurface_water_grid[:, sx_start:sx_end, sy_start:sy_end])
@@ -64,11 +64,10 @@ def render_minimap(
                 color = (60, 100, 180)
 
             # Show depot - check if any subsquare on this tile has a depot structure
-            from subgrid import tile_to_subgrid
             has_depot = False
-            sx_base, sy_base = tile_to_subgrid(x, y)
-            for dx in range(SUBGRID_SIZE):
-                for dy in range(SUBGRID_SIZE):
+            sx_base, sy_base = (x * 3, y * 3)
+            for dx in range(3):
+                for dy in range(3):
                     sub_pos = (sx_base + dx, sy_base + dy)
                     if sub_pos in state.structures and state.structures[sub_pos].kind == "depot":
                         has_depot = True
@@ -87,10 +86,11 @@ def render_minimap(
             h = max(1, int(scale_y) + 1)
             surface.fill(color, (px, py, w, h))
 
-    # Draw Player
-    player_tile = state.player
-    px = rect.x + int(player_tile[0] * scale_x)
-    py = rect.y + int(player_tile[1] * scale_y)
+    # Draw Player (convert grid position to region position for minimap)
+    player_sx, player_sy = state.player_state.position
+    player_region_x, player_region_y = player_sx // 3, player_sy // 3
+    px = rect.x + int(player_region_x * scale_x)
+    py = rect.y + int(player_region_y * scale_y)
     pygame.draw.circle(surface, (255, 255, 0), (px, py), 2)
     
     # Draw Camera Viewport Frame

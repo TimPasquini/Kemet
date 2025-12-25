@@ -18,12 +18,6 @@ from typing import Dict, Tuple
 GRID_WIDTH = 180
 GRID_HEIGHT = 135
 
-# DEPRECATED - TO BE REMOVED IN PHASE 3 (Atmosphere Migration):
-# Tile grouping only exists for legacy atmosphere system compatibility.
-# After atmosphere vectorization, all systems will operate purely on grid coordinates.
-SUBGRID_SIZE = 3  # Number of grid cells per tile (in each dimension)
-MAP_SIZE: Tuple[int, int] = (GRID_WIDTH // SUBGRID_SIZE, GRID_HEIGHT // SUBGRID_SIZE)  # (60, 45) tiles
-
 # Player interaction range in grid cells
 INTERACTION_RANGE = 2  # Grid cells player can reach (1-2 cells out)
 

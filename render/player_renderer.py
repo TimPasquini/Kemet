@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Tuple
 import pygame
 
-from config import SUBGRID_SIZE
 from render.config import COLOR_PLAYER, COLOR_PLAYER_ACTION_BG, COLOR_PLAYER_ACTION_BAR
 
 if TYPE_CHECKING:
@@ -24,7 +23,7 @@ def render_player(
     vx, vy = camera.world_to_viewport(px, py)
     
     # Calculate sub-tile size in pixels at current zoom
-    scaled_sub_tile_size = scaled_tile_size / SUBGRID_SIZE
+    scaled_sub_tile_size = scaled_tile_size / 3
     
     # Player radius is roughly half a sub-tile (diameter = sub-tile size)
     # We clamp it to a minimum of 2 pixels so it doesn't disappear at high zoom out

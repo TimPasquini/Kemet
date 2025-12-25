@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Tuple
 import pygame
 
 from config import DAY_LENGTH
-from ground import SoilLayer, MATERIAL_LIBRARY, units_to_meters
+from world.terrain import SoilLayer, MATERIAL_LIBRARY, units_to_meters
 from render.primitives import draw_text, draw_section_header
 from render.config import (
     LINE_HEIGHT,
@@ -25,7 +25,6 @@ from render.config import (
     COLOR_SKY,
     METER_SCALE,
 )
-from subgrid import tile_to_subgrid
 
 if TYPE_CHECKING:
     from main import GameState
@@ -74,11 +73,11 @@ def render_hud(
     # Atmosphere Section (grid-based)
     # NEW: Grid-based atmosphere at cursor position
     if state.humidity_grid is not None and state.wind_grid is not None:
-        # Use cursor position (target_subsquare), fallback to player position
-        if state.target_subsquare is not None:
-            sx, sy = state.target_subsquare
+        # Use cursor position (target_cell), fallback to player position
+        if state.target_cell is not None:
+            sx, sy = state.target_cell
         else:
-            sx, sy = state.player_subsquare
+            sx, sy = state.player_cell
 
         y_offset = draw_section_header(screen, font, "ATMOSPHERE", (hud_x, y_offset), width=130) + 4
 
@@ -106,40 +105,21 @@ def render_hud(
         draw_text(screen, font, f"Wind: {arrow} {wind_magnitude*100:.0f}", (hud_x, y_offset))
         y_offset += LINE_HEIGHT + SECTION_SPACING
 
-    # LEGACY: Fall back to old atmosphere system during transition
-    elif state.atmosphere:
-        x, y = state.player
-        region = state.atmosphere.get_region_at_tile(x, y)
+    # Current grid cell section
+    sx, sy = state.player_cell
+    # Check for structure at player's grid cell position
+    structure = state.structures.get((sx, sy))
 
-        y_offset = draw_section_header(screen, font, "ATMOSPHERE", (hud_x, y_offset), width=130) + 4
-
-        # Humidity
-        draw_text(screen, font, f"Humidity: {region.humidity*100:.0f}%", (hud_x, y_offset))
-        y_offset += LINE_HEIGHT
-
-        # Wind
-        arrows = ['↑', '↗', '→', '↘', '↓', '↙', '←', '↖']
-        idx = region.wind_direction % 8
-        draw_text(screen, font, f"Wind: {arrows[idx]} {region.wind_speed*100:.0f}", (hud_x, y_offset))
-        y_offset += LINE_HEIGHT + SECTION_SPACING
-
-    # Current tile section
-    x, y = state.player
-    # Check for structure at player's sub-square position
-    player_sub = state.player_subsquare
-    structure = state.structures.get(player_sub)
-    sx, sy = player_sub
-
-    y_offset = draw_section_header(screen, font, "CURRENT TILE", (hud_x, y_offset), width=130) + 4
-    draw_text(screen, font, f"Position: ({x}, {y})", (hud_x, y_offset))
+    y_offset = draw_section_header(screen, font, "CURRENT CELL", (hud_x, y_offset), width=130) + 4
+    draw_text(screen, font, f"Position: ({sx}, {sy})", (hud_x, y_offset))
     y_offset += LINE_HEIGHT
-    tile_kind = state.get_tile_kind(x, y)
-    draw_text(screen, font, f"Type: {tile_kind.capitalize()}", (hud_x, y_offset))
+    cell_kind = state.get_cell_kind(sx, sy)
+    draw_text(screen, font, f"Type: {cell_kind.capitalize()}", (hud_x, y_offset))
     y_offset += LINE_HEIGHT
 
     # Get exposed material from grid
     from render.grid_helpers import get_exposed_material, get_grid_elevation
-    from ground import units_to_meters
+    from world.terrain import units_to_meters
     material = get_exposed_material(state, sx, sy)
     draw_text(screen, font, f"Material: {material.capitalize()}", (hud_x, y_offset))
     y_offset += LINE_HEIGHT
@@ -148,44 +128,45 @@ def render_hud(
     draw_text(screen, font, f"Elevation: {units_to_meters(elevation_units):.2f}m", (hud_x, y_offset))
     y_offset += LINE_HEIGHT
 
+    # TODO Phase 7: Show data for individual cell instead of aggregating 3×3 region
+    # Calculate region coordinates from grid cell (for backwards compatibility)
+    region_x, region_y = sx // 3, sy // 3
+    gx_start, gy_start = region_x * 3, region_y * 3
+
     if state.moisture_grid is not None:
-        # Aggregate from grid resolution to tile
-        from config import SUBGRID_SIZE
-        gx_start, gy_start = x * SUBGRID_SIZE, y * SUBGRID_SIZE
-        tile_moisture_cells = state.moisture_grid[
-            gx_start:gx_start + SUBGRID_SIZE,
-            gy_start:gy_start + SUBGRID_SIZE
+        # Aggregate from grid resolution to region (3×3)
+        region_moisture_cells = state.moisture_grid[
+            gx_start:gx_start + 3,
+            gy_start:gy_start + 3
         ]
-        moist = tile_moisture_cells.mean()
+        moist = region_moisture_cells.mean()
         # Light blue for moisture
         draw_text(screen, font, f"Soil Moisture: {moist:.1f}", (hud_x, y_offset), (100, 200, 255))
     y_offset += LINE_HEIGHT
-    # Get water from grids
-    gx_start, gy_start = x * SUBGRID_SIZE, y * SUBGRID_SIZE
-    surface_water = state.water_grid[gx_start:gx_start+SUBGRID_SIZE, gy_start:gy_start+SUBGRID_SIZE].sum()
-    # Get subsurface water from grid (sum all 9 grid cells for this tile, all layers)
-    tile_subsurface = state.subsurface_water_grid[
+    # Get water from grids (sum 3×3 region)
+    surface_water = state.water_grid[gx_start:gx_start+3, gy_start:gy_start+3].sum()
+    # Get subsurface water from grid (sum all 9 grid cells for this region, all layers)
+    region_subsurface = state.subsurface_water_grid[
         :,  # All layers
-        gx_start:gx_start + SUBGRID_SIZE,
-        gy_start:gy_start + SUBGRID_SIZE
+        gx_start:gx_start + 3,
+        gy_start:gy_start + 3
     ].sum()
-    total_water = surface_water + tile_subsurface
+    total_water = surface_water + region_subsurface
     draw_text(screen, font, f"Water: {total_water / 10:.1f}L total", (hud_x, y_offset))
     y_offset += LINE_HEIGHT
     draw_text(screen, font, f"  Surface: {surface_water / 10:.1f}L", (hud_x + 10, y_offset), COLOR_TEXT_GRAY)
     y_offset += LINE_HEIGHT
 
-    if tile_subsurface > 0:
-        draw_text(screen, font, f"  Ground: {tile_subsurface / 10:.1f}L", (hud_x + 10, y_offset), COLOR_TEXT_GRAY)
+    if region_subsurface > 0:
+        draw_text(screen, font, f"  Ground: {region_subsurface / 10:.1f}L", (hud_x + 10, y_offset), COLOR_TEXT_GRAY)
         y_offset += LINE_HEIGHT
 
-    # Check if any subsquare in the player's tile has a trench
-    sx_base, sy_base = tile_to_subgrid(x, y)
-    if state.trench_grid is not None and np.any(state.trench_grid[sx_base:sx_base+3, sy_base:sy_base+3]):
+    # Check if any cell in the player's region has a trench
+    if state.trench_grid is not None and np.any(state.trench_grid[gx_start:gx_start+3, gy_start:gy_start+3]):
         draw_text(screen, font, "Trench: Yes", (hud_x, y_offset), COLOR_TRENCH)
         y_offset += LINE_HEIGHT
 
-    # Check wellspring from grid (center cell of tile)
+    # Check wellspring from grid (center cell of region)
     center_sx, center_sy = gx_start + 1, gy_start + 1
     wellspring_output = state.wellspring_grid[center_sx, center_sy] if state.wellspring_grid is not None else 0
     if wellspring_output > 0:

@@ -57,8 +57,8 @@ from keybindings import (
 from config import (
     MOVE_SPEED,
     TICK_INTERVAL,
-    SUBGRID_SIZE,
-    MAP_SIZE,
+    GRID_WIDTH,
+    GRID_HEIGHT,
 )
 from render.config import (
     VIRTUAL_WIDTH,
@@ -73,7 +73,6 @@ from render.config import (
     TILE_SIZE,
     SUB_TILE_SIZE,
 )
-from subgrid import subgrid_to_tile, get_subsquare_index
 from render import (
     render_map_viewport,
     render_static_background,
@@ -146,17 +145,17 @@ def update_dirty_background(
 
     Args:
         background_surface: The cached background surface to update
-        state: Game state with dirty_subsquares set
+        state: Game state with dirty_cells set
         font: Font for rendering
 
     Returns:
         Updated background surface
     """
-    if not state.dirty_subsquares:
+    if not state.dirty_cells:
         return background_surface
 
     # Redraw only the dirty sub-squares
-    for sub_x, sub_y in state.dirty_subsquares:
+    for sub_x, sub_y in state.dirty_cells:
         rect = pygame.Rect(
             sub_x * SUB_TILE_SIZE,
             sub_y * SUB_TILE_SIZE,
@@ -165,7 +164,7 @@ def update_dirty_background(
         )
         redraw_background_rect(background_surface, state, font, rect)
 
-    state.dirty_subsquares.clear()
+    state.dirty_cells.clear()
     return background_surface
 
 def render_to_virtual_screen(
@@ -189,7 +188,7 @@ def render_to_virtual_screen(
     # map_surface is now passed in and reused to avoid per-frame allocation
     # We pass the scaled tile size to the renderer so it draws at the correct zoom level
     scaled_tile_size = int(tile_size * camera.zoom)
-    scaled_sub_tile_size = int(scaled_tile_size / SUBGRID_SIZE)
+    scaled_sub_tile_size = int(scaled_tile_size / 3)
     
     # Ensure map surface is large enough for the viewport
     if map_surface is None or map_surface.get_width() != camera.viewport_width or map_surface.get_height() != camera.viewport_height:
@@ -235,7 +234,7 @@ def render_to_virtual_screen(
 
     # Column 2: Soil profile (show grid cell at cursor target, or player position if no target)
     soil_y = y_offset + 22  # Offset to align top of header box with text in col 1
-    profile_sub_pos = state.target_subsquare if state.target_subsquare else state.player_state.position
+    profile_sub_pos = state.target_cell if state.target_cell else state.player_state.position
     sx, sy = profile_sub_pos
 
     # Calculate available height for the soil profile (fill down to bottom margin)
@@ -283,20 +282,20 @@ def blit_virtual_to_screen(virtual_screen: pygame.Surface, screen: pygame.Surfac
     screen.blit(scaled, (offset_x, offset_y))
 
 
-def issue(state: GameState, cmd: str, args: List[str], target_subsquare: Optional[Tuple[int, int]] = None) -> None:
+def issue(state: GameState, cmd: str, args: List[str], target_cell: Optional[Tuple[int, int]] = None) -> None:
     """Issues a command and sets the player's action timer.
 
     Args:
         state: Game state
         cmd: Command to execute
         args: Command arguments
-        target_subsquare: Target position in sub-grid coords (or None for player position)
+        target_cell: Target position in sub-grid coords (or None for player position)
     """
     if state.is_busy():
         return
 
     # Set target for action
-    state.set_target(target_subsquare)
+    state.set_target(target_cell)
 
     if cmd == "end":
         end_day(state)
@@ -324,8 +323,7 @@ def run(tile_size: int = TILE_SIZE) -> None:
     clock = pygame.time.Clock()
 
     # Create game state
-    map_w, map_h = MAP_SIZE
-    state = build_initial_state(width=map_w, height=map_h)
+    state = build_initial_state()
     state.messages.append("Welcome to Kemet. Press H for help.")
 
     # Generate the static background surface for the first time
@@ -337,15 +335,15 @@ def run(tile_size: int = TILE_SIZE) -> None:
 
     # Create camera - viewport sized to fit map area in layout
     camera = Camera()
-    camera.set_world_bounds(state.width, state.height, tile_size)
+    camera.set_world_bounds(GRID_WIDTH, GRID_HEIGHT, tile_size)
     camera.set_viewport_size(ui_state.map_rect.width, ui_state.map_rect.height)
 
     # Pre-allocate map surface to avoid per-frame allocation (~1-2MB saved per frame)
     map_surface = pygame.Surface((camera.viewport_width, camera.viewport_height))
 
-    # World dimensions in sub-squares (for movement bounds and cursor clamping)
-    world_sub_width = state.width * SUBGRID_SIZE
-    world_sub_height = state.height * SUBGRID_SIZE
+    # World dimensions in grid cells (for movement bounds and cursor clamping)
+    world_sub_width = GRID_WIDTH
+    world_sub_height = GRID_HEIGHT
 
     # Movement speed in sub-squares per second (not pixels)
     move_speed_subsquares = MOVE_SPEED / SUB_TILE_SIZE
@@ -440,7 +438,7 @@ def run(tile_size: int = TILE_SIZE) -> None:
                         tool = toolbar.get_selected_tool()
                         if tool:
                             action, args = tool.get_action()
-                            issue(state, action, args, ui_state.target_subsquare)
+                            issue(state, action, args, ui_state.target_cell)
                             # Elevation range cache is invalidated automatically by terrain actions
 
                 # Right click
@@ -495,12 +493,12 @@ def run(tile_size: int = TILE_SIZE) -> None:
                     else:
                         state.messages.append("This tool has no options.")
                 elif event.key == INTERACT_KEY:
-                    issue(state, "collect", [], ui_state.target_subsquare)
+                    issue(state, "collect", [], ui_state.target_cell)
                 elif event.key == USE_TOOL_KEY:
                     tool = toolbar.get_selected_tool()
                     if tool:
                         action, args = tool.get_action()
-                        issue(state, action, args, ui_state.target_subsquare)
+                        issue(state, action, args, ui_state.target_cell)
                         # Elevation range cache is invalidated automatically by terrain actions
 
         # Movement (when menu closed)
@@ -518,7 +516,7 @@ def run(tile_size: int = TILE_SIZE) -> None:
 
             update_player_movement(
                 state.player_state, (vx, vy), dt,
-                world_sub_width, world_sub_height, state.is_subsquare_blocked
+                world_sub_width, world_sub_height, state.is_cell_blocked
             )
 
         # Camera follows player (get pixel position from player state)
@@ -543,7 +541,7 @@ def run(tile_size: int = TILE_SIZE) -> None:
                 toolbar.get_selected_tool(),
             )
             # Sync target to game state for rendering and commands
-            state.set_target(ui_state.target_subsquare)
+            state.set_target(ui_state.target_cell)
 
         # Simulation tick
         state._tick_timer += dt

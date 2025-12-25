@@ -13,7 +13,7 @@ from typing import Dict, Tuple
 # Sub-squares are player-scale tiles (48px each)
 # Simulation tiles contain 3x3 sub-squares (144px each)
 SUB_TILE_SIZE = 48                        # Player-scale tile size in pixels
-TILE_SIZE = SUB_TILE_SIZE * 3             # 144px simulation tile (SUBGRID_SIZE is in main config)
+TILE_SIZE = SUB_TILE_SIZE * 3             # 144px simulation tile (3 is in main config)
 
 VIRTUAL_WIDTH = 1280
 VIRTUAL_HEIGHT = 720

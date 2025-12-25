@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 import numpy as np
 
-from ground import TILE_TYPES
+from world.terrain import TILE_TYPES
 from config import (
     TRENCH_EVAP_REDUCTION,
     CISTERN_EVAP_REDUCTION,
@@ -27,13 +27,13 @@ def apply_tile_evaporation(state: "GameState") -> None:
     and wind magnitude at each active cell.
 
     Args:
-        state: Game state with grids and active_water_subsquares set.
+        state: Game state with grids and active_water_cells set.
     """
-    if len(state.active_water_subsquares) == 0:
+    if len(state.active_water_cells) == 0:
         return
 
     # Extract active cell coordinates as arrays
-    active_coords = list(state.active_water_subsquares)
+    active_coords = list(state.active_water_cells)
     rows = np.array([c[0] for c in active_coords], dtype=np.int32)
     cols = np.array([c[1] for c in active_coords], dtype=np.int32)
 
@@ -49,17 +49,13 @@ def apply_tile_evaporation(state: "GameState") -> None:
     cols = cols[has_water]
     water_amounts = water_amounts[has_water]
 
-    # Get tile coordinates for each cell
-    tile_xs = rows // 3
-    tile_ys = cols // 3
+    # Get biome kinds for each cell (using grid coordinates)
+    cell_kinds = np.array([state.get_cell_kind(sx, sy) for sx, sy in zip(rows, cols)])
 
-    # Get tile kinds (vectorized)
-    tile_kinds = np.array([state.get_tile_kind(tx, ty) for tx, ty in zip(tile_xs, tile_ys)])
-
-    # Base evaporation from tile properties
+    # Base evaporation from biome properties
     base_evaps = np.array([
         (TILE_TYPES[kind].evap * state.heat) // 100
-        for kind in tile_kinds
+        for kind in cell_kinds
     ], dtype=np.int32)
 
     # === Atmosphere modifier (NEW: grid-based) ===
@@ -83,24 +79,17 @@ def apply_tile_evaporation(state: "GameState") -> None:
 
         # Apply atmosphere modifier
         base_evaps = (base_evaps * atmos_modifier).astype(np.int32)
-    elif state.atmosphere is not None:
-        # LEGACY: Fall back to old atmosphere system during transition
-        atmos_modifiers = np.array([
-            state.atmosphere.get_evaporation_modifier(tx, ty)
-            for tx, ty in zip(tile_xs, tile_ys)
-        ])
-        base_evaps = (base_evaps * atmos_modifiers).astype(np.int32)
 
-    # Cistern reduction (vectorized check)
+    # Cistern reduction (vectorized check using grid coordinates)
     has_cistern = np.array([
-        state.tile_has_cistern(tx, ty) for tx, ty in zip(tile_xs, tile_ys)
+        state.cell_has_cistern(sx, sy) for sx, sy in zip(rows, cols)
     ], dtype=bool)
     base_evaps = np.where(has_cistern,
                           (base_evaps * CISTERN_EVAP_REDUCTION) // 100,
                           base_evaps)
 
     # Retention reduction
-    retentions = np.array([TILE_TYPES[kind].retention for kind in tile_kinds])
+    retentions = np.array([TILE_TYPES[kind].retention for kind in cell_kinds])
     tile_evaps = base_evaps - ((retentions * base_evaps) // 100)
 
     # Filter non-positive evaporation
@@ -131,4 +120,4 @@ def apply_tile_evaporation(state: "GameState") -> None:
     empty_cells = final_water <= 0
     if np.any(empty_cells):
         empty_coords = set(zip(rows[empty_cells], cols[empty_cells]))
-        state.active_water_subsquares -= empty_coords
+        state.active_water_cells -= empty_coords

@@ -9,8 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 import numpy as np
 
-from ground import SoilLayer, units_to_meters
-from config import SUBGRID_SIZE
+from world.terrain import SoilLayer, units_to_meters
 
 if TYPE_CHECKING:
     from main import GameState
@@ -62,23 +61,24 @@ def get_exposed_material(state: "GameState", sx: int, sy: int) -> str:
     return "bedrock"
 
 
-def get_tile_subsurface_water(state: "GameState", tx: int, ty: int) -> int:
-    """Get total subsurface water for a tile (sum of all 9 grid cells, all layers).
+def get_cell_neighborhood_subsurface_water(state: "GameState", sx: int, sy: int) -> int:
+    """Get total subsurface water for a grid cell and its 8 neighbors (3×3 area).
 
     Args:
         state: Game state
-        tx, ty: Tile coordinates (0-59, 0-44)
+        sx, sy: Grid coordinates (0-179, 0-134)
 
     Returns:
-        Total subsurface water in units
+        Total subsurface water in units across the 3×3 neighborhood
     """
-    gx_start = tx * SUBGRID_SIZE
-    gy_start = ty * SUBGRID_SIZE
-    return int(state.subsurface_water_grid[
-        :,  # All layers
-        gx_start:gx_start + SUBGRID_SIZE,
-        gy_start:gy_start + SUBGRID_SIZE
-    ].sum())
+    from config import GRID_WIDTH, GRID_HEIGHT
+    total = 0
+    for dx in range(-1, 2):
+        for dy in range(-1, 2):
+            gx, gy = sx + dx, sy + dy
+            if 0 <= gx < GRID_WIDTH and 0 <= gy < GRID_HEIGHT:
+                total += int(state.subsurface_water_grid[:, gx, gy].sum())
+    return total
 
 
 def get_grid_subsurface_water(state: "GameState", sx: int, sy: int) -> int:
@@ -94,25 +94,38 @@ def get_grid_subsurface_water(state: "GameState", sx: int, sy: int) -> int:
     return int(state.subsurface_water_grid[:, sx, sy].sum())
 
 
-def get_tile_total_water(state: "GameState", tx: int, ty: int) -> int:
-    """Get total water for a tile (surface + subsurface).
+def get_cell_neighborhood_surface_water(state: "GameState", sx: int, sy: int) -> int:
+    """Get total surface water for a grid cell and its 8 neighbors (3×3 area).
 
     Args:
         state: Game state
-        tx, ty: Tile coordinates (0-59, 0-44)
+        sx, sy: Grid coordinates (0-179, 0-134)
 
     Returns:
-        Total water in units
+        Total surface water in units across the 3×3 neighborhood
     """
-    # Since get_tile_surface_water just needs tile coords, we can refactor this later
-    # For now, get surface water directly
-    gx_start = tx * SUBGRID_SIZE
-    gy_start = ty * SUBGRID_SIZE
-    surface = int(state.water_grid[
-        gx_start:gx_start + SUBGRID_SIZE,
-        gy_start:gy_start + SUBGRID_SIZE
-    ].sum())
-    subsurface = get_tile_subsurface_water(state, tx, ty)
+    from config import GRID_WIDTH, GRID_HEIGHT
+    total = 0
+    for dx in range(-1, 2):
+        for dy in range(-1, 2):
+            gx, gy = sx + dx, sy + dy
+            if 0 <= gx < GRID_WIDTH and 0 <= gy < GRID_HEIGHT:
+                total += int(state.water_grid[gx, gy])
+    return total
+
+
+def get_cell_neighborhood_total_water(state: "GameState", sx: int, sy: int) -> int:
+    """Get total water (surface + subsurface) for a grid cell and its 8 neighbors.
+
+    Args:
+        state: Game state
+        sx, sy: Grid coordinates (0-179, 0-134)
+
+    Returns:
+        Total water in units across the 3×3 neighborhood
+    """
+    surface = get_cell_neighborhood_surface_water(state, sx, sy)
+    subsurface = get_cell_neighborhood_subsurface_water(state, sx, sy)
     return surface + subsurface
 
 
@@ -129,10 +142,10 @@ def get_tile_average_moisture(state: "GameState", tx: int, ty: int) -> float:
     if state.moisture_grid is None:
         return 0.0
 
-    gx_start = tx * SUBGRID_SIZE
-    gy_start = ty * SUBGRID_SIZE
+    gx_start = tx * 3
+    gy_start = ty * 3
     tile_moisture = state.moisture_grid[
-        gx_start:gx_start + SUBGRID_SIZE,
-        gy_start:gy_start + SUBGRID_SIZE
+        gx_start:gx_start + 3,
+        gy_start:gy_start + 3
     ]
     return float(tile_moisture.mean())

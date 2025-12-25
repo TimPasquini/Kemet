@@ -16,9 +16,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Tuple
 
-from config import SUBGRID_SIZE
-from subgrid import subgrid_to_tile, tile_to_subgrid
-
 
 @dataclass
 class Camera:
@@ -142,7 +139,7 @@ class Camera:
     @property
     def sub_tile_size(self) -> float:
         """Size of a grid cell in world pixels."""
-        return self.tile_size / SUBGRID_SIZE
+        return self.tile_size / 3
 
     def world_to_subsquare(self, world_x: float, world_y: float) -> Tuple[int, int]:
         """Convert world pixel coordinates to grid cell coordinates."""
@@ -160,8 +157,15 @@ class Camera:
         return sub_x * sub_size + sub_size / 2, sub_y * sub_size + sub_size / 2
 
     # Re-export as static methods for backwards compatibility
-    subsquare_to_tile = staticmethod(subgrid_to_tile)
-    tile_to_subsquare = staticmethod(tile_to_subgrid)
+    @staticmethod
+    def subsquare_to_tile(sub_x: int, sub_y: int) -> Tuple[int, int]:
+        """Convert grid cell coords to containing tile coords."""
+        return sub_x // 3, sub_y // 3
+
+    @staticmethod
+    def tile_to_subsquare(tile_x: int, tile_y: int) -> Tuple[int, int]:
+        """Convert tile coords to top-left grid cell coords."""
+        return tile_x * 3, tile_y * 3
 
     def get_visible_subsquare_range(self) -> Tuple[int, int, int, int]:
         """
@@ -170,8 +174,8 @@ class Camera:
         Returns: (start_x, start_y, end_x, end_y) - end is exclusive
         """
         sub_size = self.sub_tile_size
-        world_sub_width = (self.world_pixel_width // self.tile_size) * SUBGRID_SIZE
-        world_sub_height = (self.world_pixel_height // self.tile_size) * SUBGRID_SIZE
+        world_sub_width = (self.world_pixel_width // self.tile_size) * 3
+        world_sub_height = (self.world_pixel_height // self.tile_size) * 3
 
         start_x = max(0, int(self.world_x // sub_size))
         start_y = max(0, int(self.world_y // sub_size))

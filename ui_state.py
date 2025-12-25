@@ -13,7 +13,7 @@ from typing import Tuple, Optional, Callable, List, TYPE_CHECKING
 
 import pygame
 
-from config import INTERACTION_RANGE
+from config import INTERACTION_RANGE, GRID_WIDTH, GRID_HEIGHT
 from render.config import (
     VIRTUAL_WIDTH,
     VIRTUAL_HEIGHT,
@@ -22,7 +22,7 @@ from render.config import (
     LOG_PANEL_HEIGHT,
     POPUP_OPTION_HEIGHT,
 )
-from subgrid import clamp_to_range, clamp_to_bounds, subgrid_to_tile
+from utils import clamp_to_range, clamp_to_bounds
 
 if TYPE_CHECKING:
     from camera import Camera
@@ -73,10 +73,10 @@ class UIState:
     popup_option_height: int = POPUP_OPTION_HEIGHT
     popup_option_count: int = 0
 
-    # Cursor tracking for sub-grid interaction system
-    hovered_subsquare: Optional[Tuple[int, int]] = None  # Raw sub-square under cursor
-    target_subsquare: Optional[Tuple[int, int]] = None   # Clamped to interaction range
-    is_valid_target: bool = True                         # Is the target valid for the current tool?
+    # Cursor tracking for grid interaction system
+    hovered_cell: Optional[Tuple[int, int]] = None  # Raw grid cell under cursor
+    target_cell: Optional[Tuple[int, int]] = None   # Clamped to interaction range
+    is_valid_target: bool = True                    # Is the target valid for the current tool?
 
     def clear_regions(self) -> None:
         """Clear all click regions (called at start of each frame)."""
@@ -170,16 +170,18 @@ class UIState:
     def _check_target_validity(self, state: "GameState", tool: Optional["Tool"]) -> None:
         """Check if the current target is valid for the selected tool."""
         self.is_valid_target = True  # Default to true
-        if tool is None or self.target_subsquare is None:
+        if tool is None or self.target_cell is None:
             return
 
         if tool.id.lower() == "build":
-            tile_x, tile_y = subgrid_to_tile(*self.target_subsquare)
-            if not (0 <= tile_x < state.width and 0 <= tile_y < state.height):
+            sx, sy = self.target_cell
+            # Check bounds
+            if not (0 <= sx < GRID_WIDTH and 0 <= sy < GRID_HEIGHT):
                 self.is_valid_target = False
                 return
 
-            if self.target_subsquare in state.structures or state.get_tile_kind(tile_x, tile_y) == "rock":
+            # Check if cell has structure or is rocky terrain
+            if self.target_cell in state.structures or state.get_cell_kind(sx, sy) == "rock":
                 self.is_valid_target = False
 
     def update_cursor(
@@ -197,14 +199,14 @@ class UIState:
             state: The main game state for checking validity
             tool: The currently selected tool
         """
-        world_sub_width = state.width * 3
-        world_sub_height = state.height * 3
+        world_sub_width = GRID_WIDTH
+        world_sub_height = GRID_HEIGHT
         player_pos = state.player_state.position
 
         # Check if mouse is over the map viewport
         if not self.map_rect.collidepoint(virtual_pos):
-            self.hovered_subsquare = None
-            self.target_subsquare = None
+            self.hovered_cell = None
+            self.target_cell = None
             self.is_valid_target = False
             return
 
@@ -222,22 +224,22 @@ class UIState:
         # Convert viewport position to world position
         world_x, world_y = camera.viewport_to_world(viewport_x, viewport_y)
 
-        # Convert world position to sub-grid coordinates
-        self.hovered_subsquare = camera.world_to_subsquare(world_x, world_y)
+        # Convert world position to grid coordinates
+        self.hovered_cell = camera.world_to_subsquare(world_x, world_y)
 
         # Clamp to world bounds
-        self.hovered_subsquare = clamp_to_bounds(
-            self.hovered_subsquare, world_sub_width, world_sub_height
+        self.hovered_cell = clamp_to_bounds(
+            self.hovered_cell, world_sub_width, world_sub_height
         )
 
         # Clamp to interaction range of player
-        self.target_subsquare = clamp_to_range(
-            player_pos, self.hovered_subsquare, INTERACTION_RANGE
+        self.target_cell = clamp_to_range(
+            player_pos, self.hovered_cell, INTERACTION_RANGE
         )
 
         # Final bounds check on target
-        self.target_subsquare = clamp_to_bounds(
-            self.target_subsquare, world_sub_width, world_sub_height
+        self.target_cell = clamp_to_bounds(
+            self.target_cell, world_sub_width, world_sub_height
         )
 
         # Check if the determined target is valid for the current tool
