@@ -158,12 +158,12 @@ def _render_terrain_per_frame(
     """Fallback terrain rendering - renders each visible grid cell per frame."""
     start_x, start_y, end_x, end_y = camera.get_visible_cell_range()
 
-    for sub_y in range(start_y, end_y):
-        for sub_x in range(start_x, end_x):
-            # Grid-aware color computation (no SubSquare access needed)
-            color = get_grid_cell_color(state, sub_x, sub_y, elevation_range)
+    for sy in range(start_y, end_y):
+        for sx in range(start_x, end_x):
+            # Grid-based color computation using array data directly
+            color = get_grid_cell_color(state, sx, sy, elevation_range)
 
-            world_x, world_y = camera.cell_to_world(sub_x, sub_y)
+            world_x, world_y = camera.cell_to_world(sx, sy)
             vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
 
             rect = pygame.Rect(int(vp_x), int(vp_y), scaled_cell_size, scaled_cell_size)
@@ -186,10 +186,10 @@ def render_water_overlay(
     # Create a single overlay surface for the entire viewport.
     water_overlay = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
 
-    for sub_y in range(start_y, end_y):
-        for sub_x in range(start_x, end_x):
+    for sy in range(start_y, end_y):
+        for sx in range(start_x, end_x):
             # Grid-aware water rendering
-            water = state.water_grid[sub_x, sub_y]
+            water = state.water_grid[sx, sy]
 
             if water <= 2:
                 continue
@@ -206,7 +206,7 @@ def render_water_overlay(
                 color = (40, 100, 180)
 
             # Get grid cell screen position
-            world_x, world_y = camera.cell_to_world(sub_x, sub_y)
+            world_x, world_y = camera.cell_to_world(sx, sy)
             vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
             rect = pygame.Rect(int(vp_x), int(vp_y), sub_size, sub_size)
 

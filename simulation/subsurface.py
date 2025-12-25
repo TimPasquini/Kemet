@@ -90,26 +90,26 @@ def apply_surface_evaporation(state: "GameState") -> None:
 
     # Retention reduction
     retentions = np.array([BIOME_TYPES[kind].retention for kind in cell_kinds])
-    tile_evaps = base_evaps - ((retentions * base_evaps) // 100)
+    cell_evaps = base_evaps - ((retentions * base_evaps) // 100)
 
     # Filter non-positive evaporation
-    evaporates = tile_evaps > 0
+    evaporates = cell_evaps > 0
     if not np.any(evaporates):
         return
 
     rows = rows[evaporates]
     cols = cols[evaporates]
-    tile_evaps = tile_evaps[evaporates]
+    cell_evaps = cell_evaps[evaporates]
     water_amounts = water_amounts[evaporates]
 
     # Trench reduction (vectorized)
     has_trench = state.trench_grid[rows, cols] > 0
-    sub_evaps = np.where(has_trench,
-                         (tile_evaps * TRENCH_EVAP_REDUCTION) // 100,
-                         tile_evaps)
+    final_evaps = np.where(has_trench,
+                           (cell_evaps * TRENCH_EVAP_REDUCTION) // 100,
+                           cell_evaps)
 
     # Calculate actual evaporation (capped by available water)
-    evaporated = np.minimum(sub_evaps, water_amounts)
+    evaporated = np.minimum(final_evaps, water_amounts)
 
     # Apply evaporation (vectorized)
     state.water_grid[rows, cols] -= evaporated

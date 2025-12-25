@@ -95,7 +95,7 @@ def update_player_movement(
         dt: Delta time in seconds
         world_width_cells: World width in grid cells
         world_height_cells: World height in grid cells
-        is_cell_blocked: Function(sub_x, sub_y) -> bool
+        is_cell_blocked: Function(sx, sy) -> bool
     """
     if player_state.is_busy():
         return

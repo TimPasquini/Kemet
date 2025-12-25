@@ -137,18 +137,18 @@ NEIGHBORS_4 = [
 ]
 
 
-def get_neighbor_coords(sub_x: int, sub_y: int,
+def get_neighbor_coords(sx: int, sy: int,
                         direction: Point) -> Point:
     """Get neighboring grid cell coords in given direction.
 
     Args:
-        sub_x, sub_y: Current grid cell world coords
+        sx, sy: Current grid cell world coords
         direction: (dx, dy) offset
 
     Returns:
         Neighboring grid cell world coords
     """
-    return sub_x + direction[0], sub_y + direction[1]
+    return sx + direction[0], sy + direction[1]
 
 
 def is_on_range_edge(pos: Point, center: Point,
