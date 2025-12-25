@@ -106,6 +106,7 @@ STRUCTURE_COSTS: Dict[str, Dict[str, int]] = {
 MAX_POUR_AMOUNT = 1000      # Max pour amount in units (100L)
 MIN_LAYER_THICKNESS = 1     # Min thickness when digging
 MOVE_SPEED = 220
+RUN_SPEED_MULTIPLIER = 2.0  # Speed multiplier when holding run key (left shift)
 DIAGONAL_FACTOR = 0.707
 
 # Starting Inventory

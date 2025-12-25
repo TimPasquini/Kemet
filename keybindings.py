@@ -37,6 +37,7 @@ USE_TOOL_KEY = _key("f")      # Use currently selected tool
 INTERACT_KEY = _key("e")      # Collect water / resupply at depot / interact with structure
 TOOL_MENU_KEY = _key("r")     # Open tool submenu (for tools with options)
 REST_KEY = _key("SPACE")      # Rest at night to end day
+RUN_KEY = _key("LSHIFT")      # Hold to run (increased movement speed)
 
 # Menu navigation (when tool menu is open)
 MENU_UP_KEY = _key("w")
@@ -51,6 +52,7 @@ HELP_KEY = _key("h")
 # Control descriptions for help display
 CONTROL_DESCRIPTIONS = [
     "WASD: move",
+    "LShift: run",
     "1-9: select tool",
     "F: use tool",
     "R: options menu",

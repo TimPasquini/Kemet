@@ -132,23 +132,22 @@ def render_map_viewport(
         if scaled_sub_size >= 8:  # Only draw letter if big enough
             draw_text(surface, font, structure.kind[0].upper(), (rect.x + scaled_sub_size // 3, rect.y + scaled_sub_size // 4))
 
-    # Draw special features (wellsprings, depots) - only visible tiles
-    for ty in range(start_ty, end_ty):
-        for tx in range(start_tx, end_tx):
-            world_x, world_y = camera.tile_to_world(tx, ty)
-            vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
-            rect = pygame.Rect(int(vp_x), int(vp_y), tile_size - 1, tile_size - 1)
-
-            # Check wellspring from wellspring_grid (center cell of tile's 3x3 region)
-            center_sx, center_sy = tx * 3 + 1, ty * 3 + 1
-            wellspring_output = state.wellspring_grid[center_sx, center_sy] if state.wellspring_grid is not None else 0
+    # Draw wellsprings - check all visible grid cells
+    start_sx, start_sy, end_sx, end_sy = camera.get_visible_subsquare_range()
+    for sy in range(start_sy, end_sy):
+        for sx in range(start_sx, end_sx):
+            wellspring_output = state.wellspring_grid[sx, sy] if state.wellspring_grid is not None else 0
             if wellspring_output > 0:
-                spring_color = COLOR_WELLSPRING_STRONG if wellspring_output / 10 > 0.5 else COLOR_WELLSPRING_WEAK
-                pygame.draw.circle(surface, spring_color, rect.center, WELLSPRING_RADIUS * camera.zoom)
+                # Get grid cell screen position
+                world_x, world_y = camera.subsquare_to_world(sx, sy)
+                vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
 
-            # NOTE: Depot rendering removed - depots are now rendered as single-cell structures
-            # like all other buildings in the structure rendering loop above (lines 118-133)
-            # Multi-cell structure layouts will be implemented properly in the future
+                # Draw wellspring circle at cell center
+                cell_center_x = int(vp_x + scaled_sub_size // 2)
+                cell_center_y = int(vp_y + scaled_sub_size // 2)
+                spring_color = COLOR_WELLSPRING_STRONG if wellspring_output / 10 > 0.5 else COLOR_WELLSPRING_WEAK
+                radius = max(2, int(WELLSPRING_RADIUS * camera.zoom))
+                pygame.draw.circle(surface, spring_color, (cell_center_x, cell_center_y), radius)
 
     # Render sub-grid water overlay (dynamic, so drawn on top of static background)
     render_subgrid_water(surface, state, camera, tile_size)

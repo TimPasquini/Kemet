@@ -504,15 +504,22 @@ def run(tile_size: int = TILE_SIZE) -> None:
         # Movement (when menu closed)
         if not toolbar.menu_open:
             keys = pygame.key.get_pressed()
+
+            # Apply run speed multiplier if shift is held
+            from config import RUN_SPEED_MULTIPLIER
+            from keybindings import RUN_KEY
+            speed_multiplier = RUN_SPEED_MULTIPLIER if keys[RUN_KEY] else 1.0
+            current_speed = move_speed_subsquares * speed_multiplier
+
             vx = vy = 0.0
             if keys[pygame.K_w]:
-                vy -= move_speed_subsquares
+                vy -= current_speed
             if keys[pygame.K_s]:
-                vy += move_speed_subsquares
+                vy += current_speed
             if keys[pygame.K_a]:
-                vx -= move_speed_subsquares
+                vx -= current_speed
             if keys[pygame.K_d]:
-                vx += move_speed_subsquares
+                vx += current_speed
 
             update_player_movement(
                 state.player_state, (vx, vy), dt,
