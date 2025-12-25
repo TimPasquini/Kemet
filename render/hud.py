@@ -71,17 +71,52 @@ def render_hud(
     draw_text(screen, font, f"Rain: {'Active' if state.raining else f'in {state.rain_timer}t'}", (hud_x, y_offset))
     y_offset += LINE_HEIGHT + SECTION_SPACING
 
-    # Atmosphere Section
-    if state.atmosphere:
+    # Atmosphere Section (grid-based)
+    # NEW: Grid-based atmosphere at cursor position
+    if state.humidity_grid is not None and state.wind_grid is not None:
+        # Use cursor position (target_subsquare), fallback to player position
+        if state.target_subsquare is not None:
+            sx, sy = state.target_subsquare
+        else:
+            sx, sy = state.player_subsquare
+
+        y_offset = draw_section_header(screen, font, "ATMOSPHERE", (hud_x, y_offset), width=130) + 4
+
+        # Humidity at cursor
+        humidity = state.humidity_grid[sx, sy]
+        draw_text(screen, font, f"Humidity: {humidity*100:.0f}%", (hud_x, y_offset))
+        y_offset += LINE_HEIGHT
+
+        # Wind at cursor (calculate angle for arrow)
+        wind_x = state.wind_grid[sx, sy, 0]
+        wind_y = state.wind_grid[sx, sy, 1]
+        wind_magnitude = float(np.sqrt(wind_x**2 + wind_y**2))
+
+        if wind_magnitude > 0.01:
+            wind_angle = np.arctan2(wind_y, wind_x)
+            # Convert to compass: 0° = east, counter-clockwise
+            # Adjust to: 0° = N, 90° = E, 180° = S, 270° = W
+            compass_deg = (90 - np.degrees(wind_angle)) % 360
+            arrows = ['↑', '↗', '→', '↘', '↓', '↙', '←', '↖']
+            arrow_idx = int((compass_deg + 22.5) / 45) % 8
+            arrow = arrows[arrow_idx]
+        else:
+            arrow = '·'  # Calm wind indicator
+
+        draw_text(screen, font, f"Wind: {arrow} {wind_magnitude*100:.0f}", (hud_x, y_offset))
+        y_offset += LINE_HEIGHT + SECTION_SPACING
+
+    # LEGACY: Fall back to old atmosphere system during transition
+    elif state.atmosphere:
         x, y = state.player
         region = state.atmosphere.get_region_at_tile(x, y)
-        
+
         y_offset = draw_section_header(screen, font, "ATMOSPHERE", (hud_x, y_offset), width=130) + 4
-        
+
         # Humidity
         draw_text(screen, font, f"Humidity: {region.humidity*100:.0f}%", (hud_x, y_offset))
         y_offset += LINE_HEIGHT
-        
+
         # Wind
         arrows = ['↑', '↗', '→', '↘', '↓', '↙', '←', '↖']
         idx = region.wind_direction % 8

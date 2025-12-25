@@ -21,12 +21,10 @@ from simulation.config import (
     WIND_EROSION_THRESHOLD,
     WIND_EROSION_RATE,
 )
-from atmosphere import ATMOSPHERE_REGION_SIZE
 from ground import SoilLayer
 
 if TYPE_CHECKING:
     from main import GameState
-    from atmosphere import AtmosphereLayer
 
 Point = Tuple[int, int]
 
@@ -380,36 +378,55 @@ def reset_daily_accumulators(state: "GameState") -> None:
 
 
 def accumulate_wind_exposure(state: "GameState") -> None:
-    """Accumulate wind exposure for overnight erosion, using active sets.
+    """Accumulate wind exposure for overnight erosion (grid-based vectorized).
 
-    DEPRECATED FOR PHASE 3: This function uses the legacy object-oriented
-    atmosphere system (AtmosphereLayer with region-based wind). After Phase 3
-    atmosphere vectorization, this should be replaced with a grid-based approach
-    using wind_grid (180×135) for proper per-cell wind exposure calculation.
+    Replaces legacy region-based approach with direct grid-based calculation.
+    Uses wind_grid to compute wind magnitude at each cell and accumulates
+    exposure for cells without significant surface water.
     """
-    atmosphere = state.atmosphere
-    if not atmosphere:
-        return
+    # NEW: Grid-based wind exposure
+    if state.wind_grid is not None:
+        # Calculate wind magnitude for entire grid
+        wind_x = state.wind_grid[:, :, 0]
+        wind_y = state.wind_grid[:, :, 1]
+        wind_magnitude = np.sqrt(wind_x**2 + wind_y**2)
 
-    state.active_wind_tiles.clear()
+        # Only accumulate where wind is significant (>0.2, matching legacy threshold)
+        significant_wind = wind_magnitude > 0.2
 
-    for rx in range(atmosphere.width):
-        for ry in range(atmosphere.height):
-            region = atmosphere.regions[rx][ry]
-            if region.wind_speed < 0.2:
-                continue
+        # Only accumulate where surface water is low (<10 units, dry enough for wind erosion)
+        dry_surface = state.water_grid < 10
 
-            start_tx, start_ty = rx * ATMOSPHERE_REGION_SIZE, ry * ATMOSPHERE_REGION_SIZE
-            end_tx, end_ty = start_tx + ATMOSPHERE_REGION_SIZE, start_ty + ATMOSPHERE_REGION_SIZE
+        # Combined mask: significant wind AND dry surface
+        exposure_mask = significant_wind & dry_surface
 
-            for tile_x in range(start_tx, end_tx):
-                for tile_y in range(start_ty, end_ty):
-                    if not (0 <= tile_x < state.width and 0 <= tile_y < state.height):
-                        continue
+        # Accumulate wind exposure (additive over multiple calls)
+        # Note: This is called every 10 ticks, so exposure builds up during the day
+        state.wind_exposure_grid[exposure_mask] += wind_magnitude[exposure_mask]
 
-                    state.active_wind_tiles.add((tile_x, tile_y))
-                    for local_x in range(SUBGRID_SIZE):
-                        for local_y in range(SUBGRID_SIZE):
-                            sx, sy = tile_x * SUBGRID_SIZE + local_x, tile_y * SUBGRID_SIZE + local_y
-                            if state.water_grid[sx, sy] < 10:
-                                state.wind_exposure_grid[sx, sy] += region.wind_speed
+    # LEGACY: Fall back to old atmosphere system during transition
+    elif state.atmosphere is not None:
+        atmosphere = state.atmosphere
+        state.active_wind_tiles.clear()
+
+        for rx in range(atmosphere.width):
+            for ry in range(atmosphere.height):
+                region = atmosphere.regions[rx][ry]
+                if region.wind_speed < 0.2:
+                    continue
+
+                # Note: ATMOSPHERE_REGION_SIZE was 4, now hardcoded for legacy fallback
+                start_tx, start_ty = rx * 4, ry * 4
+                end_tx, end_ty = start_tx + 4, start_ty + 4
+
+                for tile_x in range(start_tx, end_tx):
+                    for tile_y in range(start_ty, end_ty):
+                        if not (0 <= tile_x < state.width and 0 <= tile_y < state.height):
+                            continue
+
+                        state.active_wind_tiles.add((tile_x, tile_y))
+                        for local_x in range(SUBGRID_SIZE):
+                            for local_y in range(SUBGRID_SIZE):
+                                sx, sy = tile_x * SUBGRID_SIZE + local_x, tile_y * SUBGRID_SIZE + local_y
+                                if state.water_grid[sx, sy] < 10:
+                                    state.wind_exposure_grid[sx, sy] += region.wind_speed

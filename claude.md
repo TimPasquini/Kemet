@@ -48,6 +48,15 @@ The goal is to create systems that generate believable, emergent complexity from
 
 ## Known Issues & Priorities
 
+**Bugs & Performance**:
+1. np.random(ideal_flow.shape) in simulation/surface.py allocates new float array every tick. Pre-allocate or use noise
+2. simulate_surface_flow water flowingn into padding is deleted before edge runoff is calculated
+3. recalculate_biomes sorts all cells and iterates in python. Need to vectorize
+4. tick_structures is iterating a dictionary. Move to structure_id_grid
+5. render/map.py iterates over subsquares in render_subgrid_water. Can ue pygame.surfarry to map water_grid directly to
+RGB image array using palette lookup & create surface from that to do in single blit
+6. Replace biome sorting with scipy.stats.rankdata and np.select
+
 ### 🔴 CRITICAL - Phase 3 Blockers
 
 #### Atmosphere System Requires Grid Vectorization
@@ -220,6 +229,10 @@ This helps players categorize "things I built" vs. "ways I've shaped the land."
 - **Delete** `atmosphere.py` entirely (~121 lines)
 - **Delete** `subgrid.py` entirely (~185 lines)
 - Remove atmosphere dependencies from `simulation/subsurface.py` and `simulation/erosion.py`
+
+**Implementation Requirements**
+- scipy.ndimage.gaussian_filter for humidity & temperature diffusion
+- np.roll can be used to calculate wind exposure for entire map in single operation (investigate and verify)
 
 **Files to Modify**: `atmosphere.py` (DELETE), `subgrid.py` (DELETE), `simulation/subsurface.py`, `simulation/erosion.py`, `main.py`
 **Estimated Effort**: ~6-8 hours

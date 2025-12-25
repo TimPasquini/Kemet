@@ -58,7 +58,6 @@ from simulation.subsurface import apply_tile_evaporation
 from simulation.subsurface_vectorized import simulate_subsurface_tick_vectorized
 from simulation.erosion import apply_overnight_erosion, accumulate_wind_exposure
 from weather import WeatherSystem
-from atmosphere import AtmosphereLayer, simulate_atmosphere_tick
 from world_state import GlobalWaterPool
 
 Point = Tuple[int, int]
@@ -95,10 +94,6 @@ class GameState:
     # Simulation active sets for performance optimization
     active_water_subsquares: Set[Point] = field(default_factory=set)
     active_water_tiles: Set[Point] = field(default_factory=set)
-    active_wind_tiles: Set[Point] = field(default_factory=set)
-
-    # Atmosphere layer (regional humidity/wind)
-    atmosphere: AtmosphereLayer | None = None
 
     # Global water pool (conservation of water)
     water_pool: GlobalWaterPool = field(default_factory=GlobalWaterPool)
@@ -146,6 +141,18 @@ class GameState:
     # === Wellspring Grid ===
     # Shape: (GRID_WIDTH, GRID_HEIGHT), dtype=int32. Water output rate per grid cell.
     wellspring_grid: np.ndarray | None = None
+
+    # === Atmosphere State (Grid-Based) ===
+    # Shape: (GRID_WIDTH, GRID_HEIGHT), dtype=float32. Humidity (0.1-0.9 range).
+    humidity_grid: np.ndarray | None = None
+    # Shape: (GRID_WIDTH, GRID_HEIGHT, 2), dtype=float32. Wind vector (x, y components).
+    # wind_grid[:, :, 0] = wind_x component (-0.7 to 0.7)
+    # wind_grid[:, :, 1] = wind_y component (-0.7 to 0.7)
+    # Magnitude: sqrt(wind_x² + wind_y²) typically 0.0-0.7 range
+    wind_grid: np.ndarray | None = None
+    # Shape: (GRID_WIDTH, GRID_HEIGHT), dtype=float32. Temperature multiplier.
+    # Currently unused in simulation (kept at 1.0), but ready for future expansion.
+    temperature_grid: np.ndarray | None = None
 
     # === Player convenience properties for backwards compatibility ===
     @property
@@ -328,9 +335,6 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
     player_state = PlayerState()
     player_state.position = start_subsquare  # Uses setter to center in sub-square
 
-    # Initialize atmosphere layer
-    atmosphere = AtmosphereLayer.create(width, height)
-
     # Initialize global water pool
     from config import INITIAL_WATER_POOL
     water_pool = GlobalWaterPool(total_volume=INITIAL_WATER_POOL)
@@ -340,6 +344,22 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
 
     # Initialize trench grid
     trench_grid = np.zeros((width * SUBGRID_SIZE, height * SUBGRID_SIZE), dtype=np.uint8)
+
+    # Initialize atmosphere grids at full grid resolution
+    # Humidity: random initial values similar to legacy system (0.4-0.6)
+    humidity_grid = np.random.uniform(0.4, 0.6, (grid_width, grid_height)).astype(np.float32)
+
+    # Wind: Convert legacy random direction/speed to 2D vectors
+    # Legacy: direction 0-7 (8 directions), speed 0-0.3
+    # New: Generate random angles and speeds, convert to (x, y) components
+    wind_angles = np.random.uniform(0, 2 * np.pi, (grid_width, grid_height))
+    wind_speeds = np.random.uniform(0.0, 0.3, (grid_width, grid_height))
+    wind_grid = np.zeros((grid_width, grid_height, 2), dtype=np.float32)
+    wind_grid[:, :, 0] = wind_speeds * np.cos(wind_angles)  # x component
+    wind_grid[:, :, 1] = wind_speeds * np.sin(wind_angles)  # y component
+
+    # Temperature: uniform 1.0 (inactive for now, but ready for future)
+    temperature_grid = np.ones((grid_width, grid_height), dtype=np.float32)
 
     # Initialize daily accumulator grids for erosion
     water_passage_grid = np.zeros((GRID_WIDTH, GRID_HEIGHT), dtype=float)
@@ -355,7 +375,6 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
         player_state=player_state,
         water_grid=water_grid,
         elevation_grid=elevation_grid,
-        atmosphere=atmosphere,
         water_pool=water_pool,
         moisture_grid=moisture_grid,
         trench_grid=trench_grid,
@@ -370,6 +389,9 @@ def build_initial_state(width: int = 10, height: int = 10) -> GameState:
         permeability_horiz_grid=permeability_horiz_grid,
         porosity_grid=porosity_grid,
         wellspring_grid=wellspring_grid,
+        humidity_grid=humidity_grid,
+        wind_grid=wind_grid,
+        temperature_grid=temperature_grid,
     )
 
     # Create depot structure at starting subsquare
@@ -1014,10 +1036,19 @@ def simulate_tick(state: GameState) -> None:
 
     apply_tile_evaporation(state)
 
-    if state.atmosphere is not None:
-        simulate_atmosphere_tick(state.atmosphere, state.heat)
-        if state.weather.turn_in_day % 10 == 0:
-            accumulate_wind_exposure(state)
+    # Update atmosphere every 2 ticks for performance (not every tick)
+    if tick % 2 == 0:
+        # NEW: Grid-based vectorized atmosphere
+        if state.humidity_grid is not None and state.wind_grid is not None:
+            from simulation.atmosphere import simulate_atmosphere_tick_vectorized
+            simulate_atmosphere_tick_vectorized(state)
+        # LEGACY: Fall back to old atmosphere during transition
+        elif state.atmosphere is not None:
+            simulate_atmosphere_tick(state.atmosphere, state.heat)
+
+    # Accumulate wind exposure every 10 ticks
+    if tick % 10 == 0:
+        accumulate_wind_exposure(state)
 
 
 def end_day(state: GameState) -> None:
