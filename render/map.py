@@ -112,16 +112,12 @@ def render_map_viewport(
         _render_terrain_per_frame(surface, state, camera, tile_size, elevation_range)
 
     # --- 2. Draw dynamic elements on top of the background ---
-    # Get visible tile range for structures and special features
-    start_tx, start_ty, end_tx, end_ty = camera.get_visible_tile_range()
-
-    # Draw structures (keyed by sub-square coords, rendered at sub-square position)
+    # Draw structures (keyed by grid cell coords, rendered at grid cell position)
     # Use SUB_TILE_SIZE directly to match background scaling
     scaled_sub_size = max(1, int(SUB_TILE_SIZE * camera.zoom))
     for (sub_x, sub_y), structure in state.structures.items():
-        # Convert sub-square to tile for visibility check
-        tile_x, tile_y = (sub_x // 3, sub_y // 3)
-        if not camera.is_tile_visible(tile_x, tile_y):
+        # Check if grid cell is visible
+        if not camera.is_subsquare_visible(sub_x, sub_y):
             continue
         # Get world position for sub-square using camera method
         world_x, world_y = camera.subsquare_to_world(sub_x, sub_y)

@@ -43,11 +43,17 @@ class Camera:
     # Zoom level (1.0 = 100%, 0.5 = 50% size / 2x view area, 2.0 = 200% size)
     zoom: float = 1.0
 
-    def set_world_bounds(self, world_width_tiles: int, world_height_tiles: int, tile_size: int) -> None:
-        """Set the world bounds based on tile dimensions."""
-        self.world_pixel_width = world_width_tiles * tile_size
-        self.world_pixel_height = world_height_tiles * tile_size
-        self.tile_size = tile_size
+    def set_world_bounds(self, world_width_cells: int, world_height_cells: int, cell_size: int) -> None:
+        """Set the world bounds based on grid cell dimensions.
+
+        Args:
+            world_width_cells: Width of world in grid cells (e.g., GRID_WIDTH = 180)
+            world_height_cells: Height of world in grid cells (e.g., GRID_HEIGHT = 135)
+            cell_size: Size of each grid cell in pixels (e.g., SUB_TILE_SIZE = 48)
+        """
+        self.world_pixel_width = world_width_cells * cell_size
+        self.world_pixel_height = world_height_cells * cell_size
+        self.tile_size = cell_size  # Note: 'tile_size' kept for compatibility, but represents cell size
 
     def set_viewport_size(self, width: int, height: int) -> None:
         """Set the viewport size in pixels."""
@@ -64,12 +70,6 @@ class Camera:
         self.world_x = world_x - (self.viewport_width / self.zoom) / 2
         self.world_y = world_y - (self.viewport_height / self.zoom) / 2
         self._clamp_to_bounds()
-
-    def center_on_tile(self, tile_x: int, tile_y: int) -> None:
-        """Center the camera on a tile."""
-        world_x = tile_x * self.tile_size + self.tile_size / 2
-        world_y = tile_y * self.tile_size + self.tile_size / 2
-        self.center_on(world_x, world_y)
 
     def follow(self, world_x: float, world_y: float, margin: float = 0.3) -> None:
         """
@@ -124,13 +124,6 @@ class Camera:
         """Convert viewport coordinates to world coordinates."""
         return (vp_x / self.zoom) + self.world_x, (vp_y / self.zoom) + self.world_y
 
-    def world_to_tile(self, world_x: float, world_y: float) -> Tuple[int, int]:
-        """Convert world pixel coordinates to tile coordinates."""
-        return int(world_x // self.tile_size), int(world_y // self.tile_size)
-
-    def tile_to_world(self, tile_x: int, tile_y: int) -> Tuple[float, float]:
-        """Convert tile coordinates to world pixel coordinates (top-left of tile)."""
-        return float(tile_x * self.tile_size), float(tile_y * self.tile_size)
 
     # =========================================================================
     # Sub-grid coordinate conversions
@@ -156,16 +149,6 @@ class Camera:
         sub_size = self.sub_tile_size
         return sub_x * sub_size + sub_size / 2, sub_y * sub_size + sub_size / 2
 
-    # Re-export as static methods for backwards compatibility
-    @staticmethod
-    def subsquare_to_tile(sub_x: int, sub_y: int) -> Tuple[int, int]:
-        """Convert grid cell coords to containing tile coords."""
-        return sub_x // 3, sub_y // 3
-
-    @staticmethod
-    def tile_to_subsquare(tile_x: int, tile_y: int) -> Tuple[int, int]:
-        """Convert tile coords to top-left grid cell coords."""
-        return tile_x * 3, tile_y * 3
 
     def get_visible_subsquare_range(self) -> Tuple[int, int, int, int]:
         """
@@ -174,8 +157,9 @@ class Camera:
         Returns: (start_x, start_y, end_x, end_y) - end is exclusive
         """
         sub_size = self.sub_tile_size
-        world_sub_width = (self.world_pixel_width // self.tile_size) * 3
-        world_sub_height = (self.world_pixel_height // self.tile_size) * 3
+        # Calculate world dimensions in grid cells directly from pixel dimensions
+        world_sub_width = int(self.world_pixel_width // sub_size)
+        world_sub_height = int(self.world_pixel_height // sub_size)
 
         start_x = max(0, int(self.world_x // sub_size))
         start_y = max(0, int(self.world_y // sub_size))
@@ -196,31 +180,6 @@ class Camera:
         start_x, start_y, end_x, end_y = self.get_visible_subsquare_range()
         return start_x <= sub_x < end_x and start_y <= sub_y < end_y
 
-    def get_visible_tile_range(self) -> Tuple[int, int, int, int]:
-        """
-        Get the range of tiles visible in the viewport.
-
-        Returns: (start_x, start_y, end_x, end_y) - end is exclusive
-        """
-        start_x = max(0, int(self.world_x // self.tile_size))
-        start_y = max(0, int(self.world_y // self.tile_size))
-
-        # Calculate end tiles (add 1 for partial tiles at edge)
-        end_x = min(
-            int((self.world_x + (self.viewport_width / self.zoom)) // self.tile_size) + 1,
-            self.world_pixel_width // self.tile_size
-        )
-        end_y = min(
-            int((self.world_y + (self.viewport_height / self.zoom)) // self.tile_size) + 1,
-            self.world_pixel_height // self.tile_size
-        )
-
-        return start_x, start_y, end_x, end_y
-
-    def is_tile_visible(self, tile_x: int, tile_y: int) -> bool:
-        """Check if a tile is within the visible viewport."""
-        start_x, start_y, end_x, end_y = self.get_visible_tile_range()
-        return start_x <= tile_x < end_x and start_y <= tile_y < end_y
 
     def is_world_pos_visible(self, world_x: float, world_y: float) -> bool:
         """Check if a world position is within the visible viewport."""

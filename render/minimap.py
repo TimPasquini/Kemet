@@ -94,13 +94,13 @@ def render_minimap(
     pygame.draw.circle(surface, (255, 255, 0), (px, py), 2)
     
     # Draw Camera Viewport Frame
-    # Calculate visible range in tiles
-    start_x, start_y, end_x, end_y = camera.get_visible_tile_range()
-    
+    # Calculate visible range in grid cells
+    start_sx, start_sy, end_sx, end_sy = camera.get_visible_subsquare_range()
+
     view_rect = pygame.Rect(
-        rect.x + start_x * scale_x,
-        rect.y + start_y * scale_y,
-        (end_x - start_x) * scale_x,
-        (end_y - start_y) * scale_y
+        rect.x + start_sx * scale_x,
+        rect.y + start_sy * scale_y,
+        (end_sx - start_sx) * scale_x,
+        (end_sy - start_sy) * scale_y
     )
     pygame.draw.rect(surface, (255, 255, 255), view_rect, 1)
