@@ -20,8 +20,8 @@ from render.config import (
 )
 
 if TYPE_CHECKING:
-    from tools import Toolbar
-    from ui_state import UIState
+    from interface.tools import Toolbar
+    from interface.ui_state import UIState
 
 
 def _render_tool_options_popup(

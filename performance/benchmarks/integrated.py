@@ -22,8 +22,8 @@ import pygame
 from game_state import build_initial_state, GameState
 from main import simulate_tick
 from core.camera import Camera
-from tools import get_toolbar
-from ui_state import get_ui_state
+from interface.tools import get_toolbar
+from interface.ui_state import get_ui_state
 from core.config import GRID_WIDTH, GRID_HEIGHT, TICK_INTERVAL
 from render.config import VIRTUAL_WIDTH, VIRTUAL_HEIGHT, CELL_SIZE
 from render import render_static_background

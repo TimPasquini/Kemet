@@ -38,13 +38,13 @@ from main import (
     end_day,
 )
 from core.camera import Camera
-from player import update_player_movement
-from tools import get_toolbar, Toolbar
-from ui_state import (
+from interface.player import update_player_movement
+from interface.tools import get_toolbar, Toolbar
+from interface.ui_state import (
     get_ui_state,
     UIState,
 )
-from keybindings import (
+from interface.keybindings import (
     CONTROL_DESCRIPTIONS,
     TOOL_KEYS,
     USE_TOOL_KEY,
@@ -504,7 +504,7 @@ def run(cell_size: int = CELL_SIZE) -> None:
 
             # Apply run speed multiplier if shift is held
             from core.config import RUN_SPEED_MULTIPLIER
-            from keybindings import RUN_KEY
+            from interface.keybindings import RUN_KEY
             speed_multiplier = RUN_SPEED_MULTIPLIER if keys[RUN_KEY] else 1.0
             current_speed = move_speed_cells * speed_multiplier
 

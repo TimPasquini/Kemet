@@ -17,7 +17,7 @@ from core.config import (
     GRID_HEIGHT,
 )
 from world.terrain import SoilLayer
-from player import PlayerState
+from interface.player import PlayerState
 from structures import Structure
 from world.weather import WeatherSystem
 from world_state import GlobalWaterPool

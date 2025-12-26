@@ -17,7 +17,7 @@ from world.terrain import (
     elevation_to_units,
 )
 from world.generation import generate_grids_direct
-from player import PlayerState
+from interface.player import PlayerState
 from structures import Depot
 from world_state import GlobalWaterPool
 from simulation.subsurface_cache import SubsurfaceConnectivityCache

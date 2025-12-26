@@ -40,8 +40,8 @@ from core.utils import chebyshev_distance
 if TYPE_CHECKING:
     from main import GameState
     from core.camera import Camera
-    from tools import Tool
-    from ui_state import UIState
+    from interface.tools import Tool
+    from interface.ui_state import UIState
 
 # =============================================================================
 # Surface Caches (performance optimization)
