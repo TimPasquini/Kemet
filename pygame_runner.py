@@ -37,7 +37,7 @@ from main import (
     simulate_tick,
     end_day,
 )
-from camera import Camera
+from core.camera import Camera
 from player import update_player_movement
 from tools import get_toolbar, Toolbar
 from ui_state import (
@@ -53,7 +53,7 @@ from keybindings import (
     REST_KEY,
     HELP_KEY,
 )
-from config import (
+from core.config import (
     MOVE_SPEED,
     TICK_INTERVAL,
     GRID_WIDTH,
@@ -503,7 +503,7 @@ def run(cell_size: int = CELL_SIZE) -> None:
             keys = pygame.key.get_pressed()
 
             # Apply run speed multiplier if shift is held
-            from config import RUN_SPEED_MULTIPLIER
+            from core.config import RUN_SPEED_MULTIPLIER
             from keybindings import RUN_KEY
             speed_multiplier = RUN_SPEED_MULTIPLIER if keys[RUN_KEY] else 1.0
             current_speed = move_speed_cells * speed_multiplier

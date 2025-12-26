@@ -10,7 +10,7 @@ import random
 from dataclasses import dataclass
 from typing import List
 
-from config import (
+from core.config import (
     DAY_LENGTH,
     HEAT_MIN,
     HEAT_MAX,

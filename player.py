@@ -16,8 +16,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Tuple, Callable
 
-from config import ACTION_DURATIONS, DIAGONAL_FACTOR
-from utils import clamp
+from core.config import ACTION_DURATIONS, DIAGONAL_FACTOR
+from core.utils import clamp
 
 Point = Tuple[int, int]
 

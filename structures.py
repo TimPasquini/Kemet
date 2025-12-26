@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, Optional
 
 from world.terrain import SoilLayer
-from config import (
+from core.config import (
     CONDENSER_OUTPUT,
     PLANTER_GROWTH_RATE,
     PLANTER_GROWTH_THRESHOLD,
@@ -99,7 +99,7 @@ class Cistern(Structure):
 
     def tick(self, state: "GameState", sx: int, sy: int) -> None:
         # Get total surface water from cell neighborhood
-        from grid_helpers import get_cell_neighborhood_surface_water
+        from core.grid_helpers import get_cell_neighborhood_surface_water
         from simulation.surface import remove_water_from_cell_neighborhood
 
         surface_water = get_cell_neighborhood_surface_water(state, sx, sy)
@@ -133,7 +133,7 @@ class Planter(Structure):
 
     def tick(self, state: "GameState", sx: int, sy: int) -> None:
         # Total water includes grid cell neighborhood surface water + subsurface
-        from grid_helpers import get_cell_neighborhood_total_water
+        from core.grid_helpers import get_cell_neighborhood_total_water
         from simulation.surface import remove_water_from_cell_neighborhood
 
         total_water = get_cell_neighborhood_total_water(state, sx, sy)

@@ -9,7 +9,7 @@ from render.config import COLOR_PLAYER, COLOR_PLAYER_ACTION_BG, COLOR_PLAYER_ACT
 
 if TYPE_CHECKING:
     from main import GameState
-    from camera import Camera
+    from core.camera import Camera
 
 def render_player(
     surface: pygame.Surface,

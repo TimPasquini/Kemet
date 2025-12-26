@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Dict, Tuple, Optional
 import numpy as np
 
 from world.terrain import SoilLayer
-from config import GRID_WIDTH, GRID_HEIGHT
+from core.config import GRID_WIDTH, GRID_HEIGHT
 
 if TYPE_CHECKING:
     from game_state import GameState

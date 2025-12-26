@@ -13,7 +13,7 @@ from typing import Tuple, Optional, Callable, List, TYPE_CHECKING
 
 import pygame
 
-from config import INTERACTION_RANGE, GRID_WIDTH, GRID_HEIGHT
+from core.config import INTERACTION_RANGE, GRID_WIDTH, GRID_HEIGHT
 from render.config import (
     VIRTUAL_WIDTH,
     VIRTUAL_HEIGHT,
@@ -22,10 +22,10 @@ from render.config import (
     LOG_PANEL_HEIGHT,
     POPUP_OPTION_HEIGHT,
 )
-from utils import clamp_to_range, clamp_to_bounds
+from core.utils import clamp_to_range, clamp_to_bounds
 
 if TYPE_CHECKING:
-    from camera import Camera
+    from core.camera import Camera
     from main import GameState
     from tools import Tool
 

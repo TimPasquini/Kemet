@@ -264,8 +264,8 @@ def remove_water_from_cell_neighborhood(amount: int, state: "GameState", sx: int
     Returns:
         Actual amount removed (may be less if insufficient water)
     """
-    from config import GRID_WIDTH, GRID_HEIGHT
-    from grid_helpers import get_cell_neighborhood_surface_water
+    from core.config import GRID_WIDTH, GRID_HEIGHT
+    from core.grid_helpers import get_cell_neighborhood_surface_water
 
     total_water = get_cell_neighborhood_surface_water(state, sx, sy)
     if total_water <= 0:
@@ -316,7 +316,7 @@ def distribute_water_to_cell_neighborhood(
     Returns:
         List of (gx, gy) grid cells that received water
     """
-    from config import GRID_WIDTH, GRID_HEIGHT
+    from core.config import GRID_WIDTH, GRID_HEIGHT
 
     if amount <= 0:
         return []

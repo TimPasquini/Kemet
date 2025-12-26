@@ -12,7 +12,7 @@ import numpy as np
 from scipy.ndimage import binary_dilation
 
 from world.terrain import SoilLayer, MATERIAL_LIBRARY
-from config import RAIN_WELLSPRING_MULTIPLIER, GRID_WIDTH, GRID_HEIGHT
+from core.config import RAIN_WELLSPRING_MULTIPLIER, GRID_WIDTH, GRID_HEIGHT
 from simulation.config import (
     SUBSURFACE_FLOW_RATE,
     VERTICAL_SEEPAGE_RATE,

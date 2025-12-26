@@ -8,7 +8,7 @@ from typing import Dict, Set, Tuple, Deque, TYPE_CHECKING
 
 import numpy as np
 
-from config import (
+from core.config import (
     STARTING_WATER,
     STARTING_SCRAP,
     STARTING_SEEDS,

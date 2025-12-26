@@ -21,10 +21,10 @@ import pygame
 
 from game_state import build_initial_state, GameState
 from main import simulate_tick
-from camera import Camera
+from core.camera import Camera
 from tools import get_toolbar
 from ui_state import get_ui_state
-from config import GRID_WIDTH, GRID_HEIGHT, TICK_INTERVAL
+from core.config import GRID_WIDTH, GRID_HEIGHT, TICK_INTERVAL
 from render.config import VIRTUAL_WIDTH, VIRTUAL_HEIGHT, CELL_SIZE
 from render import render_static_background
 from performance.benchmarks.rendering import RenderingMetrics, render_frame_profiled

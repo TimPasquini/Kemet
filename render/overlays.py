@@ -17,7 +17,7 @@ from render.config import (
 
 if TYPE_CHECKING:
     from main import GameState
-    from camera import Camera
+    from core.camera import Camera
 
 
 def render_help_overlay(

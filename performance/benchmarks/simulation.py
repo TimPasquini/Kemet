@@ -19,7 +19,7 @@ import numpy as np
 
 from game_state import build_initial_state
 from main import simulate_tick, end_day
-from config import TICK_INTERVAL, GRID_WIDTH, GRID_HEIGHT
+from core.config import TICK_INTERVAL, GRID_WIDTH, GRID_HEIGHT
 
 
 class PerformanceMetrics:
@@ -161,7 +161,7 @@ def simulate_tick_profiled(state, metrics: PerformanceMetrics) -> None:
         if state.moisture_grid is None:
             state.moisture_grid = current_moisture_grid.astype(float)
         else:
-            from config import MOISTURE_EMA_ALPHA
+            from core.config import MOISTURE_EMA_ALPHA
             state.moisture_grid = (1 - MOISTURE_EMA_ALPHA) * state.moisture_grid + MOISTURE_EMA_ALPHA * current_moisture_grid
 
         metrics.record_system_time('surface_seepage', time.perf_counter() - seep_start)

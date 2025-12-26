@@ -24,7 +24,7 @@ Color = Tuple[int, int, int]
 def calculate_elevation_range(state: "GameState") -> Tuple[float, float]:
     """Calculate min/max elevation across all grid cells (array-based)."""
     import numpy as np
-    from config import GRID_WIDTH, GRID_HEIGHT
+    from core.config import GRID_WIDTH, GRID_HEIGHT
 
     # Calculate elevation for all cells: bedrock_base + sum(layers)
     elevations = state.bedrock_base + np.sum(state.terrain_layers, axis=0)

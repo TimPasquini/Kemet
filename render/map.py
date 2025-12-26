@@ -16,7 +16,7 @@ import numpy as np
 from world.terrain import BIOME_TYPES
 from render.primitives import draw_text
 from render.grid_helpers import get_grid_cell_color, get_grid_elevation
-from config import (
+from core.config import (
         INTERACTION_RANGE,
     GRID_WIDTH,
     GRID_HEIGHT,
@@ -35,11 +35,11 @@ from render.config import (
     COLOR_TRENCH,
     HIGHLIGHT_COLORS,
 )
-from utils import chebyshev_distance
+from core.utils import chebyshev_distance
 
 if TYPE_CHECKING:
     from main import GameState
-    from camera import Camera
+    from core.camera import Camera
     from tools import Tool
     from ui_state import UIState
 
@@ -352,7 +352,7 @@ def _get_trench_affected_squares(
     Returns dict with keys: 'origin', 'exit', 'left', 'right'
     """
     import math
-    from config import GRID_WIDTH, GRID_HEIGHT
+    from core.config import GRID_WIDTH, GRID_HEIGHT
 
     px, py = player_pos
     tx, ty = target_pos

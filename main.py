@@ -11,8 +11,8 @@ import collections
 from typing import List, Tuple
 
 import numpy as np
-from config import GRID_WIDTH, GRID_HEIGHT
-from config import MOISTURE_EMA_ALPHA
+from core.config import GRID_WIDTH, GRID_HEIGHT
+from core.config import MOISTURE_EMA_ALPHA
 from world.terrain import (
     SoilLayer,
     units_to_meters,
@@ -122,7 +122,7 @@ def survey_cell(state: GameState) -> None:
     surface_water = state.water_grid[x, y]
 
     # Calculate elevation from grids
-    from grid_helpers import get_total_elevation
+    from core.grid_helpers import get_total_elevation
     elev_m = get_total_elevation(state, x, y)
 
     desc = [f"Cell ({x},{y})", f"elev={elev_m:.2f}m",
@@ -134,7 +134,7 @@ def survey_cell(state: GameState) -> None:
         desc.append(f"subsrf={subsurface_total / 10:.1f}L")
 
     # Get exposed material (what the player sees on the surface)
-    from grid_helpers import get_exposed_material
+    from core.grid_helpers import get_exposed_material
     material = get_exposed_material(state, x, y)
     desc.append(f"material={material}")
 

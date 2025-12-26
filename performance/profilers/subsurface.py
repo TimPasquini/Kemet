@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from game_state import build_initial_state, GameState
-from config import GRID_WIDTH, GRID_HEIGHT
+from core.config import GRID_WIDTH, GRID_HEIGHT
 
 
 @dataclass
@@ -71,7 +71,7 @@ class SubsurfaceProfiler:
         # Import here to avoid circular dependencies
         from scipy.ndimage import binary_dilation
         from world.terrain import SoilLayer
-        from config import RAIN_WELLSPRING_MULTIPLIER
+        from core.config import RAIN_WELLSPRING_MULTIPLIER
 
         # ========== Active Mask Creation ==========
         mask_start = time.perf_counter()

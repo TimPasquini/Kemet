@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Dict, List, Tuple
 import numpy as np
 
-from config import GRID_WIDTH, GRID_HEIGHT
+from core.config import GRID_WIDTH, GRID_HEIGHT
 from simulation.config import (
     WATER_EROSION_THRESHOLD,
     WATER_EROSION_RATE,

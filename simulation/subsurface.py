@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from world.terrain import BIOME_TYPES
-from config import (
+from core.config import (
     TRENCH_EVAP_REDUCTION,
     CISTERN_EVAP_REDUCTION,
 )

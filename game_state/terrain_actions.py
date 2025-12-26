@@ -7,7 +7,7 @@ import math
 
 import numpy as np
 
-from config import (
+from core.config import (
         GRID_WIDTH,
     GRID_HEIGHT,
     MIN_BEDROCK_ELEVATION,

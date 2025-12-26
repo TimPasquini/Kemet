@@ -11,9 +11,9 @@ from collections import Counter
 from typing import Dict, List, Tuple, TYPE_CHECKING
 
 import numpy as np
-from config import GRID_WIDTH, GRID_HEIGHT
+from core.config import GRID_WIDTH, GRID_HEIGHT
 from world.terrain import SoilLayer
-from utils import get_neighbors
+from core.utils import get_neighbors
 
 if TYPE_CHECKING:
     from main import GameState

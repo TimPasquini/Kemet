@@ -15,11 +15,13 @@ from typing import Dict, Tuple
 # CORE GAME DESIGN
 # =============================================================================
 # THE simulation grid resolution (unified for all systems)
-# BASELINE: 180×135 (24,300 cells) - CURRENT DEFAULT
-# TESTED: 360×270 (97,200 cells - 4× baseline) - 9 TPS, 70 MB
-# TESTED: 512×512 (262,144 cells - 10.8× baseline) - 3.5 TPS, 188 MB
-GRID_WIDTH = 180
-GRID_HEIGHT = 135
+# BASELINE: 180×135 (24,300 cells) - CURRENT DEFAULT - 46.8 TPS, 30 MB (with cache)
+# TESTED: 360×270 (97,200 cells - 4× baseline) - 9 TPS, 70 MB (pre-cache)
+# TESTED: 512×512 (262,144 cells - 10.8× baseline) - 3.5 TPS, 188 MB (pre-cache)
+# TESTED: 1024×1024 (1,048,576 cells - 43× baseline) - 2.0 TPS, 1272 MB (with cache)
+# TARGET: 2560×1600 (4,096,000 cells - 168× baseline) - Requires active region optimization
+GRID_WIDTH = 256
+GRID_HEIGHT = 256
 
 # Player interaction range in grid cells
 INTERACTION_RANGE = 2  # Grid cells player can reach (1-2 cells out)

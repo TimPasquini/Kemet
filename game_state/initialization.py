@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from config import (
+from core.config import (
         GRID_WIDTH,
     GRID_HEIGHT,
     INITIAL_WATER_POOL,

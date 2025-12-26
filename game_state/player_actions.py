@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from config import (
+from core.config import (
         MAX_POUR_AMOUNT,
     DEPOT_WATER_AMOUNT,
     DEPOT_SCRAP_AMOUNT,

@@ -71,7 +71,7 @@ def get_cell_neighborhood_subsurface_water(state: "GameState", sx: int, sy: int)
     Returns:
         Total subsurface water in units across the 3×3 neighborhood
     """
-    from config import GRID_WIDTH, GRID_HEIGHT
+    from core.config import GRID_WIDTH, GRID_HEIGHT
     total = 0
     for dx in range(-1, 2):
         for dy in range(-1, 2):
@@ -104,7 +104,7 @@ def get_cell_neighborhood_surface_water(state: "GameState", sx: int, sy: int) ->
     Returns:
         Total surface water in units across the 3×3 neighborhood
     """
-    from config import GRID_WIDTH, GRID_HEIGHT
+    from core.config import GRID_WIDTH, GRID_HEIGHT
     total = 0
     for dx in range(-1, 2):
         for dy in range(-1, 2):

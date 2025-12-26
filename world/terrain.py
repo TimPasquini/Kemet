@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Tuple, Dict
 from enum import IntEnum
 
-from config import DEPTH_UNIT_MM, SEA_LEVEL
+from core.config import DEPTH_UNIT_MM, SEA_LEVEL
 
 # Layer names as enum for type safety
 class SoilLayer(IntEnum):

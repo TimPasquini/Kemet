@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Tuple
 
 import pygame
 
-from config import DAY_LENGTH
+from core.config import DAY_LENGTH
 from world.terrain import SoilLayer, MATERIAL_LIBRARY, units_to_meters
 from render.primitives import draw_text, draw_section_header
 from render.config import (

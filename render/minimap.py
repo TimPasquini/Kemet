@@ -5,14 +5,14 @@ from __future__ import annotations
 import pygame
 import numpy as np
 from typing import TYPE_CHECKING
-from config import GRID_WIDTH, GRID_HEIGHT
+from core.config import GRID_WIDTH, GRID_HEIGHT
 from simulation.surface import compute_exposed_layer_grid
 from world.terrain import SoilLayer
 from .grid_helpers import APPEARANCE_TYPES, DEFAULT_COLOR
 
 if TYPE_CHECKING:
     from game_state import GameState
-    from camera import Camera
+    from core.camera import Camera
 
 
 def render_minimap(
