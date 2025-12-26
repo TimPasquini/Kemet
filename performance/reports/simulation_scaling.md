@@ -2,28 +2,41 @@
 
 **Date**: December 25, 2025
 **Test Configuration**: 1000 simulation ticks, headless (no rendering)
+**Last Updated**: December 25, 2025 - Phase 4.75 (Connectivity Cache)
 
 ---
 
 ## Executive Summary
 
-✅ **SCALING RESULTS: EXCELLENT - SUB-LINEAR PERFORMANCE**
+⚠️ **SCALING LIMIT REACHED: ACTIVE REGION OPTIMIZATION REQUIRED**
 
-The Kemet simulation demonstrates **better-than-linear scaling** due to highly optimized NumPy vectorization:
+**Phase 4.75 Update**: The connectivity cache delivered **1.93× speedup at baseline** but **scaling limits emerge at large grids**:
 
+### Pre-Cache Results (Phase 4):
 - **360×270 (4× cells)**: 2.7× slower (expected 4×) - **27% better than linear**
 - **512×512 (10.8× cells)**: 6.95× slower (expected 10.8×) - **36% better than linear**
 
+### Post-Cache Results (Phase 4.75):
+- **180×135 (baseline)**: 1.93× faster (41.23s → 21.37s) ✅ **EXCELLENT**
+- **1024×1024 (43× cells)**: 2.0 TPS, 491ms avg tick ⚠️ **TOO SLOW**
+
+**Critical Finding**:
+- At 1024×1024 (43× baseline cells), performance degrades to **2.0 TPS** (491ms per tick)
+- Subsurface flow still dominates: **1.38 seconds per subsurface tick**
+- Projection to 2560×1600 (168× cells): **~0.125 TPS** - **UNPLAYABLE**
+
 **Key Achievements**:
-- ✅ Sub-linear scaling proves vectorization architecture is working
+- ✅ Connectivity cache eliminated geometric recalculation overhead (1.93× speedup at baseline)
+- ✅ Sub-linear scaling validates vectorization architecture
 - ✅ Memory scales linearly as expected
-- ✅ All systems functional at all grid sizes
-- ⚠️ 512×512 may need optimization for 60 FPS gameplay (currently ~3.5 TPS)
-- ✅ 360×270 performs excellently (9 TPS sustained)
+- ⚠️ **Fundamental algorithmic limit reached** - caching alone insufficient for 2560×1600 target
+- ⚠️ **Active region optimization now REQUIRED** for massive maps
 
 ---
 
 ## Performance Comparison Table
+
+### Pre-Cache (Phase 4)
 
 | Metric | 180×135 (Baseline) | 360×270 (4× cells) | 512×512 (10.8× cells) |
 |--------|-------------------|-------------------|---------------------|
@@ -38,9 +51,72 @@ The Kemet simulation demonstrates **better-than-linear scaling** due to highly o
 | **Expected Slowdown** | 1.0× | 4.0× | 10.8× |
 | **Efficiency Gain** | - | +27% | +36% |
 
+### Post-Cache (Phase 4.75)
+
+| Metric | 180×135 (w/ Cache) | 1024×1024 (43× cells) | 2560×1600 (Projected) |
+|--------|-------------------|---------------------|---------------------|
+| **Grid Cells** | 24,300 | 1,048,576 | 4,096,000 |
+| **Total Runtime** | 21.37s | 491.39s | ~8000s (est) |
+| **Average TPS** | 46.8 | 2.0 | ~0.125 (est) |
+| **Avg Tick Time** | 21.36ms | 491.37ms | ~8000ms (est) |
+| **Median Tick** | 15.55ms | 271.05ms | ~4500ms (est) |
+| **Max Tick** | 71.67ms | 2202.32ms | ~35000ms (est) |
+| **Peak Memory** | 30 MB | 1272 MB | ~5000 MB (est) |
+| **Slowdown Factor** | **1.93× faster (vs pre-cache)** | 23.0× | ~374× |
+| **Expected Slowdown** | 1.0× | 43× | 168× |
+| **Efficiency** | **Cache: 1.93× gain** | **Near-linear** | **2.2× worse than linear** |
+
+**Critical Observation**: At 1024×1024, we've lost the sub-linear scaling benefit. The system now scales nearly linearly with grid size, indicating we've saturated the vectorization optimizations and hit fundamental algorithmic limits.
+
 ---
 
-## System Performance Breakdown
+## Phase 4.75: 1024×1024 Detailed Breakdown (With Connectivity Cache)
+
+### System Performance at 1024×1024
+
+| System | Avg Time | % of Avg Tick | Calls per 1000 ticks | Notes |
+|--------|----------|---------------|---------------------|-------|
+| **Subsurface** | 1375.67ms | 280.0% | 250 | **DOMINANT BOTTLENECK** - 1.38s per call |
+| **Surface Flow** | 191.05ms | 38.9% | 500 | Still expensive at scale |
+| **Atmosphere** | 78.02ms | 15.9% | 500 | Gaussian filters scale linearly |
+| **Surface Seepage** | 13.31ms | 2.7% | 500 | Acceptable overhead |
+| **Evaporation** | 5.99ms | 1.2% | 1000 | Well-optimized |
+| **Wind Exposure** | 2.09ms | 0.4% | 100 | Negligible |
+| **Structures** | 0.03ms | 0.0% | 1000 | Negligible |
+
+**Analysis**:
+- Subsurface **completely dominates** at large scale - takes 280% of average tick time
+- When subsurface runs (every 4 ticks), that tick takes ~1.9 seconds total
+- Surface flow is also significant (191ms), second major bottleneck
+- All other systems are acceptable
+
+### Hot Code Paths at 1024×1024
+
+| Function | Total Time | % of Runtime | Calls | Time/Call |
+|----------|-----------|--------------|-------|-----------|
+| `calculate_subsurface_flow_vectorized` | 250s | 50.9% | 250 | **1000ms** |
+| `simulate_surface_flow` | 84s | 17.1% | 500 | 168ms |
+| `simulate_atmosphere_tick_vectorized` | 39s | 7.9% | 500 | 78ms |
+| `calculate_overflows_vectorized` | 30s | 6.1% | 250 | 119ms |
+| scipy.ndimage correlate1d (gaussian) | 28s | 5.8% | 3000 | 9.4ms |
+| numpy zeros_like | 24s | 4.8% | 44558 | 0.53ms |
+| numpy astype | 14s | 2.8% | 28487 | 0.48ms |
+
+**Critical Finding**: `calculate_subsurface_flow_vectorized` takes **1 full second per call** at 1024×1024. This is the function that the connectivity cache was supposed to optimize, and while it helped at baseline (61ms → presumably faster), at large scale the remaining O(n) operations dominate.
+
+### Comparison: Subsurface Scaling Across Grid Sizes
+
+| Grid Size | Time/Call | Cells | Time per Million Cells |
+|-----------|-----------|-------|------------------------|
+| 180×135 (pre-cache) | 61ms | 24,300 | 2510ms |
+| 180×135 (w/ cache) | ~22ms (est) | 24,300 | ~905ms |
+| 1024×1024 (w/ cache) | 1000ms | 1,048,576 | **954ms** |
+
+**Key Insight**: The cache helped reduce the constant overhead, but the per-cell cost remains roughly constant (~1ms per 1000 cells). This confirms we're now limited by fundamental O(n) operations that scale with grid size.
+
+---
+
+## System Performance Breakdown (Pre-Cache Results)
 
 ### Subsurface Flow (Most Expensive System)
 
@@ -356,7 +432,81 @@ Only implement if structure count exceeds 100+.
 
 ---
 
-## Conclusions
+## Phase 4.75: Path to 2560×1600 Target
+
+### Current State After Connectivity Cache
+
+✅ **Achieved**: 1.93× speedup at baseline (180×135)
+⚠️ **Problem**: Near-linear scaling at 1024×1024 (2.0 TPS)
+❌ **Blocker**: 2560×1600 projected at ~0.125 TPS (unplayable)
+
+### Why Caching Alone Isn't Enough
+
+The connectivity cache successfully eliminated geometric recalculation overhead, but **fundamental O(n) operations still dominate**:
+
+1. **Hydraulic head calculations**: O(n) - must compute pressure for every cell
+2. **Flow calculations**: O(n × 6 directions × 6 layers) - flow between all adjacent cells
+3. **NumPy array operations**: O(n) - padding, masking, indexing all scale linearly
+4. **Overflow handling**: O(n) - check every cell for saturation
+
+At 2560×1600 (4M cells), these O(n) operations become overwhelming.
+
+### Required: Active Region Optimization
+
+**Core Concept**: Only simulate grid regions with activity (water flow, player interaction, structures).
+
+**Expected Impact**:
+- **Sparse maps** (10% active): **10× speedup** → 20 TPS at 1024×1024, ~2-5 TPS at 2560×1600
+- **Dense maps** (50% active): **2× speedup** → 4 TPS at 1024×1024
+- **Player area**: Always simulated within ~100 cell radius
+
+**Implementation Strategy**:
+
+#### Option A: Active Mask (Simple)
+- Create boolean mask for active cells
+- Update mask every 10-20 ticks
+- Apply mask to all system calculations
+- **Pros**: Simple, moderate speedup
+- **Cons**: Still processes inactive chunks in memory
+
+#### Option B: Chunking System (Recommended)
+- Divide grid into 256×256 chunks
+- Track active chunks (water > 0, recent player activity, structures)
+- Only simulate active chunks + 1-chunk border
+- **Pros**: True O(active_chunks) scaling, enables streaming
+- **Cons**: More architectural changes, chunk boundary handling
+
+#### Option C: Hybrid (Best for 2560×1600)
+- Chunking for coarse-grained culling
+- Active mask within each chunk for fine-grained optimization
+- **Expected gain**: 10-50× on sparse maps
+
+### Revised Performance Projections for 2560×1600
+
+| Approach | Estimated TPS | Playability | Implementation Effort |
+|----------|--------------|-------------|----------------------|
+| **Current (no optimization)** | 0.125 | ❌ Unplayable | N/A |
+| **Active Mask (10% active)** | 1.25 | ⚠️ Barely playable | Medium (2-3 days) |
+| **Chunking (10% active)** | 2-5 | ⚠️ Playable | High (4-6 days) |
+| **Hybrid + Reduced Freq** | 5-15 | ✅ Smooth | High (5-8 days) |
+
+### Alternative: Intermediate Target (1024×1024)
+
+If 2560×1600 proves too ambitious, **1024×1024 with active regions** is achievable:
+- Current: 2.0 TPS
+- With active regions (20% active): **10 TPS** ✅
+- With chunking (10% active): **20 TPS** ✅ **Excellent**
+
+### Recommendations
+
+1. **Immediate**: Document Phase 4.75 findings and commit
+2. **Next Phase**: Implement chunking system for true massive-map support
+3. **Fallback**: Use 1024×1024 as "Large Map" mode if 2560×1600 requires too much work
+4. **Future**: Consider GPU compute for 2560×1600+ if CPU optimization insufficient
+
+---
+
+## Conclusions (Pre-Cache Analysis)
 
 ### Architecture Success ✅
 

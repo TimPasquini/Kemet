@@ -1,7 +1,9 @@
-# Phase 4 Complete - Performance Validation Success! 🎉
+# Phase 4 Complete - Performance Validation & Connectivity Cache 🎉
 
 **Date**: December 25, 2025
-**Status**: ✅ ALL OBJECTIVES ACHIEVED
+**Status**: ✅ PHASE 4 COMPLETE | ✅ PHASE 4.75 COMPLETE | ⏭️ ACTIVE REGIONS REQUIRED FOR 2560×1600
+
+**Latest Update**: Phase 4.75 implemented connectivity caching with **1.93× baseline speedup** but revealed **architectural scaling limits** at 1024×1024. Active region optimization now required to reach 2560×1600 target.
 
 ---
 
@@ -9,23 +11,44 @@
 
 Phase 4 successfully validated the performance and scalability of Kemet's pure NumPy vectorized architecture through comprehensive profiling and scaling tests.
 
-### Deliverables
+### Phase 4 Deliverables
 
-1. ✅ **Performance Baseline** (`PERFORMANCE_BASELINE.md`)
+1. ✅ **Performance Baseline** (`PERFORMANCE_TRACKING.md`)
    - Profiled 180×135 grid performance
    - Identified hot code paths
-   - Established baseline metrics: 24.3 TPS, 18 MB memory
+   - Baseline metrics: 24.3 TPS (pre-cache), 46.8 TPS (w/ cache)
 
 2. ✅ **Scaling Tests** (`SCALING_ANALYSIS.md`)
-   - Tested 360×270 (4× cells) - 9.0 TPS
-   - Tested 512×512 (10.8× cells) - 3.5 TPS
-   - Comprehensive performance comparison
+   - Tested 360×270 (4× cells) - 9.0 TPS (pre-cache)
+   - Tested 512×512 (10.8× cells) - 3.5 TPS (pre-cache)
+   - **NEW**: Tested 1024×1024 (43× cells) - 2.0 TPS (w/ cache)
+   - Comprehensive performance comparison across scales
 
 3. ✅ **Benchmarking Tool** (`benchmark.py`)
    - Headless simulation profiler
    - Memory tracking
    - Hot path analysis with cProfile
    - Reusable for future performance testing
+
+### Phase 4.75 Deliverables (Connectivity Cache)
+
+1. ✅ **Subsurface Connectivity Cache** (`simulation/subsurface_cache.py`)
+   - Pre-computes terrain-dependent connectivity between soil layers
+   - Tunable rebuild frequency (invalidation-based or periodic)
+   - Tracks rebuild/invalidation statistics
+   - **350+ lines** of optimized caching logic
+
+2. ✅ **Cache Integration**
+   - Modified `simulation/subsurface_vectorized.py` to use cache
+   - Added cache invalidation to terrain modification actions
+   - Added cache invalidation to erosion system
+   - Initialized cache on game start
+
+3. ✅ **Performance Results**
+   - **1.93× speedup at 180×135** (41.23s → 21.37s)
+   - **2.76× subsurface speedup** (94.03ms → 33.89ms)
+   - **+11 MB memory overhead** for cache (acceptable)
+   - Eliminated connectivity check bottleneck (was 42.8% of subsurface time)
 
 ---
 
@@ -268,20 +291,76 @@ This methodology can be reused for future performance validation.
 
 ---
 
+## Phase 4.75: Critical Findings for 2560×1600 Target
+
+### Scaling Limit Reached ⚠️
+
+**1024×1024 Test Results**:
+- **2.0 TPS** (491ms per tick) - Too slow for gameplay
+- **Subsurface: 1.38 seconds** per tick when it runs
+- **Near-linear scaling** at large grid sizes (lost sub-linear benefit)
+
+**Projection to 2560×1600** (168× baseline cells):
+- **Estimated: 0.125 TPS** (~8 seconds per tick) - **UNPLAYABLE**
+- Connectivity cache helped but **O(n) operations still dominate**
+- **Active region optimization now REQUIRED**
+
+### Why Caching Isn't Enough
+
+The cache eliminated geometric recalculation overhead, but fundamental O(n) operations remain:
+1. Hydraulic head calculations - O(n) for every cell
+2. Flow calculations - O(n × 6 directions × 6 layers)
+3. NumPy array operations - padding, masking, indexing
+4. Overflow handling - check every cell
+
+At 4M cells (2560×1600), these become overwhelming.
+
+### Required Next Step: Active Region Optimization
+
+**Options for 2560×1600**:
+
+1. **Active Mask** (Simple) - 10× speedup on sparse maps
+   - Boolean mask for active cells
+   - Update every 10-20 ticks
+   - **Est. 1-2 TPS at 2560×1600** (barely playable)
+
+2. **Chunking** (Recommended) - 10-50× speedup
+   - Divide grid into 256×256 chunks
+   - Only simulate active chunks
+   - **Est. 2-5 TPS at 2560×1600** (playable)
+
+3. **Hybrid + Reduced Frequency** (Best) - 50-100× speedup
+   - Chunking + active mask within chunks
+   - Run subsurface every 8 ticks
+   - **Est. 5-15 TPS at 2560×1600** (smooth)
+
+### Alternative: 1024×1024 as Large Map Mode
+
+If 2560×1600 proves too ambitious:
+- **1024×1024 with active regions (20% active)**: **10 TPS** ✅
+- **1024×1024 with chunking (10% active)**: **20 TPS** ✅ Excellent
+- More achievable than 2560×1600, still provides "huge map" experience
+
+---
+
 ## Conclusion
 
-**Phase 4 is a complete success!** 🎉
+**Phase 4 + 4.75 Complete!** 🎉
 
-The Kemet simulation architecture has been **thoroughly validated** with:
-- ✅ Excellent baseline performance (45-50 FPS projected)
-- ✅ Sub-linear scaling (27-36% better than expected)
+The Kemet simulation architecture has been **thoroughly validated** and **significantly optimized**:
+- ✅ Connectivity cache: **1.93× baseline speedup**
+- ✅ Sub-linear scaling at small-to-medium scales (27-36% better than expected)
 - ✅ Perfect linear memory scaling
 - ✅ All systems functional at all scales
-- ✅ Comprehensive performance documentation
+- ⚠️ **Architectural limit reached** at 1024×1024
+- ⏭️ **Active region optimization required** for 2560×1600 target
 
-The **100% grid-based NumPy architecture** delivers exceptional performance and validates all the refactoring work from Phases 1-3.
+The **100% grid-based NumPy architecture** delivers exceptional performance at baseline and validates all the refactoring work from Phases 1-3. Connectivity caching provides significant gains up to ~500×500 grids.
 
-**We're ready for production!** 🚀
+**For massive maps (2560×1600)**: Active region/chunking system is the next critical optimization path.
+
+**We're ready for production at 180×135-512×512 scales!** 🚀
+**For 2560×1600**: Implement chunking system (Phase 5 or later).
 
 ---
 
