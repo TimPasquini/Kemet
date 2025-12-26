@@ -269,20 +269,45 @@ Created `world/` subdirectory:
 - ⚠️ 512×512 achieves 8-12 FPS projected (needs active region optimization)
 
 **Documentation**:
-- `PERFORMANCE_BASELINE.md` - Detailed baseline analysis
-- `SCALING_ANALYSIS.md` - Comprehensive scaling comparison
-- `benchmark.py` - Profiling and benchmarking tool
+- All performance tools consolidated in `performance/` module
+- See `performance/README.md` for comprehensive usage guide
 
 **Recommendations**:
 - Implement active region optimization since 2560×1600 is the target design goal
+
+## Performance Tools
+
+All performance tooling is in `performance/`:
+
+**Benchmarks** (`performance/benchmarks/`):
+- `simulation.py` - Simulation performance (headless)
+- `rendering.py` - Rendering performance (NEW in Phase 4.5)
+- `integrated.py` - Combined sim + render (NEW in Phase 4.5)
+- `utils.py` - Shared utilities for timing and formatting
+
+**Profilers** (`performance/profilers/`):
+- `subsurface.py` - Detailed subsurface profiling
+- `rendering.py` - Detailed rendering profiling (NEW in Phase 4.5)
+
+**Reports** (`performance/reports/`):
+- `simulation_scaling.md` - Scaling analysis across grid sizes
+- `phase4_summary.md` - Phase 4 completion summary
+- `rendering_performance.md` - Rendering benchmark results (generated)
+
+See `performance/README.md` for detailed usage and CLI examples.
 
 ### Phase 4.5: Reorganization Completion (AFTER Scale-Up)
 **Goal**: Complete code reorganization now that scale-up is validated
 **Priority**: LOW - Nice to have, not blocking
 
+**✅ Performance Module Complete**:
+- ✅ All benchmarking tools consolidated in `performance/` directory
+- ✅ Rendering benchmarks and profilers added
+- ✅ Integrated simulation + rendering benchmarks
+- ✅ Comprehensive documentation in performance/README.md
+
 **Too small for specific step**:
 - subsurface.py only contains a function related to surface evaporation. Function should be moved and file deleted.
-- Put new benchmarking tools and outputs in their own module folder
 
 **Step C: Core Utilities Module** (~1-2 hours)
 Create `core/` subdirectory:
@@ -385,7 +410,7 @@ The surface simulation is now fully data-oriented. The `water_grid` and `elevati
 
 ## File Structure
 
-### Current Structure (Phase 3.5 Complete - Dec 2025)
+### Current Structure (Phase 4.5 Performance Module - Dec 2025)
 ```
 kemet/
 ├── config.py              # Constants: Units, Time, Weather, Physics, UI
@@ -417,50 +442,67 @@ kemet/
 │   ├── subsurface_vectorized.py  # Vectorized subsurface simulation
 │   ├── erosion.py         # Overnight erosion (water/wind)
 │   └── config.py          # Simulation constants
-└── render/                # All rendering
-    ├── __init__.py        # Module exports
-    ├── map.py             # Map viewport rendering
-    ├── hud.py             # HUD panels, inventory, soil profile
-    ├── toolbar.py         # Toolbar and popup menu rendering
-    ├── overlays.py        # Help, event log, night overlay
-    ├── minimap.py         # Minimap rendering
-    ├── player_renderer.py # Player rendering
-    ├── primitives.py      # Basic drawing helpers
-    ├── colors.py          # Color computation
-    ├── grid_helpers.py    # Grid rendering utilities
-    └── config.py          # Rendering constants
+├── render/                # All rendering
+│   ├── __init__.py        # Module exports
+│   ├── map.py             # Map viewport rendering
+│   ├── hud.py             # HUD panels, inventory, soil profile
+│   ├── toolbar.py         # Toolbar and popup menu rendering
+│   ├── overlays.py        # Help, event log, night overlay
+│   ├── minimap.py         # Minimap rendering
+│   ├── player_renderer.py # Player rendering
+│   ├── primitives.py      # Basic drawing helpers
+│   ├── colors.py          # Color computation
+│   ├── grid_helpers.py    # Grid rendering utilities
+│   └── config.py          # Rendering constants
+└── performance/           # Performance benchmarking & profiling (Phase 4.5)
+    ├── README.md          # Comprehensive usage guide
+    ├── benchmarks/        # High-level performance benchmarks
+    │   ├── simulation.py  # Simulation tick performance (headless)
+    │   ├── rendering.py   # Rendering frame performance
+    │   ├── integrated.py  # Combined sim + render benchmarks
+    │   └── utils.py       # Shared utilities (Timer, formatting, etc.)
+    ├── profilers/         # Detailed profiling with hierarchical breakdowns
+    │   ├── subsurface.py  # Subsurface simulation profiling
+    │   └── rendering.py   # Rendering pipeline profiling
+    └── reports/           # Generated performance reports
+        ├── simulation_scaling.md  # Simulation scaling analysis
+        ├── phase4_summary.md      # Phase 4 completion summary
+        └── rendering_performance.md  # Rendering benchmarks (generated)
 ```
 
-### Optional Future Structure (Phase 4.5 - Low Priority)
+### Target Structure After Steps C & D (Phase 4.5 Complete)
 ```
 kemet/
 ├── main.py                # Simulation loop + command dispatch (~300 lines)
 ├── structures.py          # Structure definitions
 ├── world_state.py         # Conservation systems
 ├── pygame_runner.py       # Pygame frontend entry point
-├── game_state/            # NEW - Game state management
+├── game_state/            # ✅ Game state management (Phase 3.5)
 │   ├── state.py           # GameState dataclass
 │   ├── initialization.py  # build_initial_state()
 │   ├── terrain_actions.py # Terrain manipulation
 │   └── player_actions.py  # Player actions
-├── world/                 # NEW - World generation & environment
+├── world/                 # ✅ World generation & environment (Phase 3.5)
 │   ├── generation.py      # Map generation (was mapgen.py)
 │   ├── biomes.py          # Biome calculation
 │   ├── terrain.py         # Terrain data (was ground.py)
 │   └── weather.py         # Weather system
 ├── simulation/            # Physics simulation
 │   ├── surface.py
-│   ├── subsurface.py
 │   ├── subsurface_vectorized.py
 │   ├── erosion.py
 │   └── config.py
 ├── render/                # All rendering
-├── core/                  # NEW - Core utilities
+├── performance/           # ✅ Performance tools (Phase 4.5)
+│   ├── benchmarks/
+│   ├── profilers/
+│   └── reports/
+├── core/                  # TODO - Core utilities (Step C)
 │   ├── config.py
 │   ├── grid_helpers.py
 │   ├── camera.py
 │   └── utils.py
-└── interface/             # NEW - Player interaction
+└── interface/             # TODO - Player interaction (Step D)
     ├── player.py
     ├── ui_state.py
     ├── tools.py
