@@ -15,6 +15,9 @@ from typing import Dict, Tuple
 # CORE GAME DESIGN
 # =============================================================================
 # THE simulation grid resolution (unified for all systems)
+# BASELINE: 180×135 (24,300 cells) - CURRENT DEFAULT
+# TESTED: 360×270 (97,200 cells - 4× baseline) - 9 TPS, 70 MB
+# TESTED: 512×512 (262,144 cells - 10.8× baseline) - 3.5 TPS, 188 MB
 GRID_WIDTH = 180
 GRID_HEIGHT = 135
 
