@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import collections
 from dataclasses import dataclass, field
-from typing import Dict, Set, Tuple, Deque
+from typing import Dict, Set, Tuple, Deque, TYPE_CHECKING
 
 import numpy as np
 
@@ -21,6 +21,9 @@ from player import PlayerState
 from structures import Structure
 from world.weather import WeatherSystem
 from world_state import GlobalWaterPool
+
+if TYPE_CHECKING:
+    from simulation.subsurface_cache import SubsurfaceConnectivityCache
 
 Point = Tuple[int, int]
 
@@ -120,6 +123,11 @@ class GameState:
     # Shape: (GRID_WIDTH, GRID_HEIGHT), dtype=float64. Pre-allocated buffer for random numbers.
     # Reused in surface flow calculations to avoid per-tick allocation.
     _random_buffer: np.ndarray | None = None
+
+    # Subsurface connectivity cache (terrain-dependent geometric calculations)
+    # Caches layer connectivity masks and contact fractions to avoid expensive
+    # per-tick recalculation. Invalidated when terrain changes.
+    subsurface_cache: "SubsurfaceConnectivityCache | None" = None
 
     # === Player convenience properties ===
     @property

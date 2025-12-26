@@ -181,8 +181,19 @@ def calculate_subsurface_flow_vectorized(
     Each soil layer can flow to ALL adjacent layers it physically touches,
     including multiple layers on the same neighbor face (voxel-like physics).
 
+    Uses connectivity cache to avoid expensive geometric calculations each tick.
+    Only recalculates connectivity when terrain changes.
+
     Modifies state.subsurface_water_grid in place.
     """
+    # Check and rebuild connectivity cache if needed
+    if state.subsurface_cache is None:
+        raise RuntimeError("subsurface_cache is None - should be initialized in build_initial_state")
+
+    if state.subsurface_cache.needs_rebuild():
+        state.subsurface_cache.rebuild(state)
+
+    # Get current layer elevations and storage capacity (always needed for hydraulic head)
     layer_bottom, layer_top = compute_layer_elevation_ranges(state)
     max_storage = calculate_max_storage_grid(state)
     deltas = np.zeros_like(state.subsurface_water_grid)
@@ -191,6 +202,7 @@ def calculate_subsurface_flow_vectorized(
                        SoilLayer.TOPSOIL, SoilLayer.ORGANICS]
 
     # Calculate hydraulic head for all layers (water surface elevation)
+    # This is water-dependent and must be calculated every tick
     water = state.subsurface_water_grid
     layer_depth = layer_top - layer_bottom
 
@@ -205,77 +217,42 @@ def calculate_subsurface_flow_vectorized(
 
     hydraulic_head = layer_bottom + water_height  # Shape: (6, GRID_WIDTH, GRID_HEIGHT)
 
-    # Process each source layer
+    # Pad hydraulic head for neighbor access (water-dependent, not cached)
+    hydraulic_head_padded = np.pad(hydraulic_head, ((0,0), (1,1), (1,1)), mode='constant', constant_values=-10000)
+
+    # Process each source layer using cached connectivity
     for src_layer in flowable_layers:
-        src_layer_idx = src_layer
+        # Get all cached connections for this source layer
+        connections = state.subsurface_cache.get_all_connections(src_layer)
 
-        # Pad ALL layers' elevation data for connectivity checks
-        all_layers_bot_padded = np.pad(layer_bottom, ((0,0), (1,1), (1,1)), mode='constant', constant_values=0)
-        all_layers_top_padded = np.pad(layer_top, ((0,0), (1,1), (1,1)), mode='constant', constant_values=0)
-        all_layers_depth_padded = np.pad(state.terrain_layers, ((0,0), (1,1), (1,1)), mode='constant', constant_values=0)
-        all_layers_head_padded = np.pad(hydraulic_head, ((0,0), (1,1), (1,1)), mode='constant', constant_values=-10000)
-
-        center = (slice(1, -1), slice(1, -1))
-
-        # 4 cardinal directions (faces of the voxel)
-        neighbor_offsets = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+        if not connections:
+            continue  # No connections for this layer
 
         # Accumulate total pressure differential across all targets
         total_pressure_diff = np.zeros((GRID_WIDTH, GRID_HEIGHT), dtype=np.float32)
-        flow_targets = []  # List of (target_layer, direction, pressure_diff)
+        flow_targets = []  # List of (target_layer, dx, dy, pressure_diff)
 
-        for dx, dy in neighbor_offsets:
+        # Use cached connectivity data to compute pressure differentials
+        for dx, dy, tgt_layer_idx, can_connect, contact_fraction in connections:
+            # Get neighbor's hydraulic head
             n_slice = (slice(1 + dx, -1 + dx if -1 + dx != 0 else None),
                       slice(1 + dy, -1 + dy if -1 + dy != 0 else None))
+            neighbor_head = hydraulic_head_padded[tgt_layer_idx][n_slice]
 
-            # My layer's elevation range (source)
-            my_bot = layer_bottom[src_layer]
-            my_top = layer_top[src_layer]
+            # Calculate pressure difference using cached contact fraction
+            my_head = hydraulic_head[src_layer]
+            pressure_diff = my_head - neighbor_head
 
-            # For each potential target layer in the neighbor, check if it touches my layer
-            for tgt_layer_idx in range(len(SoilLayer)):
-                if tgt_layer_idx == 0:  # Skip bedrock
-                    continue
+            # Apply threshold and cached connectivity mask
+            pressure_diff = np.where(
+                (pressure_diff > SUBSURFACE_FLOW_THRESHOLD) & can_connect,
+                pressure_diff * contact_fraction,  # Use cached contact fraction
+                0
+            )
 
-                # Get neighbor's layer elevation range
-                neighbor_bot = all_layers_bot_padded[tgt_layer_idx][n_slice]
-                neighbor_top = all_layers_top_padded[tgt_layer_idx][n_slice]
-                neighbor_depth = all_layers_depth_padded[tgt_layer_idx][n_slice]
-                neighbor_head = all_layers_head_padded[tgt_layer_idx][n_slice]
-
-                # Check if layers overlap in elevation (can connect)
-                can_connect = (my_bot < neighbor_top) & (neighbor_bot < my_top) & (neighbor_depth > 0)
-
-                if not np.any(can_connect):
-                    continue
-
-                # Calculate contact area fraction (how much of my layer touches this neighbor layer)
-                # Overlap range: max(my_bot, neighbor_bot) to min(my_top, neighbor_top)
-                overlap_bot = np.maximum(my_bot, neighbor_bot)
-                overlap_top = np.minimum(my_top, neighbor_top)
-                overlap_height = np.maximum(overlap_top - overlap_bot, 0)
-
-                my_layer_height = my_top - my_bot
-                # Avoid division by zero
-                contact_fraction = np.divide(
-                    overlap_height,
-                    my_layer_height,
-                    out=np.zeros_like(overlap_height, dtype=np.float32),
-                    where=my_layer_height > 0
-                )
-
-                # Pressure difference (hydraulic gradient)
-                my_head = hydraulic_head[src_layer]
-                pressure_diff = my_head - neighbor_head
-                pressure_diff = np.where(
-                    (pressure_diff > SUBSURFACE_FLOW_THRESHOLD) & can_connect,
-                    pressure_diff * contact_fraction,  # Weight by contact area
-                    0
-                )
-
-                if np.any(pressure_diff > 0):
-                    flow_targets.append((tgt_layer_idx, dx, dy, pressure_diff))
-                    total_pressure_diff += pressure_diff
+            if np.any(pressure_diff > 0):
+                flow_targets.append((tgt_layer_idx, dx, dy, pressure_diff))
+                total_pressure_diff += pressure_diff
 
         # Calculate flow amounts based on permeability and water availability
         src_water = water[src_layer]
@@ -443,3 +420,7 @@ def simulate_subsurface_tick_vectorized(state: "GameState") -> None:
     # Update active water set (grid-level)
     nz_rows, nz_cols = np.nonzero(state.water_grid)
     state.active_water_cells = set(zip(nz_rows, nz_cols))
+
+    # Update cache tick counter (for periodic rebuild if configured)
+    if state.subsurface_cache is not None:
+        state.subsurface_cache.tick()

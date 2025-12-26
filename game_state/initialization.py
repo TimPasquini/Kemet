@@ -20,6 +20,7 @@ from world.generation import generate_grids_direct
 from player import PlayerState
 from structures import Depot
 from world_state import GlobalWaterPool
+from simulation.subsurface_cache import SubsurfaceConnectivityCache
 
 
 def build_initial_state() -> GameState:
@@ -107,6 +108,10 @@ def build_initial_state() -> GameState:
     # Pre-allocate random buffer for surface flow (performance optimization)
     random_buffer = np.zeros((GRID_WIDTH, GRID_HEIGHT), dtype=np.float64)
 
+    # Initialize subsurface connectivity cache (terrain-dependent optimization)
+    # rebuild_frequency=None means only rebuild when explicitly invalidated
+    subsurface_cache = SubsurfaceConnectivityCache(rebuild_frequency_ticks=None)
+
     # Initialize elevation_grid (calculated from other grids)
     elevation_grid = bedrock_base + np.sum(terrain_layers, axis=0)
 
@@ -133,6 +138,7 @@ def build_initial_state() -> GameState:
         wind_grid=wind_grid,
         temperature_grid=temperature_grid,
         _random_buffer=random_buffer,
+        subsurface_cache=subsurface_cache,
     )
 
     # Create depot structure at starting cell

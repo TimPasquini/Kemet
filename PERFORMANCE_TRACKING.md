@@ -1,45 +1,63 @@
-# Kemet Performance Baseline Report
+# Kemet Performance Tracking
 
-**Date**: December 25, 2025
 **Grid Size**: 180×135 cells (24,300 total grid cells)
 **Test Configuration**: 1000 simulation ticks, headless (no rendering)
+**Last Updated**: December 25, 2025
 
 ---
 
-## Executive Summary
+## Performance Evolution
 
-✅ **Current Performance: EXCELLENT**
-- **24.3 TPS** (ticks per second) - Very smooth simulation
-- **~18 MB** peak memory usage - Extremely memory efficient
-- **41.20ms** average tick time - Well optimized
-- **Ready for scale-up testing**
+### Phase 4.75: Connectivity Cache Implementation (Dec 25, 2025)
+✅ **MAJOR PERFORMANCE GAIN: 1.93× SPEEDUP**
+- **46.8 TPS** (ticks per second) - Excellent performance
+- **~30 MB** peak memory (+11 MB for cache)
+- **21.36ms** average tick time
+- **Subsurface: 2.76× faster** via connectivity caching
+
+### Phase 4: Initial Baseline (Dec 25, 2025)
+- **24.3 TPS** (ticks per second)
+- **~18 MB** peak memory
+- **41.20ms** average tick time
+- Identified subsurface connectivity as primary bottleneck (42.8% of subsurface time)
+
+---
+
+## Current Performance (With Cache)
+
+### Executive Summary
+✅ **Performance: EXCELLENT - Nearly 2× baseline**
+- **46.8 TPS** sustained simulation rate
+- **21.36ms** average tick time
+- **Subsurface bottleneck eliminated**: Connectivity caching saves 15 seconds per 1000 ticks
+- **Cache overhead**: +11 MB memory (well worth the speedup)
 
 ---
 
 ## Overall Performance Metrics
 
-| Metric | Value |
-|--------|-------|
-| Total Runtime | 41.23 seconds |
-| Total Ticks | 1,000 |
-| Average TPS | 24.3 ticks/sec |
-| Equivalent FPS | 24.3 (if rendering each tick) |
+| Metric | With Cache (Current) | Baseline (Pre-Cache) | Improvement |
+|--------|---------------------|----------------------|-------------|
+| Total Runtime | 21.37s | 41.23s | **1.93× faster** |
+| Average TPS | 46.8 | 24.3 | **+93%** |
+| Avg Tick Time | 21.36ms | 41.20ms | **48% reduction** |
+| Peak Memory | 29.8 MB | 18.0 MB | +11.8 MB (cache) |
 
 ---
 
 ## Tick Timing Analysis
 
-| Statistic | Time (ms) |
-|-----------|-----------|
-| Mean | 41.20 |
-| Median | 20.01 |
-| Std Dev | 41.25 |
-| Min | 1.32 |
-| Max | 194.48 |
+| Statistic | With Cache | Baseline | Improvement |
+|-----------|------------|----------|-------------|
+| Mean | 21.36ms | 41.20ms | **48% faster** |
+| Median | 15.55ms | 20.01ms | **22% faster** |
+| Std Dev | 17.40ms | 41.25ms | More consistent |
+| Min | 1.19ms | 1.32ms | ~same |
+| Max | 71.67ms | 194.48ms | **63% faster** |
 
 **Note**: High variance is expected due to staggered simulation scheduling:
 - Surface flow runs every 2 ticks
-- Subsurface runs every 4 ticks (expensive: 94ms avg)
+- Subsurface runs every 4 ticks (expensive but now 2.76× faster!)
 - Atmosphere runs every 2 ticks
 - Wind exposure runs every 10 ticks
 
@@ -47,17 +65,17 @@
 
 ## System Performance Breakdown
 
-| System | Avg Time (ms) | % of Tick | Notes |
-|--------|---------------|-----------|-------|
-| **Subsurface** | 94.03 | 228.2% | Runs every 4 ticks - most expensive |
-| **Surface Flow** | 14.08 | 34.2% | Runs every 2 ticks |
-| **Evaporation** | 8.67 | 21.0% | Runs every tick |
-| **Atmosphere** | 2.43 | 5.9% | Runs every 2 ticks |
-| **Surface Seepage** | 1.36 | 3.3% | Runs every 2 ticks (offset) |
-| **Wind Exposure** | 0.13 | 0.3% | Runs every 10 ticks |
-| **Structures** | 0.04 | 0.1% | Negligible overhead |
+| System | With Cache | Baseline | Speedup | Notes |
+|--------|------------|----------|---------|-------|
+| **Subsurface** | 33.89ms | 94.03ms | **2.76×** | Connectivity cache eliminates 64% overhead |
+| **Surface Flow** | 9.92ms | 14.08ms | 1.42× | Runs every 2 ticks |
+| **Evaporation** | 6.71ms | 8.67ms | 1.29× | Runs every tick |
+| **Atmosphere** | 1.56ms | 2.43ms | 1.56× | Runs every 2 ticks |
+| **Surface Seepage** | 0.75ms | 1.36ms | 1.81× | Runs every 2 ticks (offset) |
+| **Wind Exposure** | 0.07ms | 0.13ms | 1.86× | Runs every 10 ticks |
+| **Structures** | 0.02ms | 0.04ms | 2.0× | Negligible overhead |
 
-**Key Insight**: Subsurface simulation is the dominant cost when it runs. The 228% figure indicates that when subsurface runs (every 4 ticks), it takes ~94ms, which is more than 2× the average tick time.
+**Key Achievement**: Subsurface went from **dominant bottleneck** (228% of avg tick) to **manageable cost** (159% of avg tick). The connectivity cache eliminated 60ms per subsurface tick by avoiding expensive geometric recalculation.
 
 ---
 

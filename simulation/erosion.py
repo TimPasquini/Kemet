@@ -304,6 +304,10 @@ def apply_erosion_vectorized(
     state.terrain_changed = True
     state.dirty_cells.update(zip(rows, cols))
 
+    # Terrain was modified - invalidate subsurface connectivity cache
+    if state.subsurface_cache is not None:
+        state.subsurface_cache.invalidate()
+
 
 def compute_soil_moisture_vectorized(
     state: "GameState",

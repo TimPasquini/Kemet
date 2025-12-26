@@ -123,6 +123,11 @@ def dig_trench(state: GameState, mode: str) -> None:
                                      backward_pos, forward_pos, left_pos, right_pos)
         case _:
             state.messages.append(f"Unknown trench mode: {mode}")
+            return  # Don't invalidate cache if mode was invalid
+
+    # Terrain was modified - invalidate subsurface connectivity cache
+    if state.subsurface_cache is not None:
+        state.subsurface_cache.invalidate()
 
 
 def _dig_trench_flat_impl(state: GameState, sx: int, sy: int,
@@ -476,6 +481,9 @@ def lower_ground(state: GameState, min_layer_name: str = "bedrock") -> None:
             new_elev = units_to_meters(new_elev_units)
             state.messages.append(f"Lowered bedrock by 0.2m. Elev: {new_elev:.2f}m")
             state.dirty_cells.add(sub_pos)
+            # Terrain was modified - invalidate subsurface connectivity cache
+            if state.subsurface_cache is not None:
+                state.subsurface_cache.invalidate()
             return
         else:
             state.messages.append("Hit bedrock. Use pickaxe to break through.")
@@ -501,6 +509,10 @@ def lower_ground(state: GameState, min_layer_name: str = "bedrock") -> None:
     new_elev_units = state.bedrock_base[sx, sy] + np.sum(state.terrain_layers[:, sx, sy])
     new_elev = units_to_meters(new_elev_units)
     state.messages.append(f"Removed {units_to_meters(removed):.2f}m {material_name}. Elev: {new_elev:.2f}m")
+
+    # Terrain was modified - invalidate subsurface connectivity cache
+    if state.subsurface_cache is not None:
+        state.subsurface_cache.invalidate()
 
 
 def raise_ground(state: GameState, target_layer_name: str = "topsoil") -> None:
@@ -541,3 +553,7 @@ def raise_ground(state: GameState, target_layer_name: str = "topsoil") -> None:
     new_elev_units = state.bedrock_base[sx, sy] + np.sum(state.terrain_layers[:, sx, sy])
     new_elev = units_to_meters(new_elev_units)
     state.messages.append(f"Added {material_name} to surface (cost {cost} scrap). Elev: {new_elev:.2f}m")
+
+    # Terrain was modified - invalidate subsurface connectivity cache
+    if state.subsurface_cache is not None:
+        state.subsurface_cache.invalidate()
