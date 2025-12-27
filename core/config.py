@@ -20,8 +20,8 @@ from typing import Dict, Tuple
 # TESTED: 512×512 (262,144 cells - 10.8× baseline) - 3.5 TPS, 188 MB (pre-cache)
 # TESTED: 1024×1024 (1,048,576 cells - 43× baseline) - 2.0 TPS, 1272 MB (with cache)
 # TARGET: 2560×1600 (4,096,000 cells - 168× baseline) - Requires active region optimization
-GRID_WIDTH = 256
-GRID_HEIGHT = 256
+GRID_WIDTH = 180
+GRID_HEIGHT = 135
 
 # Player interaction range in grid cells
 INTERACTION_RANGE = 2  # Grid cells player can reach (1-2 cells out)

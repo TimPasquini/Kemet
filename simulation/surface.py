@@ -22,11 +22,14 @@ from simulation.config import (
     SURFACE_FLOW_THRESHOLD,
     SURFACE_SEEPAGE_RATE,
 )
-from world.terrain import BIOME_TYPES
+from world.terrain import BIOME_TYPES, SoilLayer
 from core.config import (
     TRENCH_EVAP_REDUCTION,
     CISTERN_EVAP_REDUCTION,
+    GRID_WIDTH,
+    GRID_HEIGHT,
 )
+from core.grid_helpers import get_cell_neighborhood_surface_water
 
 if TYPE_CHECKING:
     from main import GameState
@@ -80,12 +83,15 @@ def simulate_surface_flow(state: "GameState") -> int:
         # Shifted view of H representing the neighbor at (x+dx, y+dy)
         # If dx=1, we look at slice(2, None). If dx=-1, slice(0, -2).
         # This aligns the neighbor's value with the center cell's coordinate.
-        neighbor_slice = (slice(1 + dx, -1 + dx if -1 + dx != 0 else None), 
+        neighbor_slice = (slice(1 + dx, -1 + dx if -1 + dx != 0 else None),
                           slice(1 + dy, -1 + dy if -1 + dy != 0 else None))
-        
+
         H_neighbor = H[neighbor_slice]
         d = H_center - H_neighbor
-        d = np.maximum(d, 0) # Only flow downhill
+        d = np.maximum(d, 0)  # Only flow downhill
+        # Apply flow threshold: only flow if height difference exceeds threshold
+        # This prevents oscillation from tiny elevation differences
+        d = np.where(d >= SURFACE_FLOW_THRESHOLD, d, 0)
         diffs.append((d, dx, dy))
         diff_sum += d
         
@@ -169,8 +175,6 @@ def compute_exposed_layer_grid(terrain_layers: np.ndarray) -> np.ndarray:
     - 0-4: Layer index (ORGANICS=0, TOPSOIL=1, ELUVIATION=2, SUBSOIL=3, REGOLITH=4)
     - -1: Bedrock only (no soil layers)
     """
-    from world.terrain import SoilLayer
-
     # Start with all bedrock (-1)
     exposed = np.full(terrain_layers.shape[1:], -1, dtype=np.int8)
 
@@ -193,8 +197,6 @@ def simulate_surface_seepage(state: "GameState") -> None:
     Args:
         state: The main game state.
     """
-    from world.terrain import SoilLayer
-
     # Only process cells with surface water
     if len(state.active_water_cells) == 0:
         return
@@ -269,9 +271,6 @@ def remove_water_from_cell_neighborhood(amount: int, state: "GameState", sx: int
     Returns:
         Actual amount removed (may be less if insufficient water)
     """
-    from core.config import GRID_WIDTH, GRID_HEIGHT
-    from core.grid_helpers import get_cell_neighborhood_surface_water
-
     total_water = get_cell_neighborhood_surface_water(state, sx, sy)
     if total_water <= 0:
         return 0
@@ -321,8 +320,6 @@ def distribute_water_to_cell_neighborhood(
     Returns:
         List of (gx, gy) grid cells that received water
     """
-    from core.config import GRID_WIDTH, GRID_HEIGHT
-
     if amount <= 0:
         return []
 

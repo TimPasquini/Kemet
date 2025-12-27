@@ -305,6 +305,206 @@ def issue(state: GameState, cmd: str, args: List[str], target_cell: Optional[Tup
     state.start_action(cmd)
 
 
+# =============================================================================
+# Event Handling Helpers
+# =============================================================================
+
+def handle_quit_event(event: pygame.event.Event, toolbar: Toolbar) -> bool:
+    """Handle QUIT and ESC events.
+
+    Returns True if the game should exit, False otherwise.
+    """
+    if event.type == pygame.QUIT:
+        return True
+
+    if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+        if toolbar.menu_open:
+            toolbar.close_menu()
+        else:
+            return True
+
+    return False
+
+
+def handle_mouse_wheel_event(
+    event: pygame.event.Event,
+    toolbar: Toolbar,
+    ui_state: UIState,
+    camera: Camera,
+    state: GameState,
+    screen: pygame.Surface,
+    visible_messages: int
+) -> None:
+    """Handle mouse wheel scrolling for UI and camera zoom."""
+    if event.type != pygame.MOUSEWHEEL:
+        return
+
+    scroll_dir = event.y
+
+    if toolbar.menu_open:
+        toolbar.cycle_menu_highlight(-scroll_dir)
+    else:
+        virtual_pos = screen_to_virtual(pygame.mouse.get_pos(), screen.get_size())
+        # Try to scroll UI first (e.g. log panel)
+        if not ui_state.handle_scroll(virtual_pos, scroll_dir, len(state.messages), visible_messages):
+            # If UI didn't consume the scroll, zoom the camera
+            zoom_speed = 0.1
+            camera.set_zoom(camera.zoom + (scroll_dir * zoom_speed))
+
+
+def handle_zoom_keys_event(event: pygame.event.Event, camera: Camera) -> bool:
+    """Handle keyboard zoom controls (+/-).
+
+    Returns True if event was handled, False otherwise.
+    """
+    if event.type != pygame.KEYDOWN:
+        return False
+
+    if event.key == pygame.K_EQUALS or event.key == pygame.K_PLUS:  # +
+        camera.set_zoom(camera.zoom + 0.25)
+        return True
+    elif event.key == pygame.K_MINUS:  # -
+        camera.set_zoom(camera.zoom - 0.25)
+        return True
+
+    return False
+
+
+def handle_mouse_click_event(
+    event: pygame.event.Event,
+    toolbar: Toolbar,
+    ui_state: UIState,
+    state: GameState,
+    screen: pygame.Surface
+) -> bool:
+    """Handle mouse button clicks (left/right).
+
+    Returns True if event was handled, False otherwise.
+    """
+    if event.type != pygame.MOUSEBUTTONDOWN or event.button in (4, 5):
+        return False
+
+    virtual_pos = screen_to_virtual(pygame.mouse.get_pos(), screen.get_size())
+
+    # Check popup clicks first (when menu is open)
+    if toolbar.menu_open:
+        option_idx = ui_state.get_popup_option_at(virtual_pos)
+        if option_idx is not None:
+            toolbar.menu_highlight_index = option_idx
+            toolbar.confirm_menu_selection()
+            return True
+        elif not ui_state.is_over_popup(virtual_pos):
+            if event.button == 1:
+                toolbar.confirm_menu_selection()
+            else:
+                toolbar.close_menu()
+            return True
+
+    # Left click
+    if event.button == 1:
+        slot = ui_state.get_toolbar_slot_at(virtual_pos, len(toolbar.tools))
+        if slot is not None:
+            if slot == toolbar.selected_index:
+                tool = toolbar.get_selected_tool()
+                if tool and tool.has_menu():
+                    toolbar.toggle_menu()
+            else:
+                toolbar.close_menu()
+                toolbar.select_by_number(slot + 1)
+        elif ui_state.map_rect.collidepoint(virtual_pos):
+            # Left click in map area - trigger selected tool
+            tool = toolbar.get_selected_tool()
+            if tool:
+                action, args = tool.get_action()
+                issue(state, action, args, ui_state.target_cell)
+        return True
+
+    # Right click
+    elif event.button == 3:
+        slot = ui_state.get_toolbar_slot_at(virtual_pos, len(toolbar.tools))
+        if slot is not None:
+            toolbar.select_by_number(slot + 1)
+            tool = toolbar.get_selected_tool()
+            if tool and tool.has_menu():
+                toolbar.toggle_menu()
+        elif ui_state.map_rect.collidepoint(virtual_pos):
+            # Right click in map area
+            tool = toolbar.get_selected_tool()
+            if tool and tool.has_menu():
+                toolbar.toggle_menu()
+        return True
+
+    return False
+
+
+def handle_keyboard_event(
+    event: pygame.event.Event,
+    toolbar: Toolbar,
+    state: GameState,
+    ui_state: UIState,
+    show_help: bool
+) -> Tuple[bool, bool]:
+    """Handle keyboard input for tools, menus, and actions.
+
+    Returns (handled, new_show_help_state).
+    """
+    if event.type != pygame.KEYDOWN:
+        return False, show_help
+
+    # Help toggle
+    if event.key == HELP_KEY:
+        show_help = not show_help
+        toolbar.close_menu()
+        return True, show_help
+
+    # Menu navigation
+    if toolbar.menu_open:
+        if event.key == pygame.K_w:
+            toolbar.cycle_menu_highlight(-1)
+            return True, show_help
+        elif event.key == pygame.K_s:
+            toolbar.cycle_menu_highlight(1)
+            return True, show_help
+        elif event.key == TOOL_MENU_KEY:
+            toolbar.confirm_menu_selection()
+            return True, show_help
+        elif event.key == USE_TOOL_KEY:
+            toolbar.confirm_menu_selection()
+            # Fall through to use tool
+
+    # Tool selection
+    if event.key in TOOL_KEYS:
+        toolbar.select_by_number(TOOL_KEYS[event.key])
+        return True, show_help
+
+    # If player is busy, don't process actions
+    if state.is_busy():
+        return True, show_help
+
+    # Actions
+    if event.key == REST_KEY:
+        issue(state, "end", [])
+        return True, show_help
+    elif event.key == TOOL_MENU_KEY:
+        tool = toolbar.get_selected_tool()
+        if tool and tool.has_menu():
+            toolbar.toggle_menu()
+        else:
+            state.messages.append("This tool has no options.")
+        return True, show_help
+    elif event.key == INTERACT_KEY:
+        issue(state, "collect", [], ui_state.target_cell)
+        return True, show_help
+    elif event.key == USE_TOOL_KEY:
+        tool = toolbar.get_selected_tool()
+        if tool:
+            action, args = tool.get_action()
+            issue(state, action, args, ui_state.target_cell)
+        return True, show_help
+
+    return False, show_help
+
+
 def run(cell_size: int = CELL_SIZE) -> None:
     """Main game loop."""
     pygame.init()
@@ -363,140 +563,28 @@ def run(cell_size: int = CELL_SIZE) -> None:
         dt = clock.tick(60) / 1000.0
         state.update_action_timer(dt)
 
-        # Handle events
+        # Handle events using helper functions
         for event in pygame.event.get():
-            if event.type == pygame.QUIT:
+            # Quit/ESC handling
+            if handle_quit_event(event, toolbar):
                 running = False
                 continue
 
-            if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                if toolbar.menu_open:
-                    toolbar.close_menu()
-                else:
-                    running = False
-                continue
-
             # Mouse wheel scrolling
-            if event.type == pygame.MOUSEWHEEL:
-                scroll_dir = event.y
+            handle_mouse_wheel_event(event, toolbar, ui_state, camera, state, screen, visible_messages)
 
-                if toolbar.menu_open:
-                    toolbar.cycle_menu_highlight(-scroll_dir)
-                else:
-                    virtual_pos = screen_to_virtual(pygame.mouse.get_pos(), screen.get_size())
-                    # Try to scroll UI first (e.g. log panel)
-                    if not ui_state.handle_scroll(virtual_pos, scroll_dir, len(state.messages), visible_messages):
-                        # If UI didn't consume the scroll, zoom the camera
-                        # scroll_dir is usually 1 (up/in) or -1 (down/out)
-                        zoom_speed = 0.1
-                        camera.set_zoom(camera.zoom + (scroll_dir * zoom_speed))
+            # Zoom keys (+/-)
+            if handle_zoom_keys_event(event, camera):
                 continue
-                
-            # Zoom controls (Plus/Minus keys)
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_EQUALS or event.key == pygame.K_PLUS: # +
-                    camera.set_zoom(camera.zoom + 0.25)
-                    continue
-                elif event.key == pygame.K_MINUS: # -
-                    camera.set_zoom(camera.zoom - 0.25)
-                    continue
 
             # Mouse clicks
-            if event.type == pygame.MOUSEBUTTONDOWN and event.button not in (4, 5):
-                virtual_pos = screen_to_virtual(pygame.mouse.get_pos(), screen.get_size())
-
-                # Check popup clicks first (when menu is open)
-                if toolbar.menu_open:
-                    option_idx = ui_state.get_popup_option_at(virtual_pos)
-                    if option_idx is not None:
-                        toolbar.menu_highlight_index = option_idx
-                        toolbar.confirm_menu_selection()
-                        continue
-                    elif not ui_state.is_over_popup(virtual_pos):
-                        if event.button == 1:
-                            toolbar.confirm_menu_selection()
-                        else:
-                            toolbar.close_menu()
-                        continue
-
-                # Left click
-                if event.button == 1:
-                    slot = ui_state.get_toolbar_slot_at(virtual_pos, len(toolbar.tools))
-                    if slot is not None:
-                        if slot == toolbar.selected_index:
-                            tool = toolbar.get_selected_tool()
-                            if tool and tool.has_menu():
-                                toolbar.toggle_menu()
-                        else:
-                            toolbar.close_menu()
-                            toolbar.select_by_number(slot + 1)
-                    elif ui_state.map_rect.collidepoint(virtual_pos):
-                        # Left click in map area - trigger selected tool
-                        tool = toolbar.get_selected_tool()
-                        if tool:
-                            action, args = tool.get_action()
-                            issue(state, action, args, ui_state.target_cell)
-                            # Elevation range cache is invalidated automatically by terrain actions
-
-                # Right click
-                elif event.button == 3:
-                    slot = ui_state.get_toolbar_slot_at(virtual_pos, len(toolbar.tools))
-                    if slot is not None:
-                        toolbar.select_by_number(slot + 1)
-                        tool = toolbar.get_selected_tool()
-                        if tool and tool.has_menu():
-                            toolbar.toggle_menu()
-                    elif ui_state.map_rect.collidepoint(virtual_pos):
-                        # Right click in map area
-                        tool = toolbar.get_selected_tool()
-                        if tool and tool.has_menu():
-                            toolbar.toggle_menu()
+            if handle_mouse_click_event(event, toolbar, ui_state, state, screen):
                 continue
 
-            # Keyboard
-            if event.type == pygame.KEYDOWN:
-                if event.key == HELP_KEY:
-                    show_help = not show_help
-                    toolbar.close_menu()
-                    continue
-
-                if toolbar.menu_open:
-                    if event.key == pygame.K_w:
-                        toolbar.cycle_menu_highlight(-1)
-                        continue
-                    elif event.key == pygame.K_s:
-                        toolbar.cycle_menu_highlight(1)
-                        continue
-                    elif event.key == TOOL_MENU_KEY:
-                        toolbar.confirm_menu_selection()
-                        continue
-                    elif event.key == USE_TOOL_KEY:
-                        toolbar.confirm_menu_selection()
-                        # Fall through to use tool
-
-                if event.key in TOOL_KEYS:
-                    toolbar.select_by_number(TOOL_KEYS[event.key])
-                    continue
-
-                if state.is_busy():
-                    continue
-
-                if event.key == REST_KEY:
-                    issue(state, "end", [])
-                elif event.key == TOOL_MENU_KEY:
-                    tool = toolbar.get_selected_tool()
-                    if tool and tool.has_menu():
-                        toolbar.toggle_menu()
-                    else:
-                        state.messages.append("This tool has no options.")
-                elif event.key == INTERACT_KEY:
-                    issue(state, "collect", [], ui_state.target_cell)
-                elif event.key == USE_TOOL_KEY:
-                    tool = toolbar.get_selected_tool()
-                    if tool:
-                        action, args = tool.get_action()
-                        issue(state, action, args, ui_state.target_cell)
-                        # Elevation range cache is invalidated automatically by terrain actions
+            # Keyboard (tools, menus, actions)
+            handled, show_help = handle_keyboard_event(event, toolbar, state, ui_state, show_help)
+            if handled:
+                continue
 
         # Movement (when menu closed)
         if not toolbar.menu_open:

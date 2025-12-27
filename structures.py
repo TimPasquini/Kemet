@@ -29,7 +29,8 @@ from core.config import (
     CISTERN_LOSS_RECOVERY,
     STRUCTURE_COSTS,
 )
-from simulation.surface import distribute_upward_seepage
+from simulation.surface import distribute_upward_seepage, remove_water_from_cell_neighborhood
+from core.grid_helpers import get_cell_neighborhood_surface_water, get_cell_neighborhood_total_water
 
 if TYPE_CHECKING:
     from main import GameState, Inventory
@@ -99,9 +100,6 @@ class Cistern(Structure):
 
     def tick(self, state: "GameState", sx: int, sy: int) -> None:
         # Get total surface water from cell neighborhood
-        from core.grid_helpers import get_cell_neighborhood_surface_water
-        from simulation.surface import remove_water_from_cell_neighborhood
-
         surface_water = get_cell_neighborhood_surface_water(state, sx, sy)
 
         # Transfer surface water into cistern storage
@@ -133,9 +131,6 @@ class Planter(Structure):
 
     def tick(self, state: "GameState", sx: int, sy: int) -> None:
         # Total water includes grid cell neighborhood surface water + subsurface
-        from core.grid_helpers import get_cell_neighborhood_total_water
-        from simulation.surface import remove_water_from_cell_neighborhood
-
         total_water = get_cell_neighborhood_total_water(state, sx, sy)
 
         if total_water >= PLANTER_WATER_REQUIREMENT:

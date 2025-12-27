@@ -11,6 +11,7 @@ import pygame
 from core.config import DAY_LENGTH
 from world.terrain import SoilLayer, MATERIAL_LIBRARY, units_to_meters
 from render.primitives import draw_text, draw_section_header
+from render.grid_helpers import get_exposed_material, get_grid_elevation
 from render.config import (
     LINE_HEIGHT,
     SECTION_SPACING,
@@ -118,8 +119,6 @@ def render_hud(
     y_offset += LINE_HEIGHT
 
     # Get exposed material from grid
-    from render.grid_helpers import get_exposed_material, get_grid_elevation
-    from world.terrain import units_to_meters
     material = get_exposed_material(state, sx, sy)
     draw_text(screen, font, f"Material: {material.capitalize()}", (hud_x, y_offset))
     y_offset += LINE_HEIGHT
@@ -232,13 +231,35 @@ def render_soil_profile(
     profile_width = width - gauge_width
 
 
-    # Define view transform: Sea level (0m) is at center of content area
-    center_y = y + height // 2
-    
+    # Define view transform: Auto-scale with sea level as reference floor
+    # Calculate actual range from bedrock to surface (with some padding)
+    bedrock_m = units_to_meters(bedrock)
+    surface_m = units_to_meters(surface_elev)
+
+    # Add padding for surface water and visual breathing room
+    water_depth_m = units_to_meters(surface_water) if surface_water > 0 else 0
+    top_m = surface_m + water_depth_m + 0.5  # Top of view
+
+    # Always include sea level (0m) in the range, even if terrain is all above/below it
+    bottom_m = min(bedrock_m - 0.5, -0.5)  # At least show 0.5m below sea level
+    top_m = max(top_m, 0.5)  # At least show 0.5m above sea level
+
+    range_m = top_m - bottom_m
+
+    # Use a conservative scale with minimum (don't zoom in too much, maintain consistency)
+    # METER_SCALE is the default; we allow gentle zoom but not too aggressive
+    usable_height = height * 0.85
+    calculated_scale = usable_height / range_m if range_m > 0 else METER_SCALE
+    meter_scale = min(calculated_scale, METER_SCALE * 1.5)  # Cap at 1.5x default zoom max
+
+    # Anchor view to sea level (0m) as the reference point
+    # Position sea level at 60% down the panel (upper portion for above-sea terrain)
+    sea_level_y = y + int(height * 0.6)
+
     def elev_to_y(elev_m: float) -> int:
         """Convert elevation in meters to screen Y coordinate."""
-        # Y grows down, so positive elevation is up (negative Y offset)
-        return int(center_y - (elev_m * METER_SCALE))
+        # Y grows down, so positive elevation is up (negative Y offset from sea level)
+        return int(sea_level_y - (elev_m * meter_scale))
 
     # Set clip rect to ensure drawing stays within content area
     content_rect = pygame.Rect(x, y, width, height)
@@ -280,9 +301,11 @@ def render_soil_profile(
         top_m = units_to_meters(top_units)
         bot_m = units_to_meters(bot_units)
 
-        # For bedrock, extend visually to bottom of panel
+        # For bedrock, extend to fill the bottom of the panel (visual only)
         if layer == SoilLayer.BEDROCK:
-            bot_m = -100.0  # Arbitrary deep value
+            # Calculate what elevation the bottom of the panel represents
+            panel_bottom_elev = (sea_level_y - (y + height)) / meter_scale
+            bot_m = panel_bottom_elev - 1.0  # Extend below panel for continuity
 
         layer_top_y = elev_to_y(top_m)
         layer_bot_y = elev_to_y(bot_m)
@@ -350,13 +373,18 @@ def render_soil_profile(
     gauge_line_x = x + gauge_width - 8
     pygame.draw.line(screen, (120, 120, 130), (gauge_line_x, y), (gauge_line_x, y + height), 1)
 
-    # Calculate visible meter range
-    # Top of panel is y, which corresponds to some elevation
-    # y = center_y - elev * scale  =>  elev = (center_y - y) / scale
-    max_visible_m = math.ceil((center_y - y) / METER_SCALE)
-    min_visible_m = math.floor((center_y - (y + height)) / METER_SCALE)
+    # Calculate visible meter range using sea level anchor
+    # At sea_level_y, elevation is 0m
+    # y = sea_level_y - elev * meter_scale  =>  elev = (sea_level_y - y) / meter_scale
+    max_visible_m = math.ceil((sea_level_y - y) / meter_scale)
+    min_visible_m = math.floor((sea_level_y - (y + height)) / meter_scale)
+
+    # Show ticks at consistent 1m intervals (scale is capped, so won't be too dense)
+    tick_interval = 1
 
     for m in range(min_visible_m, max_visible_m + 1):
+        if m % tick_interval != 0:
+            continue
         tick_y = elev_to_y(m)
         if tick_y < y or tick_y > y + height:
             continue
@@ -364,12 +392,12 @@ def render_soil_profile(
         # Major tick for 0 (Sea Level)
         if m == 0:
             pygame.draw.line(screen, (100, 150, 255), (gauge_line_x - 8, tick_y), (gauge_line_x + profile_width, tick_y), 1)
-            draw_text(screen, font, "0", (gauge_x + 8, tick_y - 6), color=(100, 150, 255))
+            draw_text(screen, font, "0m", (gauge_x + 6, tick_y - 6), color=(100, 150, 255))
         else:
             # Standard tick
             pygame.draw.line(screen, (150, 150, 160), (gauge_line_x - 4, tick_y), (gauge_line_x, tick_y), 1)
-            if m % 2 == 0: # Label even meters
-                draw_text(screen, font, f"{m}", (gauge_x, tick_y - 6), color=(150, 150, 160))
+            # Label all shown ticks since we're already filtering by interval
+            draw_text(screen, font, f"{m}m", (gauge_x, tick_y - 6), color=(150, 150, 160))
 
     # Restore clip
     screen.set_clip(original_clip)

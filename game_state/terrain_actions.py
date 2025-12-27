@@ -68,8 +68,25 @@ def _get_perpendicular_neighbors(px: int, py: int, tx: int, ty: int, grid_width:
 def dig_trench(state: GameState, mode: str) -> None:
     """Dig a trench with the specified mode: 'flat', 'slope_down', or 'slope_up'.
 
-    Common setup handles position calculation and validation.
-    Mode-specific logic handles material removal and redistribution.
+    INTENT: Trenching enables efficient large-scale terrain sculpting by automatically
+    distributing excavated material. Instead of manually moving dirt cell-by-cell, the
+    player directs a multi-cell operation that:
+    1. Excavates the target cell to create a channel or slope
+    2. Automatically redistributes material to adjacent cells (exit, sides)
+    3. Balances terrain to create stable slopes and level channels
+
+    This allows slightly larger-scale automatic dirt moving - a single action moves
+    material between 3-5 cells in a coordinated way.
+
+    STRATEGY:
+    - Flat mode: Level the target to match the origin (behind player), build up exit/sides
+    - Slope down: Create a descending slope from origin → target → exit
+    - Slope up: Create an ascending slope from origin → target → exit
+
+    All modes follow a priority-based distribution:
+    1. First priority: Correct the slope (maintain proper elevation relationships)
+    2. Second priority: Balance the sides (level left/right berms)
+    3. Third priority: Distribute remaining material evenly
 
     Args:
         state: Game state
@@ -134,7 +151,20 @@ def _dig_trench_flat_impl(state: GameState, sx: int, sy: int,
                           origin_elev: int, target_elev: int,
                           backward_pos: tuple, forward_pos: tuple,
                           left_pos: tuple, right_pos: tuple) -> None:
-    """Implementation of flat trenching mode."""
+    """Implementation of flat trenching mode.
+
+    GOAL: Level the target cell to match the origin cell's elevation, creating a flat
+    channel. This is useful for irrigation channels, roads, or level platforms.
+
+    MATERIAL FLOW:
+    1. Remove material from target until it reaches origin elevation
+    2. Distribute removed material with smart priority:
+       a) Fill forward (exit) cell to origin level if it's lower (continues the channel)
+       b) Balance sides: bring lower side up to match higher side (creates berms)
+       c) Split remaining material evenly between sides (raises berms further)
+
+    This creates a channel with consistent elevation and balanced side berms.
+    """
     # Find exposed layer at target (top to bottom)
     exposed_layer = None
     for layer in [SoilLayer.ORGANICS, SoilLayer.TOPSOIL, SoilLayer.ELUVIATION,
@@ -248,11 +278,26 @@ def _dig_trench_slope_down_impl(state: GameState, sx: int, sy: int,
                                 origin_elev: int, target_elev: int, exit_elev: int,
                                 backward_pos: tuple, forward_pos: tuple,
                                 left_pos: tuple, right_pos: tuple) -> None:
-    """Implementation of slope down trenching mode."""
-    material_pool = 0
+    """Implementation of slope down trenching mode.
 
-    # Goal: origin > selection > exit with TRENCH_SLOPE_DROP between each
-    # Strategy: Pull from higher squares to raise lower ones
+    GOAL: Create a descending slope from origin → target → exit, where each step
+    is lower than the previous by TRENCH_SLOPE_DROP. This is useful for drainage
+    channels, ramps, or gradual descents.
+
+    DESIRED ELEVATION RELATIONSHIP:
+        origin > target (by ~TRENCH_SLOPE_DROP) > exit (by ~TRENCH_SLOPE_DROP)
+
+    STRATEGY:
+    1. If exit is too high (higher than target): Pull material from exit to raise target
+    2. If target is too high (higher than origin): Pull material from target:
+       a) Half goes to raising origin (balances the slope)
+       b) Remainder goes to material pool for sides
+    3. Distribute any excess material to sides (creates berms)
+
+    This balances the slope by moving material "uphill" (from lower positions to higher
+    ones) until the desired gradient is achieved, then builds up the sides.
+    """
+    material_pool = 0
 
     # Check if exit is too high (higher than selection)
     if exit_elev > target_elev:
@@ -327,7 +372,24 @@ def _dig_trench_slope_up_impl(state: GameState, sx: int, sy: int,
                               origin_elev: int, target_elev: int, exit_elev: int,
                               backward_pos: tuple, forward_pos: tuple,
                               left_pos: tuple, right_pos: tuple) -> None:
-    """Implementation of slope up trenching mode."""
+    """Implementation of slope up trenching mode.
+
+    GOAL: Create an ascending slope from origin → target → exit, where each step
+    is higher than the previous by TRENCH_SLOPE_DROP. This is useful for creating
+    ramps upward, elevated platforms, or terraced slopes.
+
+    DESIRED ELEVATION RELATIONSHIP:
+        origin < target (by ~TRENCH_SLOPE_DROP) < exit (by ~TRENCH_SLOPE_DROP)
+
+    STRATEGY:
+    1. Remove LIMITED material from target (keep it at least TRENCH_SLOPE_DROP above origin)
+    2. Distribute removed material:
+       a) Raise exit above target (by TRENCH_SLOPE_DROP if possible)
+       b) Remainder goes to sides (creates berms)
+
+    This differs from slope_down: instead of pulling from lower cells upward, we
+    take from the middle (target) and push material forward and to the sides.
+    """
     # Remove LIMITED material from selection (keep it above origin + margin)
     exposed_layer = _find_exposed_layer(state, sx, sy)
     if exposed_layer is None:

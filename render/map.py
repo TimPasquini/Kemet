@@ -8,6 +8,8 @@ Rendering now supports:
 """
 from __future__ import annotations
 
+import math
+import sys
 from typing import TYPE_CHECKING, Tuple, Optional, List
 
 import pygame
@@ -94,9 +96,11 @@ def render_map_viewport(
         # --- 1. Blit the pre-rendered static background ---
         # Determine the source rectangle from the full-world background surface
         # that corresponds to the camera's current view.
+        # CRITICAL: Round camera positions to pixel boundaries to prevent sub-pixel
+        # misalignment between the scaled background and grid-based overlays (water, etc.)
         src_w = camera.viewport_width / camera.zoom
         src_h = camera.viewport_height / camera.zoom
-        source_rect = pygame.Rect(camera.world_x, camera.world_y, src_w, src_h)
+        source_rect = pygame.Rect(round(camera.world_x), round(camera.world_y), src_w, src_h)
 
         # Clip the source rectangle to the bounds of the background surface
         # to prevent "subsurface outside surface" errors at the edges.
@@ -179,9 +183,10 @@ def render_water_overlay(
 ) -> None:
     """
     Render water using fully vectorized operations for maximum performance.
-    Uses numpy array operations to avoid Python loops.
+    Uses the same scaling approach as the background to ensure perfect alignment.
     """
-    sub_size = max(1, scaled_cell_size)
+    from render.config import CELL_SIZE
+
     start_x, start_y, end_x, end_y = camera.get_visible_cell_range()
 
     # Get visible water region as a single slice
@@ -191,7 +196,7 @@ def render_water_overlay(
     if np.max(water_region) <= 2:
         return
 
-    # Create RGBA array at grid resolution (rows, cols, 4 channels)
+    # Create RGBA array at grid resolution (one pixel per cell, like background)
     grid_shape = water_region.shape
     rgba_grid = np.zeros((*grid_shape, 4), dtype=np.uint8)
 
@@ -211,22 +216,21 @@ def render_water_overlay(
     rgba_grid[medium, 3] = np.clip(100 + (water_region[medium] - 20) * 2, 0, 255).astype(np.uint8)
     rgba_grid[deep, 3] = np.clip(160 + (water_region[deep] - 50), 0, 200).astype(np.uint8)
 
-    # Scale up to pixel resolution by repeating each cell
-    # water_region has shape (x_range, y_range) because water_grid is indexed [x, y]
-    # After repeating, we get (x_range * sub_size, y_range * sub_size, 4)
-    if sub_size > 1:
-        pixel_array = rgba_grid.repeat(sub_size, axis=0).repeat(sub_size, axis=1)
-    else:
-        pixel_array = rgba_grid
-
-    # pixel_array shape is (x_pixels, y_pixels, 4) = (width, height, 4)
-    # pygame.image.frombuffer expects data in row-major order (height, width)
-    # So transpose from (width, height, channels) to (height, width, channels)
-    pixel_array_hwc = np.transpose(pixel_array, (1, 0, 2))
-
+    # PERFORMANCE-OPTIMIZED with alignment preservation:
+    # Use adaptive resolution based on zoom level to avoid creating massive surfaces
+    # At low zoom (zoomed out), use lower resolution; at high zoom, use full detail
     try:
-        # Create surface from array and blit - this is much faster than individual draw calls
-        # frombuffer expects size as (width, height)
+        # Calculate optimal scale factor based on zoom
+        # At zoom >= 1.0: use full CELL_SIZE detail
+        # At zoom < 1.0: reduce proportionally (e.g., zoom 0.25 → 12px per cell instead of 48px)
+        scale_factor = max(4, int(CELL_SIZE * min(1.0, camera.zoom)))
+
+        # Step 1: Create water at adaptive scale
+        pixel_array = rgba_grid.repeat(scale_factor, axis=0).repeat(scale_factor, axis=1)
+
+        # Transpose to (height, width, channels) for pygame
+        pixel_array_hwc = np.transpose(pixel_array, (1, 0, 2))
+
         width_pixels = pixel_array.shape[0]
         height_pixels = pixel_array.shape[1]
 
@@ -236,17 +240,34 @@ def render_water_overlay(
             'RGBA'
         )
 
-        # Calculate viewport position of the first visible cell to handle sub-pixel camera positions
-        world_x, world_y = camera.cell_to_world(start_x, start_y)
-        vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
+        # Step 2: Extract visible region with scale-adjusted coordinates
+        # Calculate where the water surface starts in world coordinates
+        world_start_x = start_x * CELL_SIZE
+        world_start_y = start_y * CELL_SIZE
 
-        # Blit at the correct offset to prevent jittering when camera moves
-        surface.blit(water_surface, (int(vp_x), int(vp_y)))
+        # Calculate offset, scaled to our adaptive resolution
+        offset_x = int((round(camera.world_x) - world_start_x) * scale_factor / CELL_SIZE)
+        offset_y = int((round(camera.world_y) - world_start_y) * scale_factor / CELL_SIZE)
+
+        # Source rect dimensions, scaled to our adaptive resolution
+        src_w = int((camera.viewport_width / camera.zoom) * scale_factor / CELL_SIZE)
+        src_h = int((camera.viewport_height / camera.zoom) * scale_factor / CELL_SIZE)
+
+        source_rect = pygame.Rect(offset_x, offset_y, src_w, src_h)
+        source_rect.clamp_ip(water_surface.get_rect())
+
+        # Step 3: Scale to viewport
+        if source_rect.width > 0 and source_rect.height > 0:
+            visible_water = water_surface.subsurface(source_rect)
+            scaled_water = pygame.transform.scale(visible_water, surface.get_size())
+            surface.blit(scaled_water, (0, 0))
     except (ValueError, pygame.error) as e:
         # Fallback to rect-based rendering if buffer creation fails
-        import sys
         print(f"Vectorized water rendering failed, using fallback: {e}", file=sys.stderr)
         water_overlay = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
+        # Use same rounding as optimized path for consistency
+        rounded_cam_x = round(camera.world_x)
+        rounded_cam_y = round(camera.world_y)
         for sy in range(start_y, end_y):
             for sx in range(start_x, end_x):
                 water = state.water_grid[sx, sy]
@@ -264,8 +285,10 @@ def render_water_overlay(
                     color = (40, 100, 180)
 
                 world_x, world_y = camera.cell_to_world(sx, sy)
-                vp_x, vp_y = camera.world_to_viewport(world_x, world_y)
-                rect = pygame.Rect(int(vp_x), int(vp_y), sub_size, sub_size)
+                vp_x = (world_x - rounded_cam_x) * camera.zoom
+                vp_y = (world_y - rounded_cam_y) * camera.zoom
+                cell_size = max(1, scaled_cell_size)
+                rect = pygame.Rect(int(vp_x), int(vp_y), cell_size, cell_size)
                 pygame.draw.rect(water_overlay, (*color, alpha), rect)
         surface.blit(water_overlay, (0, 0))
 
@@ -351,9 +374,6 @@ def _get_trench_affected_squares(
 
     Returns dict with keys: 'origin', 'exit', 'left', 'right'
     """
-    import math
-    from core.config import GRID_WIDTH, GRID_HEIGHT
-
     px, py = player_pos
     tx, ty = target_pos
 

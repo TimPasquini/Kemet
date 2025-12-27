@@ -17,13 +17,16 @@ from typing import Deque, Dict, List, Tuple, TYPE_CHECKING
 
 import numpy as np
 from scipy import ndimage
+from scipy.ndimage import gaussian_filter
 from world.terrain import (
     SoilLayer,
     BiomeType,
     BIOME_TYPES,
+    MATERIAL_LIBRARY,
     elevation_to_units,
     units_to_meters,
 )
+from core.config import DEPTH_UNIT_MM
 from core.utils import get_neighbors
 from world.biomes import calculate_biome, calculate_elevation_percentiles, recalculate_biomes
 
@@ -62,8 +65,6 @@ def generate_grids_direct(grid_width: int, grid_height: int) -> Dict:
             - water_grid: (grid_w, grid_h) surface water
             - kind_grid: (grid_w, grid_h) biome type names
     """
-    from world.terrain import MATERIAL_LIBRARY
-
     # Initialize arrays
     terrain_layers = np.zeros((len(SoilLayer), grid_width, grid_height), dtype=np.int32)
     terrain_materials = np.zeros((len(SoilLayer), grid_width, grid_height), dtype='U20')
@@ -92,21 +93,22 @@ def generate_grids_direct(grid_width: int, grid_height: int) -> Dict:
     }
 
     # Depth variations by biome (in meters)
-    # TODO: Adjust depth ranges to ensure more terrain above sea level
+    # Increased ranges for more dramatic terrain and ensure terrain is above sea level
     depth_map = {
-        "dune": (1.5, 2.5),
-        "flat": (1.0, 2.0),
-        "wadi": (0.5, 1.2),
-        "rock": (0.2, 0.6),
-        "salt": (0.8, 1.5),
+        "dune": (2.5, 4.5),     # Tall dunes
+        "flat": (1.5, 2.5),     # Moderate flat terrain
+        "wadi": (0.8, 1.8),     # Lowlands but not too deep
+        "rock": (0.5, 1.2),     # Exposed rock, less soil
+        "salt": (1.2, 2.2),     # Salt flats
     }
 
     # WFC generation parameters
     WFC_SEED_PERCENTAGE = 0.05  # Percentage of cells to seed initially (0.05 = 5%)
     WFC_INFLUENCE_NOISE = 0.5   # Random noise added to influence scores (lower = more clustered)
 
-    # Random bedrock baseline
-    bedrock_base_elev = elevation_to_units(random.uniform(-2.5, -2.0))
+    # Bedrock baseline raised significantly to ensure terrain is above sea level
+    # Set base to 0-1m, so even wadis will be above water
+    bedrock_base_elev = elevation_to_units(random.uniform(0.0, 1.0))
     bedrock_base[:] = bedrock_base_elev
 
     # Generate biomes using WFC with convolution-based neighbor influence
@@ -187,9 +189,20 @@ def generate_grids_direct(grid_width: int, grid_height: int) -> Dict:
                 assigned[gx, gy] = True
 
     # Phase 2: Vectorized terrain property assignment based on biome grid
-    # Generate random variations for each cell
-    from core.config import DEPTH_UNIT_MM
-    bedrock_variation = np.random.uniform(-0.3, 0.3, (grid_width, grid_height))
+    # Generate elevation variation using noise with non-linear transformation for dramatic peaks/valleys
+    # Use noise-like variation: random field with smoothing for natural-looking terrain
+    raw_noise = np.random.uniform(-1.0, 1.0, (grid_width, grid_height))
+    # Apply gaussian smoothing for more natural terrain
+    smoothed_noise = gaussian_filter(raw_noise, sigma=3.0)
+
+    # Non-linear transformation: square the noise to create more dramatic peaks
+    # This creates higher highs and lower lows for more interesting terrain
+    # Values range from 0 (valleys) to 1 (peaks)
+    normalized_noise = (smoothed_noise + 1.0) / 2.0  # Scale to [0, 1]
+    elevation_modifier = normalized_noise ** 1.5  # Power >1 creates more peaks
+
+    # Apply variation: -1m to +2m range for significant height differences
+    bedrock_variation = (elevation_modifier * 3.0) - 1.0  # Range: -1m to +2m
     bedrock_base[:] = bedrock_base_elev + (bedrock_variation * 1000 / DEPTH_UNIT_MM).astype(np.int32)
 
     # Depth variation per biome
@@ -206,11 +219,13 @@ def generate_grids_direct(grid_width: int, grid_height: int) -> Dict:
     total_soil_depth = sum(depth_grids.values())
 
     # Distribute soil depth across layers (vectorized)
-    terrain_layers[SoilLayer.REGOLITH] = (total_soil_depth * 0.30).astype(np.int32)
+    # Desert-appropriate distribution: minimal organics, mostly mineral layers
+    terrain_layers[SoilLayer.REGOLITH] = (total_soil_depth * 0.35).astype(np.int32)
     terrain_layers[SoilLayer.SUBSOIL] = (total_soil_depth * 0.30).astype(np.int32)
     terrain_layers[SoilLayer.ELUVIATION] = (total_soil_depth * 0.15).astype(np.int32)
     terrain_layers[SoilLayer.TOPSOIL] = (total_soil_depth * 0.20).astype(np.int32)
-    terrain_layers[SoilLayer.ORGANICS] = (total_soil_depth * 0.05).astype(np.int32)
+    # Organics: zero by default (added only in wadis below)
+    terrain_layers[SoilLayer.ORGANICS] = 0
 
     # Assign materials based on biome (vectorized with masks)
     # Dune biome
@@ -227,12 +242,15 @@ def generate_grids_direct(grid_width: int, grid_height: int) -> Dict:
     terrain_materials[SoilLayer.SUBSOIL][rock_mask] = "rock"
     terrain_materials[SoilLayer.REGOLITH][rock_mask] = "rock"
 
-    # Wadi biome
+    # Wadi biome (only place with some organic matter in desert)
     wadi_mask = (kind_grid == "wadi")
     terrain_materials[SoilLayer.TOPSOIL][wadi_mask] = "silt"
     terrain_materials[SoilLayer.ELUVIATION][wadi_mask] = "silt"
     terrain_materials[SoilLayer.SUBSOIL][wadi_mask] = "clay"
     terrain_materials[SoilLayer.REGOLITH][wadi_mask] = "gravel"
+    # Add minimal organics only in wadis (water accumulation areas)
+    wadi_depths = depth_grids["wadi"]
+    terrain_layers[SoilLayer.ORGANICS][wadi_mask] = (wadi_depths[wadi_mask] * 0.02).astype(np.int32)  # 2% in wadis only
 
     # Salt biome
     salt_mask = (kind_grid == "salt")

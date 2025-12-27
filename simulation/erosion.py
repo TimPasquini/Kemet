@@ -207,10 +207,15 @@ def apply_overnight_erosion(
                 total_water_erosion = float(np.sum(erosion_amounts[significant]))
 
     # --- Wind Erosion (Vectorized) ---
-    # Note: active_wind_tiles removed - wind erosion now processes all exposed cells
-    # TODO: Re-implement wind tracking if needed for performance
-    if False:  # Disabled - active_wind_tiles tracking removed
-        wind_coords = []
+    # STATUS: Temporarily disabled pending performance optimization
+    # REASON: Previously relied on active_wind_tiles tracking which was removed.
+    #         Re-enabling would process ALL exposed cells, which may be expensive.
+    # TODO: Either:
+    #       1. Re-implement active region tracking for wind erosion, OR
+    #       2. Profile and enable if performance is acceptable at full grid scale
+    # The code below is preserved for when wind erosion is re-enabled.
+    if False:  # Disabled - awaiting performance optimization
+        wind_coords = []  # Would need to be populated with exposed cells
         if len(wind_coords) > 0:
             rows, cols = zip(*wind_coords)
             rows = np.array(rows, dtype=np.int32)

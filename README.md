@@ -54,3 +54,21 @@ Run the game:
 - **Fixed-Layer Terrain:** Each grid cell has a detailed soil profile, from organics and topsoil down to bedrock. Player actions like digging or farming can directly alter this composition.
 - **Dynamic Weather:** A day/night cycle affects evaporation rates, and periodic rain can provide a temporary but powerful boost to wellsprings and surface water levels.
 
+## Performance
+
+Kemet uses a fully vectorized NumPy-based architecture for high-performance environmental simulation:
+
+- **Rendering**: 285 FPS average (19× better than 60 FPS target)
+  - Adaptive resolution rendering scales efficiently from zoomed-in to fully zoomed-out views
+  - 100% of frames render under 16.67ms even at extreme zoom levels
+  - Cached background with dirty-rect updates for static terrain
+
+- **Simulation**: ~24 TPS on 180×135 grid (41ms per tick)
+  - Sub-linear scaling achieved through vectorization (27-36% better than linear)
+  - All physics calculations run on NumPy arrays (water flow, erosion, evaporation, atmosphere)
+
+- **Memory**: ~18 MB for baseline 180×135 grid (~720 bytes per cell)
+  - Scales linearly with grid size
+
+See `performance/BENCHMARK_HISTORY.md` for detailed metrics and `performance/README.md` for benchmarking tools.
+

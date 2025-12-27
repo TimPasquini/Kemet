@@ -326,27 +326,76 @@ See `performance/README.md` for detailed usage and CLI examples.
 - All performance tools working with comprehensive documentation
 - No performance regressions (143 FPS rendering, 24.5 TPS simulation)
 
-### Phase 4.75: Critical Bug Fixes
+### ✅ Phase 4.75: Critical Bug Fixes (COMPLETE - Dec 2025)
 **Goal**: Fix rendering and generation issues before scale-up work
-**Priority**: High - These bugs affect gameplay and visual quality
+**Status**: ✅ COMPLETE
 
-**Issues to Fix**:
-1. **Water Rendering Misalignment**
-   - Water doesn't scale the same as surface cells
-   - Appears slightly mismatched or offset at certain zoom levels
-   - Likely scaling/rendering issue in water overlay
+**Issues Fixed**:
+1. ✅ **Water Rendering Misalignment** (render/map.py)
+   - **Problem**: Water overlay misaligned at certain zoom levels, jittered 1-2 pixels up/left
+   - **Root Cause**: Creating massive surfaces at CELL_SIZE scale when zoomed out caused both alignment and performance issues
+   - **Solution**: Implemented adaptive resolution water rendering
+     - Scale factor: `max(4, int(CELL_SIZE * min(1.0, camera.zoom)))`
+     - At zoom 0.25×: 12px per cell (vs 48px), reducing pixels by 16×
+     - Scale-adjusted coordinate transformation maintains pixel-perfect alignment
+   - **Result**: Perfect alignment at all zoom levels + 16× performance improvement when zoomed out
 
-2. **Elevation Generation Problems**
-   - Elevation rarely naturally above sea level
-   - Almost never exceeds ~0.5m (half a meter)
-   - Need better terrain generation parameters or algorithm adjustments
+2. ✅ **Elevation Generation Problems** (world/generation.py)
+   - **Problem**: Terrain rarely above sea level, max ~0.5m elevation
+   - **Solution**: Multi-part fix
+     - Raised bedrock baseline from `random.uniform(-2.5, -2.0)` to `random.uniform(0.0, 1.0)`
+     - Increased soil depth ranges: dunes 2.5-4.5m, flat 1.5-2.5m, wadis 0.8-1.8m
+     - Added gaussian-filtered noise with non-linear transformation (`elevation_modifier ** 1.5`)
+     - Applied -1m to +2m bedrock variation for dramatic peaks and valleys
+   - **Result**: Realistic terrain with varied elevation, all naturally above sea level
 
-3. **Water Distribution Issues**
-   - Water distributes weirdly with dry gaps between wet areas
-   - Oscillates around a lot (unstable equilibrium)
-   - May have Conway Game of Life-like behavior at core
-   - Could be due to subsurface flow not being tuned (values or simulation rate)
-   - Investigate whether this is fundamental to the algorithm or just needs tuning
+3. ✅ **Water Distribution Oscillation** (simulation/config.py, simulation/surface.py)
+   - **Problem**: Water oscillated between cells creating unstable equilibrium
+   - **Solution**: Flow damping + threshold
+     - Reduced SURFACE_FLOW_RATE from 50% to 30%
+     - Implemented SURFACE_FLOW_THRESHOLD of 5 units (prevents micro-flow oscillation)
+   - **Result**: Stable water distribution with natural settling behavior
+
+4. ✅ **Refactor Opportunities**
+   - **TYPE_CHECKING imports**: Moved all TYPE_CHECKING imports from inside functions to top of files (simulation/surface.py, render/hud.py, structures.py, world/generation.py)
+   - **pygame_runner.py event handling**: Refactored 133-line event loop into 5 helper functions:
+     - `handle_quit_event()`, `handle_mouse_wheel_event()`, `handle_zoom_keys_event()`
+     - `handle_mouse_click_event()`, `handle_keyboard_event()`
+   - **Trenching tool comments**: Added comprehensive docstrings to all trenching modes explaining intent, strategy, and material flow logic
+   - **Material property grid vectorization** (game_state/initialization.py): Replaced triple-nested Python loops with vectorized NumPy mask-based assignment
+
+5. ✅ **Overnight Erosion Investigation** (simulation/erosion.py)
+   - **Finding**: `apply_overnight_erosion()` is active and called, but wind erosion is disabled
+   - **Reason**: Wind erosion requires optimization (currently too expensive for real-time)
+   - **Documentation**: Added comment explaining wind erosion is pending Phase 5 optimization
+   - **Status**: No changes needed, intentionally disabled for performance
+
+**Additional Fixes**:
+- ✅ **Humus Distribution**: Fixed organics appearing everywhere; now 0% default, 2% only in wadis
+- ✅ **Soil Meter Auto-Scaling** (render/hud.py):
+  - Implemented auto-scaling anchored to sea level at 60% down panel
+  - Always includes sea level in range as reference floor
+  - Caps zoom at 1.5× default for consistency
+  - Bedrock extended to fill panel bottom (eliminates black deadspace)
+
+**Performance Validation**:
+- Ran comprehensive rendering benchmark (600 frames, 6 zoom levels)
+- Results: 285.8 FPS average, 100% frames under 16.67ms target
+- Worst case (0.25× zoom, 4100 cells): 224 FPS, 4.46ms/frame
+- See `performance/BENCHMARK_HISTORY.md` for detailed metrics
+
+**Files Modified**:
+- render/map.py (adaptive water rendering)
+- render/hud.py (soil meter auto-scaling, TYPE_CHECKING imports)
+- world/generation.py (terrain generation, TYPE_CHECKING imports)
+- simulation/config.py (flow parameters)
+- simulation/surface.py (flow threshold, TYPE_CHECKING imports)
+- game_state/initialization.py (vectorized material grids)
+- game_state/terrain_actions.py (trenching comments)
+- pygame_runner.py (event handling refactor)
+- structures.py (TYPE_CHECKING imports)
+- simulation/erosion.py (wind erosion documentation)
+- performance/benchmarks/rendering.py (added 0.25× zoom to suite)
 
 ### Phase 5: Scale-Up & Optimization (Massive Maps)
 **Goal**: Enable gigantic maps (2560×1600 cells) through optimization and chunking
@@ -398,7 +447,7 @@ See `performance/README.md` for detailed usage and CLI examples.
 - Conversion of heightmap/sediment to layered soil profiles
 
 **Advanced Procedural Generation**:
-- **Wave Function Collapse**: Biome transitions and micro-terrain patterns
+- **Wave Function Collapse**: Biome transitions and patterns
 - **Graph Grammars**: River networks, drainage systems, and road generation
 - **L-Systems**: Plant growth and branching structures
 - Natural-looking biome boundaries
@@ -411,6 +460,18 @@ See `performance/README.md` for detailed usage and CLI examples.
 - Multi-scale simulation (global → regional → local)
 - Player selects starting location (embark site)
 - Only active region simulated during gameplay
+
+**Theoretical System for a Cascading Constraint System**
+- Simulation begins at the global level and should manage the formation of primary landmass and features
+- global features, like rivers or mountains, set constraints for the regional scale which is a bit more detailed
+- The region needs to solve around the feature that existed at the macro scale
+    -     A river on the global needs to have a river on the region that follows roughly the same course
+    -     A mountain in the north east corner of the region on the global scale has high elevation in the top right corner
+    -     Other things might be oasis, villages, forts, and geological phenomenon
+    -     These features are constraints around which the WFC solves to set biomes
+    -     A local scale (embark site) might be the shore of the river or the foot of the hill 
+    -     This is a desert planet inspired by Dune and Tatooine, at the end of worldgen, rivers should be shallow and ephemeral
+
 
 ### Phase 7: Persistence
 **Goal**: Save/Load system

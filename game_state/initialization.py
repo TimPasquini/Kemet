@@ -40,20 +40,22 @@ def build_initial_state() -> GameState:
     water_grid = grids["water_grid"]
     kind_grid = grids["kind_grid"]
 
-    # Calculate material property grids from terrain_materials
+    # Calculate material property grids from terrain_materials (VECTORIZED)
     permeability_vert_grid = np.zeros((len(SoilLayer), GRID_WIDTH, GRID_HEIGHT), dtype=np.int32)
     permeability_horiz_grid = np.zeros((len(SoilLayer), GRID_WIDTH, GRID_HEIGHT), dtype=np.int32)
     porosity_grid = np.zeros((len(SoilLayer), GRID_WIDTH, GRID_HEIGHT), dtype=np.int32)
 
+    # Vectorized approach: process each layer independently, using masks for each material type
     for layer in SoilLayer:
-        for gx in range(GRID_WIDTH):
-            for gy in range(GRID_HEIGHT):
-                material_name = terrain_materials[layer, gx, gy]
-                material_props = MATERIAL_LIBRARY.get(material_name)
-                if material_props:
-                    permeability_vert_grid[layer, gx, gy] = material_props.permeability_vertical
-                    permeability_horiz_grid[layer, gx, gy] = material_props.permeability_horizontal
-                    porosity_grid[layer, gx, gy] = material_props.porosity
+        # For each unique material in this layer, create a mask and assign properties
+        for mat_name, mat_props in MATERIAL_LIBRARY.items():
+            # Create a boolean mask where this material appears in this layer
+            mask = (terrain_materials[layer] == mat_name)
+
+            # Apply properties to all cells with this material at once (vectorized)
+            permeability_vert_grid[layer][mask] = mat_props.permeability_vertical
+            permeability_horiz_grid[layer][mask] = mat_props.permeability_horizontal
+            porosity_grid[layer][mask] = mat_props.porosity
 
     # Starting position at center of grid
     start_cell = (GRID_WIDTH // 2, GRID_HEIGHT // 2)

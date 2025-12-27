@@ -299,8 +299,10 @@ def run_rendering_benchmark(
     metrics = RenderingMetrics()
 
     # Zoom levels to test
+    # NOTE: Lower zoom = more cells visible = more demanding
+    # 0.25 is extremely zoomed out (worst case), 3.0 is zoomed in (best case)
     if zoom_test:
-        zoom_levels = zoom_levels or [0.5, 1.0, 1.5, 2.0, 3.0]
+        zoom_levels = zoom_levels or [0.25, 0.5, 1.0, 1.5, 2.0, 3.0]  # Include extreme zoom-out
     else:
         zoom_levels = [1.0]
 

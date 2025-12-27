@@ -9,7 +9,8 @@ from __future__ import annotations
 # WATER PHYSICS
 # =============================================================================
 # Flow rates (as percentages: 0-100)
-SURFACE_FLOW_RATE = 50       # Fast surface flow (50% per tick)
+# Reduced from 50 to 30 to add damping and prevent oscillation
+SURFACE_FLOW_RATE = 30       # Moderate surface flow (30% per tick) - prevents overshooting
 SURFACE_SEEPAGE_RATE = 15    # Surface water seeping into soil (15% per tick)
 SUBSURFACE_FLOW_RATE = 8     # Slow subsurface flow (8% per tick)
 OVERFLOW_FLOW_RATE = 90      # Overflow is rapid, high-pressure
@@ -17,7 +18,7 @@ VERTICAL_SEEPAGE_RATE = 30   # Vertical seepage speed (30% per tick)
 CAPILLARY_RISE_RATE = 5      # Capillary rise is much slower (5% per tick)
 
 # Flow thresholds (in depth units)
-SURFACE_FLOW_THRESHOLD = 1     # Min elevation diff for surface flow (~1cm)
+SURFACE_FLOW_THRESHOLD = 5     # Min elevation diff for surface flow (~5mm) - prevents tiny oscillations
 SUBSURFACE_FLOW_THRESHOLD = 1  # Min pressure diff for subsurface flow
 
 # =============================================================================
