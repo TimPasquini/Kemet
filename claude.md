@@ -296,74 +296,126 @@ All performance tooling is in `performance/`:
 
 See `performance/README.md` for detailed usage and CLI examples.
 
-### Phase 4.5: Reorganization Completion (AFTER Scale-Up)
+### ✅ Phase 4.5: Reorganization Completion (COMPLETE - Dec 2025)
 **Goal**: Complete code reorganization now that scale-up is validated
-**Priority**: LOW - Nice to have, not blocking
+**Status**: ✅ COMPLETE
 
-**✅ Performance Module Complete**:
-- ✅ All benchmarking tools consolidated in `performance/` directory
-- ✅ Rendering benchmarks and profilers added
-- ✅ Integrated simulation + rendering benchmarks
-- ✅ Comprehensive documentation in performance/README.md
+**✅ Performance Module (Parts 1-7)**:
+- All benchmarking tools consolidated in `performance/` directory
+- Rendering benchmarks and profilers added (NEW)
+- Integrated simulation + rendering benchmarks (NEW)
+- Comprehensive documentation in performance/README.md
 
-**Too small for specific step**:
-- subsurface.py only contains a function related to surface evaporation. Function should be moved and file deleted.
+**✅ Core Module (Part 8 - Step C)**:
+- Created `core/` subdirectory with config.py, grid_helpers.py, camera.py, utils.py
+- Updated 30+ files with import changes
+- Git history preserved
 
-**Step C: Core Utilities Module** (~1-2 hours)
-Create `core/` subdirectory:
-- `config.py` - Move from main dir
-- `grid_helpers.py` - Move from main dir
-- `camera.py` - Move from main dir
-- `utils.py` - Move from main dir
+**✅ Interface Module (Part 9 - Step D)**:
+- Created `interface/` subdirectory with player.py, ui_state.py, tools.py, keybindings.py
+- Updated 10+ files with import changes
+- Git history preserved
 
-**Step D: Interface Module** (~1-2 hours)
-Create `interface/` subdirectory:
-- `player.py` - Move from main dir
-- `ui_state.py` - Move from main dir
-- `tools.py` - Move from main dir
-- `keybindings.py` - Move from main dir
+**✅ Cleanup (Part 10)**:
+- Moved apply_surface_evaporation() to simulation/surface.py
+- Deleted simulation/subsurface.py
 
-**Result**: Main directory reduced to ~5 core files + submodules
-**Estimated Effort**: ~2-4 hours total for Steps C & D
+**Results Achieved**:
+- Main directory reduced to 4 core files + organized submodules
+- Clear separation of concerns (core, interface, performance, game_state, world, simulation, render)
+- All performance tools working with comprehensive documentation
+- No performance regressions (143 FPS rendering, 24.5 TPS simulation)
 
-### Phase 4.75: Investigate and Improve Optimizable Features
-**Goal**: Have game able to run on a gigantic map (2560x1600 cells)
+### Phase 4.75: Critical Bug Fixes
+**Goal**: Fix rendering and generation issues before scale-up work
+**Priority**: High - These bugs affect gameplay and visual quality
+
+**Issues to Fix**:
+1. **Water Rendering Misalignment**
+   - Water doesn't scale the same as surface cells
+   - Appears slightly mismatched or offset at certain zoom levels
+   - Likely scaling/rendering issue in water overlay
+
+2. **Elevation Generation Problems**
+   - Elevation rarely naturally above sea level
+   - Almost never exceeds ~0.5m (half a meter)
+   - Need better terrain generation parameters or algorithm adjustments
+
+3. **Water Distribution Issues**
+   - Water distributes weirdly with dry gaps between wet areas
+   - Oscillates around a lot (unstable equilibrium)
+   - May have Conway Game of Life-like behavior at core
+   - Could be due to subsurface flow not being tuned (values or simulation rate)
+   - Investigate whether this is fundamental to the algorithm or just needs tuning
+
+### Phase 5: Scale-Up & Optimization (Massive Maps)
+**Goal**: Enable gigantic maps (2560×1600 cells) through optimization and chunking
 **Priority**: High - Fundamental to game concept. Geology happens on a large scale.
 
-**Step E: Investigate Bottlenecks**
-- Subsurface simulation is the most limiting factor:
-  -     Investigate methods to more efficiently calculate water transfers
-  -     Investigate decoupling water movements from "atomic" application to spread over ticks
-    -       Gravity flow>lateral flow> capilary flow?
-  -     Experiment with less frequent updates... water moves slow underground 
+**Approach**: Optimize first, then derive architecture from data
 
-### Phase 5: Geological Erosion (Pre-Sim)
-**Goal**: Generate realistic starting terrain through simulation
+**Step A: Subsurface Optimization Investigation**
+- Subsurface simulation is the most limiting factor (89% of subsurface time in horizontal flow)
+- Investigate methods to more efficiently calculate water transfers
+- Investigate decoupling water movements from "atomic" application to spread over ticks
+  - Gravity flow → lateral flow → capillary flow?
+- Experiment with less frequent updates (water moves slowly underground)
+- Profile and measure impact of each optimization
 
+**Step B: Determine Optimal Active Play-Space**
+- Use performance benchmarks to test different active region sizes
+- Measure TPS at various active region dimensions (256×256, 512×512, 768×768, etc.)
+- Find sweet spot: largest area that maintains 30+ TPS
+- This becomes the foundation for chunking architecture
+
+**Step C: Derive Chunk Architecture from Data**
+- Based on optimal active play-space size, design chunk system
+- Determine chunk size (e.g., if 512×512 is optimal, use 256×256 chunks)
+- Implement chunked simulation (only simulate active chunks)
+- Implement chunked rendering (viewport-based, only render visible chunks)
+- Design chunk loading/unloading system
+
+**Step D: Viewport Rendering & Chunked Backgrounds**
+- Only render visible tiles instead of entire world
+- Chunked background caching (e.g., 256×256 cell chunks)
+- Camera zoom optimization with cached backgrounds
+- Enable massive maps without GPU texture limit issues
+
+**Expected Outcomes**:
+- Ability to run maps at global scale (2560×1600+ cells)
+- Simulation focused on active region around player
+- Rendering limited to visible viewport
+- Foundation for world-gen and embark system (like Dwarf Fortress)
+
+### Phase 6: Geological Erosion & World Generation
+**Goal**: Generate realistic starting terrain through simulation and procedural generation
+
+**Geological Pre-Simulation**:
 - Geological uplift simulation for bulk material generation
 - Hydraulic erosion via `simulate_surface_flow` with rain cycles
 - Wind erosion for exposed terrain above water
 - Sediment transport and deposition based on velocity
 - Conversion of heightmap/sediment to layered soil profiles
 
-### Phase 6: Advanced Procedural Generation
-**Goal**: Intelligent feature placement using advanced algorithms
-
-**Techniques**:
+**Advanced Procedural Generation**:
 - **Wave Function Collapse**: Biome transitions and micro-terrain patterns
-- **Graph Grammars**: River networks and road generation
+- **Graph Grammars**: River networks and drainage systems
 - **L-Systems**: Plant growth and branching structures
-
-**Applications**:
 - Natural-looking biome boundaries
 - Realistic drainage networks
-- Ancient road connections between points of interest
 - Organic vegetation patterns
 
+**World-Gen & Embark System** (like Dwarf Fortress):
+- Generate global-scale maps (2560×1600+ cells)
+- Multi-scale simulation (global → regional → local)
+- Player selects starting location (embark site)
+- Only active region simulated during gameplay
+
 ### Phase 7: Persistence
-**Goal**: Save/Load system.
-- Serialize the unified NumPy arrays (compressed).
-- Serialize Player and Weather state.
+**Goal**: Save/Load system
+- Serialize the unified NumPy arrays (compressed)
+- Serialize Player and Weather state
+- Support for chunked world saves (only save modified chunks)
 
 ---
 
