@@ -399,10 +399,11 @@ See `performance/README.md` for detailed usage and CLI examples.
 
 **Advanced Procedural Generation**:
 - **Wave Function Collapse**: Biome transitions and micro-terrain patterns
-- **Graph Grammars**: River networks and drainage systems
+- **Graph Grammars**: River networks, drainage systems, and road generation
 - **L-Systems**: Plant growth and branching structures
 - Natural-looking biome boundaries
 - Realistic drainage networks
+- Ancient road connections between points of interest
 - Organic vegetation patterns
 
 **World-Gen & Embark System** (like Dwarf Fortress):
