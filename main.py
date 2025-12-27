@@ -26,7 +26,7 @@ from simulation.surface import (
     simulate_surface_flow,
     simulate_surface_seepage,
 )
-from simulation.subsurface import apply_surface_evaporation
+from simulation.surface import apply_surface_evaporation
 from simulation.subsurface_vectorized import simulate_subsurface_tick_vectorized
 from simulation.erosion import apply_overnight_erosion, accumulate_wind_exposure
 from game_state import GameState

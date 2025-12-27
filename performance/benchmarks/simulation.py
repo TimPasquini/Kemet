@@ -175,7 +175,7 @@ def simulate_tick_profiled(state, metrics: PerformanceMetrics) -> None:
 
     # Evaporation (every tick)
     evap_start = time.perf_counter()
-    from simulation.subsurface import apply_surface_evaporation
+    from simulation.surface import apply_surface_evaporation
     apply_surface_evaporation(state)
     metrics.record_system_time('evaporation', time.perf_counter() - evap_start)
 
